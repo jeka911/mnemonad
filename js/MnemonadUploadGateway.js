@@ -191,7 +191,15 @@ export default class MnemonadUploadGateway {
 			args,
 			value,
 			account: this.walletClient.account ?? this._senderAddress,
-			chain: this.walletClient.chain,
+			// viem reads three distinct meanings here, and the difference decides whether a
+			// write is even attempted: a chain object asserts the wallet is on that network,
+			// `null` deliberately waives that assertion, and `undefined` falls back to
+			// `walletClient.chain`. A wagmi wallet client does not always carry one, and when
+			// it doesn't the call fails with "No chain was provided to the request" before
+			// reaching the wallet at all. So take whichever client knows the chain — the
+			// public client always does — and waive the check only if neither does, matching
+			// `Mnemonad._write`.
+			chain: this.walletClient.chain ?? this.publicClient?.chain ?? null,
 		});
 		if (params.wait === false) return hash;
 		const receipt = await this.publicClient.waitForTransactionReceipt({ hash });
