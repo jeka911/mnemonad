@@ -1,0 +1,28 @@
+:root {
+	--q-primary: #836ef9;
+	--q-secondary: #a0055d;
+	--q-accent: #4fd1c5;
+	--q-dark: #0e100f;
+	--q-positive: #22c55e;
+	--q-negative: #f87171;
+	--q-info: #6ea8ff;
+	--q-warning: #fbbf24;
+	--q-body-bg: #0b0620;
+	--q-surface-0: #0b0620;
+	--q-surface-1: #150c33;
+	--q-surface-2: #1e1147;
+	--q-surface-3: #2a1a5c;
+	--q-surface-border: #33246b;
+	--q-surface-overlay: rgba(11, 6, 32, .95);
+	--q-panel-gradient: linear-gradient(180deg, #1a0f3d 0%, #120a2c 100%);
+	--q-panel-compact-gradient: linear-gradient(135deg, #1e1147 0%, #150c33 100%);
+	--q-text-bright: #fbfaf9;
+	--q-text: #d8d3ea;
+	--q-text-muted: #9a93b8;
+	--q-text-faint: rgba(251, 250, 249, .16);
+	--q-glow-primary: color-mix(in srgb, var(--q-primary) 22%, transparent);
+	--q-glow-accent: color-mix(in srgb, var(--q-accent) 20%, transparent);
+	--q-glow-warning: color-mix(in srgb, var(--q-warning) 18%, transparent);
+	--q-shadow-drop: rgba(0, 0, 0, .45);
+	--q-shadow-inset: rgba(0, 0, 0, .28);
+}

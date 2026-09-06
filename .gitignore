@@ -1,0 +1,23 @@
+# Local agent/tooling config — not part of the project.
+skills-lock.json
+.agents
+.claude
+
+# Secrets. Every subproject also ignores its own .env; these patterns are the safety net,
+# because a single missed .gitignore here means publishing a funded private key.
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# Dependencies and build output. Each subproject repeats the ones it needs; duplicated
+# deliberately so a subproject stays safe if it's ever extracted from this repo.
+node_modules/
+dist/
+artifacts/
+cache/
+types/
+
+# presign-server's issuance ledger — contains issued upload URLs.
+data/

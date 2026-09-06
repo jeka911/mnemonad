@@ -1,0 +1,23 @@
+{
+    "name": "mnemonad-presign-server",
+    "version": "0.0.1",
+    "description": "Issues size-bounded Pinata presigned upload URLs against paid on-chain escrow",
+    "type": "module",
+    "private": true,
+    "license": "AGPL-3.0",
+    "scripts": {
+        "start": "node src/index.js",
+        "dev": "node --watch src/index.js",
+        "test": "vitest run"
+    },
+    "dependencies": {
+        "@fastify/cors": "^11.1.0",
+        "@fastify/rate-limit": "^10.3.0",
+        "fastify": "^5.2.1",
+        "mnemonad": "link:../js",
+        "viem": "^2.56.3"
+    },
+    "devDependencies": {
+        "vitest": "^4.1.11"
+    }
+}

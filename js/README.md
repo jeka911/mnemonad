@@ -1,0 +1,396 @@
+# Mnemonad — JavaScript SDK
+
+JavaScript/TypeScript SDK for the Mnemonad contract on [Monad](https://monad.xyz).
+Mnemonad is a scalable, append-only on-chain `bytes[]` that grows beyond what a single
+transaction can carry, by tiering storage and staging large writes. Items too large for the
+chain are transparently offloaded to IPFS. Optional client-side AES-256-GCM encryption
+protects stored data.
+
+See the root [`README.md`](../README.md) for how the pieces fit together.
+
+Status: **test MVP.** 153 passing tests against a local node (plus an opt-in suite against
+a real Pinata account). Not published; live on Monad testnet, not mainnet.
+
+
+## API notes
+
+A few methods worth knowing about, beyond `push()` / `at()` / `length`:
+
+- `pushMany()` — packs a batch into one shared chunk (see Batching below)
+- `getItemRefs()` — an item's physical layout (chunk addresses, offset): the primitive a
+  future contract migration would read
+- `setWriterApproval()` — grants append rights to another address, independent of ERC-721
+  transfer approval
+- `itemAt()` — an item's tier/size without reading its payload
+- `estimatePushCost()` — gas + protocol fee for a push, before sending it. Mirrors `push()`'s
+  own routing: a single-write estimate when the item fits in one chunk, the staged
+  multi-transaction path for `{ onChain: true }` on an oversized item (modeled — the true
+  per-call gas can't be simulated without spending it, since `appendChunk`/`commitItem` each
+  need a `stagingId` that only exists once a prior transaction has landed), or an
+  IPFS-backed estimate when a transport is configured. Its result carries
+  `transactionCount`, which is `1` except on the staged path
+- `Mnemonad.listOwned(publicClient, contractAddress, owner)` — static; every vector `owner`
+  currently holds, via the registry's `ERC721Enumerable` index rather than an off-chain scan
+- `maxRPCRequestsPerSecond` — caps outbound RPC calls, queuing the rest instead of firing
+  them all at once. Public RPC endpoints commonly 429 an unthrottled fan-out (several fields
+  per vector, times several vectors, all via `Promise.all`); every instance configured with
+  the same rate on the same chain shares one budget, so the cap holds across a whole
+  fan-out rather than per instance. Omit for unlimited (the default)
+
+This vector is strictly append-only — there is no update-in-place operation — and deletion
+is logical only, via `truncateFrom()`, not a way to reclaim gas.
+
+## Quick start
+
+```javascript
+import { Mnemonad } from 'mnemonad';
+
+const ev = await Mnemonad.create({
+    publicClient,
+    walletClient,
+    contractAddress: 'monadTestnet', // or an explicit 0x... address
+});
+
+await ev.push(new Uint8Array([1, 2, 3]));
+const item = await ev.at(0); // Uint8Array
+```
+
+Read-only instances need only `publicClient`, `contractAddress` and `id`. Add
+`walletClient` (or `sendTransaction`) for writes, IPFS params for large items, and `signer`
+for encryption.
+
+## Storage tiers
+
+The contract picks a tier per item; the SDK routes by size. All thresholds are read from
+chain, never hardcoded.
+
+| Payload | Tier | Notes |
+|---|---|---|
+| ≤ 31 bytes | `SLOT` | One packed storage slot. |
+| 32 bytes – `maxChunkBytes` | `CODE` | Deployed as contract code. ~2.5× cheaper per byte than storage, ~44× cheaper to read. |
+| larger, `{ onChain: true }` | `CODE` × N | Staged across several transactions. |
+| larger, IPFS configured | `EXTERNAL` | Only a CID + hash on-chain. |
+
+```javascript
+// Force a large item on-chain instead of offloading it
+await ev.push(bigPayload, { onChain: true });
+```
+
+## Batching matters
+
+Each `CODE` chunk carries ~32,000 gas of `CREATE` overhead, which dominates for small
+items. `pushMany` packs a whole batch into one chunk:
+
+```javascript
+await ev.pushMany([chunk1, chunk2, chunk3]); // one deployed chunk, three items
+```
+
+Packing is only possible within a single transaction — chunks are immutable, so an item can
+never be folded into an existing chunk afterwards. Measured on-chain, 10 × 200 B costs
+729,986 gas packed versus 1,048,092 individually.
+
+## Encryption
+
+v1 is **self-wrapped**: a random AES-256-GCM data key, wrapped under a KEK derived from
+the owner's own signature, stored on-chain in `encKeyWrapped`.
+
+```javascript
+const ev = await Mnemonad.create({
+    publicClient,
+    walletClient,
+    contractAddress,
+    encrypt: true,
+    signer: walletClient,
+});
+await ev.push(secret);       // encrypted before it leaves the process
+await ev.at(0);              // decrypted transparently
+```
+
+Because vector ids are deterministic, the id is known *before* creation — so create + key +
+first push happen in **one transaction**, with no round trip needed first to learn what id
+a create call would produce.
+
+### Framed ciphertext
+
+Each item is encrypted as a sequence of independently-decryptable 64 KiB frames rather than
+one GCM message. Without this, one tag would cover the whole ciphertext, so reading a single
+byte of a 4 MB item would mean fetching and authenticating all 4 MB — random access would
+work for plaintext items and silently not for encrypted ones.
+
+```
+header:  version(1) || log2FrameSize(1) || baseNonce(8)
+frame i: GCM(key, baseNonce || u32be(i), plaintext_i, aad_i)   // includes 16-byte tag
+aad  i:  version || isFinal || u32be(i)
+```
+
+Overhead is 10 bytes plus 16 per frame — 26 bytes for a small single-frame item, ~1 KB for
+4 MB. `MnemonadCrypto.ciphertextLengthFor(n)` computes it.
+
+Two properties the AAD buys, which naive framing lacks:
+
+- **No reordering or replay across positions** — the frame index is authenticated, so a
+  frame is only valid where it was written.
+- **No truncation** — the final-frame flag is authenticated, so dropping trailing frames
+  leaves a reader expecting a final frame it never sees.
+
+This is the STREAM construction, as used by age and libsodium's secretstream. A reader needs
+only the 10-byte header plus the on-chain item size to locate any frame, so no scan or trial
+decryption is involved.
+
+Two limitations to know:
+
+- **Owner-bound.** Only the wallet that wrapped the key can unwrap it. No delegation, and
+  losing the signing key loses the data.
+- **Encrypted vectors cannot be transferred.** The contract blocks it, because a new owner
+  could never decrypt. Lifting this needs the propose/accept rewrap flow, which is **not in
+  v1**.
+
+## IPFS offloading
+
+```javascript
+const ev = new Mnemonad({
+    publicClient,
+    walletClient,
+    contractAddress,
+    id,
+    gatewayUrl: 'https://ipfs.io/ipfs/',
+    pinningUrl: 'https://api.pinata.cloud/pinning/pinFileToIPFS',
+    pinningJwt: process.env.PINATA_JWT,
+});
+
+await ev.push(largeFile);    // > maxChunkBytes → pinned, pointer stored on-chain
+const data = await ev.at(0); // fetched and hash-verified
+```
+
+Or supply a custom transport: `ipfsClient: { put(bytes) => cid, get(cid) => bytes, getRange?(cid, start, len) => bytes }`.
+`getRange` is optional — without it, ranged reads fall back to whole-payload fetches, which
+is correct but not cheap. Gateways are used via HTTP `Range:` requests, falling back the
+same way when a gateway answers 200 with the full body instead of 206.
+
+**Reads are hash-verified.** An IPFS gateway is an untrusted intermediary, so the contract
+stores a sha256 of the payload and every read checks it before returning.
+
+### Off-chain storage providers
+
+The params above build a plain `MnemonadIpfs` under the hood — the generic case, and the
+right one for a self-hosted node or an unlisted pinning service. Named services get a
+preset instead, so their endpoint URLs don't need typing out:
+
+```javascript
+import Mnemonad, { MnemonadPinataProvider } from 'mnemonad';
+
+const ev = new Mnemonad({
+    publicClient, walletClient, contractAddress, id,
+    offloadingProvider: new MnemonadPinataProvider({ pinningJwt: process.env.PINATA_JWT_TOKEN }),
+});
+```
+
+`offloadingProvider` takes over from `gatewayUrl`/`pinningUrl`/`pinningJwt`/`ipfsClient`
+entirely when given. Both `MnemonadIpfs` and `MnemonadPinataProvider` extend
+`MnemonadOffloadingProvider` — the base every backend (IPFS today; a future Filecoin or
+Walrus provider, or your own) implements: `putBytes`/`readPointerBytes`/
+`readPointerRange`/`verifyAvailability`/`repin`, plus a `static codec` reporting which
+`Pointer.codec` value its pointers use (`Codec.IPFS` for anything CID-based, regardless of
+which service pinned it — a genuinely different retrieval mechanism, like a raw Filecoin
+deal, would need its own value). `attach(mnemonad)` — not a constructor param — is what lets
+a provider be built and configured before a `Mnemonad` exists at all.
+
+`MnemonadPinataProvider` adds two things beyond the base contract: `unpin(cid)`, matching
+Pinata's own delete endpoint — not universal, most off-chain backends have no equivalent of
+"delete", and this one deliberately doesn't pretend to reclaim anything on-chain, it only
+stops Pinata from continuing to serve the content — and `mintUploadJwt`, below.
+
+**Shipping a real, standing Pinata JWT in a frontend bundle is a real credential leak.**
+`pinningJwtProvider` — resolved fresh before every upload instead of a static `pinningJwt`
+— plus the `static mintUploadJwt` method implement Pinata's own documented signed-upload
+pattern: a narrow, single-use-by-default key minted per upload, so intercepting one in
+flight is worth at most one upload rather than standing access to the account.
+
+```javascript
+// server-only — adminJwt must never reach a browser bundle:
+app.post('/api/pinata-temp-key', async (req, res) => {
+    const jwt = await MnemonadPinataProvider.mintUploadJwt(process.env.PINATA_ADMIN_JWT);
+    res.json({ jwt });
+});
+
+// frontend:
+const provider = new MnemonadPinataProvider({
+    pinningJwtProvider: () => fetch('/api/pinata-temp-key').then((r) => r.json()).then((j) => j.jwt),
+});
+```
+
+`mintUploadJwt` itself is a plain `fetch` — nothing about the function stops it being called
+from a browser, which is exactly the mistake this pattern exists to avoid. Its safety is
+entirely about *where* it's called from, not what it does.
+
+#### Browsers: `MnemonadPresignProvider`
+
+Both options above still require a credential somewhere in reach of the client. For a
+browser, use `MnemonadPresignProvider`, which holds none — it asks a server for a one-shot
+upload URL per payload:
+
+```js
+import { MnemonadPresignProvider } from 'mnemonad';
+
+const provider = new MnemonadPresignProvider({
+    gatewayUrl: 'https://gateway.pinata.cloud/ipfs/', // reads need no credential
+    requestUploadUrl: async ({ hash, size }) => {
+        // Your server decides whether this caller has earned a URL. See
+        // `presign-server/` in this repo, which gates on paid on-chain escrow.
+        const res = await fetch('/api/upload-url', {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({ hash, size }),
+        });
+        return await res.json(); // { url }
+    },
+});
+```
+
+The payload's sha256 is computed once and handed to the callback, because a server issuing
+URLs against a content commitment needs that hash anyway — recomputing it would hash the
+same bytes twice per push. Reads are inherited from `MnemonadIpfs` unchanged, including
+hash verification.
+
+### Ranged reads of off-chain items
+
+Encrypted external items support real random access: the ciphertext length comes from the
+on-chain pointer and only the 10-byte header plus the covering frames are fetched. A 2 KB
+read of an 8 MB encrypted IPFS item transfers under 128 KB.
+
+The integrity story splits, and the split is deliberate:
+
+| Read | Verified by |
+|---|---|
+| Full read (`at()`) | The pointer's blob sha256 — fetched whole, then verified before its header is even consulted |
+| Ranged read, **encrypted** | The frame's own GCM tag, with index and finality authenticated. The blob hash adds nothing a frame tag doesn't already give |
+| Ranged read, **plaintext** | Nothing. So these fetch whole and verify by default; pass `allowUnverifiedRanges: true` to opt into cheap-but-unchecked partial fetches |
+
+**Availability depends entirely on continued pinning.** There is no on-chain rent and no
+expiry, so there is deliberately no on-chain-managed extension mechanism.
+`offloadingProvider.verifyAvailability()` and `offloadingProvider.repin()` are the
+substitutes — off-chain probes with no guarantee behind them.
+
+## Reading large items
+
+Reads are free — `eth_call`, no gas paid, no signature, no state change. But a single `at()`
+allocates the whole item and the ABI return copies it, so it needs roughly **2× the item
+size** in memory. Against Monad's 8 MB per-transaction cap that bounds a one-shot read near
+3–4 MB, and the limit is memory, not gas.
+
+So `at()` **pages automatically** above `readPageBytes` (default 512 KB) and reassembles the
+result, which removes the ceiling entirely. For explicit control:
+
+```javascript
+const slice = await ev.readRange(0, offset, len);   // ranged read, on-chain or off
+const ev2 = new Mnemonad({ ...params, readPageBytes: 128 * 1024 });
+```
+
+Encrypted items support the same random access, because their ciphertext is **framed** — see
+below.
+
+To consume an item without ever holding it whole:
+
+```javascript
+for await (const piece of ev.stream(0, { start: 0, len: 1024 })) { /* ... */ }
+```
+
+`stream()` yields one frame (encrypted) or one page (plaintext) at a time, so an item larger
+than available memory can be walked end to end. `plaintextLengthAt(i)` gives the decrypted
+length, which differs from the stored `itemSize` for encrypted items.
+
+Measured read cost (simulated gas; nobody pays it, but the node meters it against the
+`eth_call` cap — 200M on Monad's public RPCs):
+
+| Item size | Chunks | Read gas | gas/byte |
+|---:|---:|---:|---:|
+| 1 KB | 1 | 35,430 | 34.6 |
+| 24 KB | 1 | 48,471 | 2.02 |
+| 64 KB | 3 | 112,141 | 1.71 |
+| 256 KB | 11 | 740,757 | 2.83 |
+| 1 MB | 44 | 9,159,030 | 8.73 |
+
+The climb above 64 KB is a **local artifact**: EDR prices memory expansion quadratically
+the Ethereum way (~2.2M gas of pure memory cost for a 1 MB buffer). Monad prices it
+**linearly at `w/2`** — the same buffer costs ~16K — so on Monad the curve should stay near
+1.7–2 gas/byte rather than rising. Confirm in Phase 0.
+
+## Cost estimation
+
+```javascript
+const { gas, gasCost, fee, total } = await ev.estimatePushCost(data);
+```
+
+Worth calling before large writes. Monad charges the gas **limit**, not gas used, so a loose
+estimate is a direct overcharge rather than a harmless margin.
+
+## Version safety
+
+The SDK reads `CONTRACT_VERSION` on first use and **refuses to operate** on a mismatch. This
+is not defensive padding: the contract is immutable and testnet deployments are disposable,
+so several versions will coexist, and an SDK that decoded a struct whose layout had moved
+would return plausible nonsense. `ids.js` is keyed by `(network, version)`.
+
+## Testing
+
+```bash
+pnpm test
+```
+
+Split by scale and by concern, because the interesting failures differ by size — "a few
+items", "a lot of bytes" and "more bytes than one call can return" break in unrelated ways:
+
+| Suite | Chunk ceiling | Covers |
+|---|---|---|
+| `base.test.js` | 2 KB (small, so the staged path is cheap to reach) | Tiers, packing, staged append, concat, truncate, burn, fees, access control |
+| `large_data.test.js` | 24 KB (realistic) | 1 MB staged on-chain across 44 chunks, 16 MB via IPFS, 60-item packed batch, 128-slot page boundary |
+| `huge_data.test.js` | 24 KB | 4 MB on-chain — past what one-shot reads can serve; paged reads and `readRange` slicing |
+| `encrypted_small.test.js` | 2 KB | Key wrap/unwrap, per-vector derivation, wrong-signer rejection, nonce uniqueness, GCM tamper detection, tier crossings caused by the 26-byte framing overhead, every write path encrypting |
+| `encrypted_large.test.js` | 24 KB | 256 KB staged encrypted, 1 MB encrypted via IPFS, chunk boundaries crossed by overhead alone |
+| `encrypted_huge.test.js` | 24 KB | 4 MB encrypted — partial decryption, streaming, frame-integrity (reorder/truncation), ranged off-chain reads, 8 MB via IPFS |
+| `mixed_tiers.test.js` | 2 KB | SLOT + CODE + multi-chunk + EXTERNAL interleaved in one vector: per-tier dispatch of `at`/`readRange`/`getItemRefs`, `binaryLength` across tiers, concat preserving tiers, and the same encrypted |
+| `list_owned.test.js` | 2 KB | `Mnemonad.listOwned()` — empty case, multiple vectors, cross-owner isolation, reflecting a transfer |
+| `rate_limiter.test.js` | n/a | `MnemonadRateLimiter` — no-op default, throttling and FIFO ordering, `wrapClient`, and the constructor's `maxRPCRequestsPerSecond` sharing one budget across instances |
+| `custom_offloading_provider.test.js` | 2 KB | A from-scratch `MnemonadOffloadingProvider` subclass, unrelated to `MnemonadIpfs` — proves `offloadingProvider` wiring, a non-standard `codec`, oversized-push routing, and the inherited `_verify` hash check all work for a genuinely third-party provider, not just the SDK's own |
+
+Note what large-data testing **cannot** cover locally: EDR enforces EIP-170's 24,576-byte
+code limit, so a single chunk never exceeds ~24 KB here. Monad allows 128 KB. Chunk count
+and reassembly are proven locally; the per-chunk size ceiling is testnet-only.
+
+Tests boot a Hardhat node as a child process, deploy a fresh registry, and exercise the SDK
+against it. The IPFS layer runs against an in-memory transport, so **no network access is
+needed** — with one deliberate exception:
+
+```bash
+pnpm test:real-ipfs
+```
+
+`real_ipfs.test.js` exercises the actual upload path against a real Pinata account —
+round trip, a genuine ranged `206` fetch, `repin()`'s CID-determinism assumption, hash-
+mismatch detection on real fetched bytes, an upload via `pinningJwtProvider` +
+`mintUploadJwt`'s real signed-JWT flow, and confirmation that Pinata actually enforces a
+minted key's `maxUses: 1` (a second upload with the same spent key really does fail) — none
+of which an in-memory mock can prove. It's excluded from the default `pnpm test` glob (see
+`vitest.config.js`) and needs its own config (`vitest.real-ipfs.config.js`) to be reachable
+at all, so a machine with `PINATA_JWT_TOKEN` configured in `.env` never spends real quota
+just by running the normal suite. Without that token it skips cleanly rather than failing —
+safe for anyone else to run.
+
+Each run picks a free port and boots its own node. To reuse one you already have running,
+point the suite at it explicitly — auto-detection raced against nodes from previous runs:
+
+```bash
+cd ../contracts && npx hardhat node --port 18545
+# then, in the js dir:
+EV_TEST_RPC_URL=http://127.0.0.1:18545 pnpm test
+```
+
+After changing the Solidity sources, regenerate the ABI:
+
+```bash
+cd ../contracts && pnpm build && cd ../scripts && node sync_abi.js
+```
+
+## License
+
+AGPL-3.0

@@ -1,0 +1,103 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Mnemonad Explorer</title>
+  <meta name="description" content="Explorer for Mnemonad, an append-only on-chain byte vector on the Monad network.">
+  <link rel="icon" type="image/svg+xml" href="/favicon.svg">
+
+  <style>
+    html, body {
+      background: #0b0620;
+      margin: 0;
+    }
+    .boot {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      max-width: 640px;
+      margin: 0 auto;
+      padding: 10vh 24px 48px;
+      text-align: center;
+      color: #d8d3ea;
+    }
+    .boot h1 {
+      font-size: 22px;
+      font-weight: 600;
+      line-height: 1.4;
+      margin: 0 0 28px;
+      color: #fbfaf9;
+    }
+    .boot-spinner {
+      width: 36px;
+      height: 36px;
+      margin: 0 auto;
+      border: 3px solid rgba(131, 110, 249, 0.25);
+      border-top-color: #836ef9;
+      border-radius: 50%;
+      animation: bootSpin 0.9s linear infinite;
+    }
+    .boot-status {
+      margin: 16px 0 36px;
+      font-size: 14px;
+      color: #9a93b8;
+    }
+    .boot-about {
+      font-size: 13px;
+      line-height: 1.6;
+      color: #9a93b8;
+      text-align: left;
+      margin: 12px 0;
+    }
+    .boot-about code {
+      background: rgba(131, 110, 249, 0.12);
+      padding: 1px 5px;
+      border-radius: 4px;
+      font-size: 12px;
+      color: #d8d3ea;
+    }
+    @keyframes bootSpin {
+      to { transform: rotate(360deg); }
+    }
+  </style>
+</head>
+<body>
+  <noscript>
+    <strong>Mnemonad Explorer doesn't work without JavaScript enabled. Please enable it to continue.</strong>
+  </noscript>
+
+  <div id="app">
+    <!-- Static boot screen: crawler-readable content, replaced by the app on mount -->
+    <div class="boot">
+      <h1>Mnemonad Explorer</h1>
+      <div class="boot-spinner" aria-hidden="true"></div>
+      <p class="boot-status">Loading the app…</p>
+      <p class="boot-about">
+        <strong>todo:</strong> description of this project.
+      </p>
+      <p class="boot-about">
+        <strong>Monad</strong> is a high-performance layer-1 blockchain that is EVM compatible at the bytecode
+        level, so Ethereum contracts and tooling run on it unchanged. It targets a 400ms block time with a 200M
+        gas block limit and a 30M gas limit per transaction.
+      </p>
+      <p class="boot-about">
+        Two differences from Ethereum matter when reading anything on this site. Monad charges a transaction's
+        <strong>gas limit</strong> rather than its gas used, so an overestimated limit costs real money. And the
+        maximum contract size is <strong>128 KB</strong> rather than Ethereum's 24 KB, which makes storing data as
+        contract code practical.
+      </p>
+      <p class="boot-about">
+        Networks: <strong>Monad mainnet</strong> is chain id <code>143</code>, explorer
+        <code>monadscan.com</code>. <strong>Monad testnet</strong> is chain id <code>10143</code>, explorer
+        <code>testnet.monadexplorer.com</code>, with a faucet at <code>faucet.monad.xyz</code>. Switch between
+        them in the header; the choice is remembered and reloads the app.
+      </p>
+      <p class="boot-about">
+        AI agents: this is a real app, not a mockup. Reading on-chain data is free and requires no wallet. Any
+        button that submits a transaction spends real gas, so treat those as separate, deliberate financial
+        actions and never trigger them automatically.
+      </p>
+    </div>
+  </div>
+  <script type="module" src="/src/main.js"></script>
+</body>
+</html>

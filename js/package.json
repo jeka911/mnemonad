@@ -1,0 +1,63 @@
+{
+    "name": "mnemonad",
+    "version": "0.0.1",
+    "description": "Scalable append-only on-chain vector for Monad with IPFS offloading and client-side encryption",
+    "type": "module",
+    "main": "./index.js",
+    "types": "./index.d.ts",
+    "sideEffects": false,
+    "files": [
+        "Mnemonad.js",
+        "MnemonadCrypto.js",
+        "MnemonadItem.js",
+        "MnemonadRateLimiter.js",
+        "MnemonadUploadGateway.js",
+        "offloading/",
+        "abi.js",
+        "gatewayAbi.js",
+        "ids.js",
+        "index.js",
+        "index.d.ts"
+    ],
+    "keywords": [
+        "mnemonad",
+        "monad",
+        "vector",
+        "database",
+        "storage",
+        "evm",
+        "viem",
+        "web3",
+        "dapps",
+        "dapp"
+    ],
+    "publishConfig": {
+        "access": "public"
+    },
+    "license": "AGPL-3.0",
+    "scripts": {
+        "test": "vitest run ./test/*.test.js",
+        "test:base": "vitest run ./test/base.test.js",
+        "test:large-data": "vitest run ./test/large_data.test.js",
+        "test:huge-data": "vitest run ./test/huge_data.test.js",
+        "test:encrypted-small": "vitest run ./test/encrypted_small.test.js",
+        "test:encrypted-large": "vitest run ./test/encrypted_large.test.js",
+        "test:encrypted-huge": "vitest run ./test/encrypted_huge.test.js",
+        "test:mixed-tiers": "vitest run ./test/mixed_tiers.test.js",
+        "test:list-owned": "vitest run ./test/list_owned.test.js",
+        "test:rate-limiter": "vitest run ./test/rate_limiter.test.js",
+        "test:custom-offloading-provider": "vitest run ./test/custom_offloading_provider.test.js",
+        "test:real-ipfs": "vitest run --config vitest.real-ipfs.config.js"
+    },
+    "peerDependencies": {
+        "viem": "^2.0.0"
+    },
+    "dependencies": {
+        "@noble/ciphers": "^2.2.0",
+        "@noble/hashes": "^2.0.0"
+    },
+    "devDependencies": {
+        "viem": "^2.56.3",
+        "vitest": "^4.1.11"
+    }
+}
