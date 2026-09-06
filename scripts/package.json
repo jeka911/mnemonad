@@ -9,7 +9,9 @@
         "deploy:testnet": "node deploy_testnet.js",
         "deploy:mainnet": "node deploy_mainnet.js",
         "deploy:gateway:testnet": "node deploy_gateway_testnet.js",
-        "deploy:gateway:mainnet": "node deploy_gateway_mainnet.js"
+        "deploy:gateway:mainnet": "node deploy_gateway_mainnet.js",
+        "collect-fees:testnet": "node collect_fees_testnet.js",
+        "collect-fees:mainnet": "node collect_fees_mainnet.js"
     },
     "license": "AGPL-3.0",
     "dependencies": {

@@ -9,7 +9,12 @@
  */
 import { deployToNetwork, parseDeployArgs } from './deploy.js';
 
-deployToNetwork('monadTestnet', parseDeployArgs(process.argv.slice(2))).catch((err) => {
+// try/catch rather than `.catch()`: argument parsing throws *synchronously*, before a
+// promise exists to attach a handler to, so a bad flag would otherwise print a stack trace
+// instead of the message the parser carefully wrote.
+try {
+	await deployToNetwork('monadTestnet', parseDeployArgs(process.argv.slice(2)));
+} catch (err) {
 	console.error(err.message);
 	process.exitCode = 1;
-});
+}
