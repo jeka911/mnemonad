@@ -1,5 +1,4 @@
 {
-	"installCommand": "pnpm install && pnpm --dir ../js install --frozen-lockfile --ignore-scripts",
 	"builds": [{ "src": "api/index.js", "use": "@vercel/node" }],
 	"routes": [{ "src": "/(.*)", "dest": "/api/index.js" }]
 }

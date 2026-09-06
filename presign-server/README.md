@@ -51,21 +51,24 @@ that handler: it builds the app once per instance, reuses it across invocations,
 each request to Fastify's server. `vercel.json` names it explicitly via `builds`, which
 turns off entry auto-detection, and routes every path to it.
 
-**The SDK's dependencies.** `mnemonad` is depended on as `link:../js`, which symlinks the
-sibling package rather than fetching it — and pnpm does not install a linked package's own
-dependencies. Locally that goes unnoticed because `js/` has been installed for its test
-suite. A host that installs only this directory ships `../js` with no `node_modules` beside
-it, and the first import of the SDK dies with `Cannot find package '@noble/hashes'`. So the
-install step covers both packages:
+**The SDK's dependencies.** `mnemonad` is depended on as `file:../js`, not `link:../js`.
+The distinction is the whole fix. `link:` symlinks the sibling directory and installs
+nothing for it, so the deployed function contains `js/` with no `node_modules` beside it and
+the first import dies with `Cannot find package '@noble/hashes' imported from
+/var/task/js/Mnemonad.js`. `file:` packs the directory into this package's own store, with
+`@noble/hashes`, `@noble/ciphers` and the `viem` peer resolved as siblings — so the function
+needs nothing outside its own directory and no custom install step.
+
+The cost is that the SDK is now a **snapshot taken at install time**. Editing `js/` does not
+show up here until you refresh it:
 
 ```bash
-pnpm install && pnpm --dir ../js install --frozen-lockfile --ignore-scripts
+pnpm install --force
 ```
 
-The SDK's dev dependencies come along because `viem` is a *peer* dependency there — the SDK
-imports it at runtime, but a linked package gets no peers resolved for it, and it appears in
-`js/`'s lockfile only as a dev dependency. `--ignore-scripts` keeps the install from failing
-over build scripts (`esbuild`, via `vitest`) that nothing here needs.
+(Existing files sometimes appear to update anyway, because pnpm hard-links them and an
+in-place append shares the inode. Do not rely on it — anything that replaces a file, and
+every newly added file, needs the reinstall.)
 
 **The environment.** `api/index.js` sets two variables itself, because both are facts about
 the host rather than choices an operator should have to remember:
@@ -95,8 +98,9 @@ Two guards are in-process, so they now hold per instance rather than globally:
 Both want shared state (Redis, or any durable KV) before this carries real traffic. Running
 `pnpm start` on a normal host instead gives the stronger guarantees without either caveat.
 
-Any other host needs the same three corrections, or `js/` published to a registry so it can
-be depended on by version instead of by path.
+Any other host needs the same corrections. Publishing `js/` to a registry would retire the
+`file:`/`link:` question entirely — the SDK would just be a versioned dependency, with no
+snapshot to refresh.
 
 ## Endpoints
 
