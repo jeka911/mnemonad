@@ -35,6 +35,27 @@ const CHAINS = { monadTestnet, monad };
 const IDS_KEY = { monadTestnet: 'monadTestnet', monad: 'monadMainnet' };
 
 /**
+ * Explicit gas limit for the two withdrawal calls, because estimation is useless here.
+ *
+ * Both contracts pay out with `to.call{value: amount}("")`, which forwards *all* remaining
+ * gas. An estimator simulates against a near-block-size limit, watches the call offer all
+ * of it to the recipient, and concludes the transaction might need it: `estimateContractGas`
+ * returns ~39.3M for `withdrawRevenue`, a function that does one SLOAD, one SSTORE and a
+ * transfer. That exceeds Monad's 30M per-transaction cap, so the send is rejected outright.
+ *
+ * On Monad it would be wrong even if it fit: gas is charged on the *limit*, not on usage,
+ * so submitting 39M would bill 39M for ~50k of work. Hence a fixed, generous-but-sane
+ * ceiling — enough for an EOA or a modest contract recipient, ~0.4% of the estimate.
+ *
+ * Because the limit is what gets billed, the headroom is not free: this default cost
+ * 0.0153 MON against ~50k of real work. Paying out to a plain EOA can safely pass a lower
+ * `--gas`; a contract with an expensive fallback needs a higher one. For scale, submitting
+ * the 39.3M estimate would have cost 4.0077 MON — more than the 3.985 MON it was
+ * withdrawing, i.e. a net-negative collection.
+ */
+const WITHDRAW_GAS_LIMIT = 150_000n;
+
+/**
  * @param {'monadTestnet'|'monad'} networkKey
  * @param {Object} [opts={}]
  * @param {boolean} [opts.execute]      - actually send; otherwise dry run.
@@ -42,6 +63,7 @@ const IDS_KEY = { monadTestnet: 'monadTestnet', monad: 'monadMainnet' };
  * @param {string} [opts.registry]      - defaults to the address in js/ids.js.
  * @param {boolean} [opts.gatewayOnly]
  * @param {boolean} [opts.registryOnly]
+ * @param {bigint} [opts.gas]           - override the withdrawal gas limit.
  */
 export async function collectFees(networkKey, opts = {}) {
 	const chain = CHAINS[networkKey];
@@ -134,6 +156,7 @@ export async function collectFees(networkKey, opts = {}) {
 
 	// --- act ---------------------------------------------------------------------------
 	const to = getAddress(opts.to ?? account.address);
+	const gasLimit = opts.gas ?? WITHDRAW_GAS_LIMIT;
 	const actions = [];
 	if (gateway && gatewayState && gatewayState.revenue > 0n && !opts.registryOnly) {
 		actions.push({
@@ -144,6 +167,7 @@ export async function collectFees(networkKey, opts = {}) {
 					abi: gatewayAbi,
 					functionName: 'withdrawRevenue',
 					args: [to],
+					gas: gasLimit,
 				}),
 		});
 	}
@@ -151,7 +175,12 @@ export async function collectFees(networkKey, opts = {}) {
 		actions.push({
 			label: `registry.withdrawFees() → ${formatEther(feesAccrued)} ${chain.nativeCurrency.symbol} to ${feeRecipient}`,
 			send: () =>
-				walletClient.writeContract({ address: registry, abi: registryAbi, functionName: 'withdrawFees' }),
+				walletClient.writeContract({
+					address: registry,
+					abi: registryAbi,
+					functionName: 'withdrawFees',
+					gas: gasLimit,
+				}),
 		});
 	}
 
@@ -192,6 +221,7 @@ export function parseCollectArgs(argv) {
 		else if (arg === '--registry-only') out.registryOnly = true;
 		else if (arg === '--to') out.to = argv[(i += 1)];
 		else if (arg === '--registry') out.registry = argv[(i += 1)];
+		else if (arg === '--gas') out.gas = BigInt(argv[(i += 1)]);
 		else throw new Error(`collect-fees: unrecognized argument '${arg}'`);
 	}
 	if (out.gatewayOnly && out.registryOnly) {
