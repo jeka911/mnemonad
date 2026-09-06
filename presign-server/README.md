@@ -40,6 +40,28 @@ than one that says why it won't start.
 `REGISTRY_ADDRESS` normally needs no value: it defaults to whatever `mnemonad`'s `ids.js`
 records for `CHAIN_ID`.
 
+### Deploying
+
+`mnemonad` is depended on as `link:../js`, which symlinks the sibling package rather than
+fetching it — and pnpm does not install a linked package's own dependencies. Locally that
+goes unnoticed because `js/` has been installed for its test suite. A host that installs
+only this directory ships `../js` without a `node_modules` beside it, and the first import
+of the SDK dies with `Cannot find package '@noble/hashes' imported from .../js/Mnemonad.js`.
+
+`vercel.json` therefore extends the install step to cover the SDK too:
+
+```bash
+pnpm install && pnpm --dir ../js install --frozen-lockfile --ignore-scripts
+```
+
+The SDK's dev dependencies are installed along with the rest because `viem` is a *peer*
+dependency there — the SDK imports it at runtime, but a linked package gets no peers
+resolved for it. `--ignore-scripts` keeps the install from failing over build scripts
+(`esbuild`, pulled in by `vitest`) that nothing here needs to run.
+
+Any other host needs the same treatment, or `js/` published to a registry so it can be
+depended on by version instead of by path.
+
 ## Endpoints
 
 | | |
