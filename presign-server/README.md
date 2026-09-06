@@ -40,27 +40,63 @@ than one that says why it won't start.
 `REGISTRY_ADDRESS` normally needs no value: it defaults to whatever `mnemonad`'s `ids.js`
 records for `CHAIN_ID`.
 
-### Deploying
+## Deploying (Vercel)
 
-`mnemonad` is depended on as `link:../js`, which symlinks the sibling package rather than
-fetching it — and pnpm does not install a linked package's own dependencies. Locally that
-goes unnoticed because `js/` has been installed for its test suite. A host that installs
-only this directory ships `../js` without a `node_modules` beside it, and the first import
-of the SDK dies with `Cannot find package '@noble/hashes' imported from .../js/Mnemonad.js`.
+`vercel.json` and `api/index.js` cover three things a function host gets wrong by default.
 
-`vercel.json` therefore extends the install step to cover the SDK too:
+**The entry point.** `src/index.js` binds a port; a function host wants a default-exported
+handler and will otherwise pick a file by convention and reject it — *"Invalid export found
+in module src/app.js. The default export must be a function or server."* `api/index.js` is
+that handler: it builds the app once per instance, reuses it across invocations, and hands
+each request to Fastify's server. `vercel.json` names it explicitly via `builds`, which
+turns off entry auto-detection, and routes every path to it.
+
+**The SDK's dependencies.** `mnemonad` is depended on as `link:../js`, which symlinks the
+sibling package rather than fetching it — and pnpm does not install a linked package's own
+dependencies. Locally that goes unnoticed because `js/` has been installed for its test
+suite. A host that installs only this directory ships `../js` with no `node_modules` beside
+it, and the first import of the SDK dies with `Cannot find package '@noble/hashes'`. So the
+install step covers both packages:
 
 ```bash
 pnpm install && pnpm --dir ../js install --frozen-lockfile --ignore-scripts
 ```
 
-The SDK's dev dependencies are installed along with the rest because `viem` is a *peer*
-dependency there — the SDK imports it at runtime, but a linked package gets no peers
-resolved for it. `--ignore-scripts` keeps the install from failing over build scripts
-(`esbuild`, pulled in by `vitest`) that nothing here needs to run.
+The SDK's dev dependencies come along because `viem` is a *peer* dependency there — the SDK
+imports it at runtime, but a linked package gets no peers resolved for it, and it appears in
+`js/`'s lockfile only as a dev dependency. `--ignore-scripts` keeps the install from failing
+over build scripts (`esbuild`, via `vitest`) that nothing here needs.
 
-Any other host needs the same treatment, or `js/` published to a registry so it can be
-depended on by version instead of by path.
+**The environment.** `api/index.js` sets two variables itself, because both are facts about
+the host rather than choices an operator should have to remember:
+
+| | |
+|---|---|
+| `LEDGER_PATH=/tmp/…` | The filesystem is read-only apart from `/tmp`. Left at its default the ledger's first write fails with `EROFS` on the first *paid* request |
+| `TRUST_PROXY=true` | The host terminates TLS and forwards the caller's address. Without this every request looks like it came from one IP and the rate limiter throttles all callers as one |
+
+Everything else comes from Vercel's environment settings — `PINATA_JWT` at minimum, plus
+`CORS_ORIGIN` for the explorer's origin. A missing variable is logged in full and answered
+with a generic 500 rather than crashing the instance.
+
+### What serverless costs here
+
+Two guards are in-process, so they now hold per instance rather than globally:
+
+- **The issuance ledger.** `/tmp` is per-instance and does not survive recycling, so
+  `MAX_ISSUES_PER_REQUEST` bounds URLs per instance, not per escrow. Per the reasoning in
+  `store.js` this bounds duplicate Pinata storage and nothing else — `consumeUpload` deletes
+  the on-chain request on settlement, so extra URLs can never produce a second fee waiver.
+  No money is at risk; storage abuse is bounded more loosely than the single-process
+  deployment implies.
+- **The rate limiter.** `@fastify/rate-limit` keeps counts in memory, so `RATE_LIMIT_MAX`
+  applies per instance too.
+
+Both want shared state (Redis, or any durable KV) before this carries real traffic. Running
+`pnpm start` on a normal host instead gives the stronger guarantees without either caveat.
+
+Any other host needs the same three corrections, or `js/` published to a registry so it can
+be depended on by version instead of by path.
 
 ## Endpoints
 
