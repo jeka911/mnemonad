@@ -46,6 +46,7 @@
         "test:mixed-tiers": "vitest run ./test/mixed_tiers.test.js",
         "test:list-owned": "vitest run ./test/list_owned.test.js",
         "test:rate-limiter": "vitest run ./test/rate_limiter.test.js",
+        "test:rate-limiter-retry": "vitest run ./test/rate_limiter_retry.test.js",
         "test:custom-offloading-provider": "vitest run ./test/custom_offloading_provider.test.js",
         "test:upload-gateway": "vitest run ./test/upload_gateway_chain.test.js",
         "test:real-ipfs": "vitest run --config vitest.real-ipfs.config.js"

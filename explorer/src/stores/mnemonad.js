@@ -94,7 +94,13 @@ export const useMnemonadStore = defineStore('mnemonad', {
 				return;
 			}
 			try {
-				const publicClient = getPublicClient(config);
+				// Wrapped rather than raw: these reads bypass any Mnemonad instance, so
+				// without this they would be the one path in the app that is neither paced
+				// against the shared budget nor retried when the endpoint is busy.
+				const publicClient = Mnemonad.wrapClient(
+					getPublicClient(config),
+					MAX_RPC_REQUESTS_PER_SECOND
+				);
 				const address = await publicClient.readContract({
 					address: MNEMONAD_ADDRESS,
 					abi: mnemonadAbi,

@@ -162,9 +162,26 @@ describe('Mnemonad maxRPCRequestsPerSecond', () => {
 		expect(order.sort()).toEqual(['a', 'b']); // both admitted without waiting
 	});
 
-	it('is unchanged (no wrapping) without maxRPCRequestsPerSecond', () => {
+	it('does not pace without maxRPCRequestsPerSecond, but still wraps for retry', async () => {
+		// The client is wrapped either way, because the wrapper carries retrying as well as
+		// pacing and a transient RPC failure is worth another try whether or not the caller
+		// asked to be throttled. What opting out of a rate buys is that nothing is ever
+		// delayed: every call is admitted the moment it is made.
 		const client = fakeClient(900004);
 		const ev = new Mnemonad({ publicClient: client });
-		expect(ev.publicClient).toBe(client);
+
+		expect(ev.publicClient).not.toBe(client);
+		// Everything the wrapper does not override still reads through to the real client.
+		expect(ev.publicClient.chain).toBe(client.chain);
+
+		const order = [];
+		await Promise.all([
+			ev.publicClient.readContract({ functionName: 'x' }).then(() => order.push('x')),
+			ev.publicClient.readContract({ functionName: 'y' }).then(() => order.push('y')),
+			ev.publicClient.readContract({ functionName: 'z' }).then(() => order.push('z')),
+		]);
+
+		// No timer advance needed anywhere above: nothing was queued.
+		expect(order.sort()).toEqual(['x', 'y', 'z']);
 	});
 });

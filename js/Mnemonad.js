@@ -55,9 +55,14 @@ function _getSharedRateLimiter(maxPerSecond, chainId) {
 }
 
 /**
- * Wraps `publicClient`/`walletClient` through the shared limiter for `maxRPCRequestsPerSecond`
- * when one is given; returns the clients unchanged otherwise (the default — no behavior
- * change unless opted in).
+ * Wraps `publicClient`/`walletClient` through the shared limiter for the chain.
+ *
+ * Always wraps, even with no `maxRPCRequestsPerSecond`. Pacing stays opt-in — a limiter
+ * built without one admits every call immediately — but the wrapper also retries transient
+ * RPC failures, and that is worth having whether or not the caller asked to be throttled: a
+ * dropped connection or a 503 is no less transient for an unthrottled client. Reverts and
+ * other deterministic errors are still not retried, so a test asserting one sees it at the
+ * same speed as before.
  *
  * @param {?PublicClient} publicClient
  * @param {?WalletClient} walletClient
@@ -65,9 +70,8 @@ function _getSharedRateLimiter(maxPerSecond, chainId) {
  * @returns {{publicClient: ?PublicClient, walletClient: ?WalletClient}}
  */
 function _rateLimitClients(publicClient, walletClient, maxRPCRequestsPerSecond) {
-	if (!maxRPCRequestsPerSecond) return { publicClient, walletClient };
 	const chainId = publicClient?.chain?.id ?? walletClient?.chain?.id ?? null;
-	const limiter = _getSharedRateLimiter(maxRPCRequestsPerSecond, chainId);
+	const limiter = _getSharedRateLimiter(maxRPCRequestsPerSecond ?? null, chainId);
 	return {
 		publicClient: publicClient ? limiter.wrapClient(publicClient) : publicClient,
 		walletClient: walletClient ? limiter.wrapClient(walletClient) : walletClient,
@@ -269,6 +273,26 @@ export default class Mnemonad {
 	 *   vector) is exactly the burst shape that trips a public RPC's rate limit.
 	 * @returns {Promise<bigint[]>}
 	 */
+	/**
+	 * Puts an arbitrary viem client behind the same shared limiter Mnemonad instances use,
+	 * so its reads are paced and retried on the same budget.
+	 *
+	 * For code that talks to the chain directly rather than through a Mnemonad — reading a
+	 * registry field, driving `MnemonadUploadGateway` — which would otherwise be the one
+	 * unprotected path in an application that is careful everywhere else. Sharing the budget
+	 * is the point: a private limiter would pace its own calls perfectly while still pushing
+	 * the endpoint over its limit in combination with everything else.
+	 *
+	 * Wrapping an already-wrapped client returns it unchanged.
+	 *
+	 * @param {Object} client - a viem Public or Wallet client
+	 * @param {?number} [maxRPCRequestsPerSecond] - omit for retry without pacing.
+	 * @returns {Object}
+	 */
+	static wrapClient(client, maxRPCRequestsPerSecond) {
+		return _rateLimitClients(client, null, maxRPCRequestsPerSecond).publicClient;
+	}
+
 	static async listOwned(publicClient, contractAddress, owner, maxRPCRequestsPerSecond) {
 		({ publicClient } = _rateLimitClients(publicClient, null, maxRPCRequestsPerSecond));
 		const blockNumber = await publicClient.getBlockNumber({ cacheTime: 0 });

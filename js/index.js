@@ -6,7 +6,7 @@ import MnemonadPinataProvider from './offloading/MnemonadPinataProvider.js';
 import MnemonadPresignProvider from './offloading/MnemonadPresignProvider.js';
 import MnemonadUploadGateway from './MnemonadUploadGateway.js';
 import MnemonadCrypto from './MnemonadCrypto.js';
-import MnemonadRateLimiter from './MnemonadRateLimiter.js';
+import MnemonadRateLimiter, { isTransientRpcError } from './MnemonadRateLimiter.js';
 import { mnemonadAbi } from './abi.js';
 import { uploadGatewayAbi } from './gatewayAbi.js';
 import ids from './ids.js';
@@ -22,6 +22,7 @@ export {
 	MnemonadUploadGateway,
 	MnemonadCrypto,
 	MnemonadRateLimiter,
+	isTransientRpcError,
 	Store,
 	StoreName,
 	Codec,
