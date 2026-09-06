@@ -15,7 +15,10 @@ import metaRoutes from './routes/meta.js';
  * isolation if the chain and Pinata can be substituted.
  */
 export async function buildApp(config, overrides = {}) {
-	const app = Fastify({ logger: { level: config.logLevel } });
+	const app = Fastify({
+		logger: { level: config.logLevel },
+		trustProxy: config.trustProxy ?? false,
+	});
 
 	const chain = overrides.chain ?? createChain(config);
 	const pinata = overrides.pinata ?? createPinata(config);

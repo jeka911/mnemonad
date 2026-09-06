@@ -36,6 +36,17 @@ export function loadConfig(env = process.env) {
 		logLevel: env.LOG_LEVEL || 'info',
 		corsOrigin: env.CORS_ORIGIN || null,
 
+		/**
+		 * Derive `request.ip` from `X-Forwarded-For`.
+		 *
+		 * Off by default, because trusting that header when nothing overwrites it lets any
+		 * caller claim any address and walk around the rate limiter one forged IP at a time.
+		 * Behind a proxy that always sets it, the opposite is true: leaving this off makes
+		 * every request look like it came from the proxy, and the limiter throttles all
+		 * callers as a single client.
+		 */
+		trustProxy: bool(env.TRUST_PROXY, false),
+
 		chainId,
 		rpcUrl,
 		registryAddress,
@@ -92,6 +103,13 @@ export function loadConfig(env = process.env) {
 		throw new Error(`Invalid configuration:\n  - ${errors.join('\n  - ')}`);
 	}
 	return config;
+}
+
+function bool(value, fallback) {
+	if (value === undefined || value === '') return fallback;
+	if (value === 'true' || value === '1') return true;
+	if (value === 'false' || value === '0') return false;
+	throw new Error(`Expected a boolean ('true' or 'false'), got '${value}'`);
 }
 
 function int(value, fallback) {
