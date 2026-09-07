@@ -52,16 +52,36 @@ contract Mnemonad is ERC721Enumerable, Ownable2Step, ReentrancyGuardTransient {
     ///         doubles in a single step, which is exactly where CODE overtakes it.
     uint256 public constant SLOT_MAX_BYTES = 31;
 
-    /// @notice Ceiling on `maxChunkBytes`: Monad's 128 KB code cap less the STOP byte.
-    uint256 public constant MAX_CHUNK_BYTES_CEILING = 131_071;
+    /// @notice Ceiling on `maxChunkBytes`, deliberately well under what the EVM would allow.
+    ///
+    /// Monad's own code-size cap is 128 KB, and that number alone would let a deployer set
+    /// `maxChunkBytes` right up against it — but a CODE-tier chunk that large risks exceeding
+    /// Monad's 30M-gas *per-transaction* cap outright on the deploy itself (`DataChunk.write`
+    /// costs ~216 gas/byte), which is a hard failure, not merely an expensive one, and one
+    /// that no client-side gas estimate can paper over: if the real cost is above the cap,
+    /// every wallet's estimate will correctly say so and the transaction will be rejected
+    /// regardless of how tightly it's computed. 64 KiB keeps a full-size chunk's deploy cost
+    /// comfortably inside that cap with real headroom to spare, on any gas price.
+    ///
+    /// This is a ceiling on *on-chain* chunk size only, not a target. A payload above it is
+    /// still perfectly storable — it just can't go through the single-transaction CODE path,
+    /// and has to use the staged multi-transaction append instead or be offloaded off-chain
+    /// (EXTERNAL/IPFS) instead. Deciding *when* off-chain storage is worth it below this
+    /// ceiling — e.g. offloading a 40 KB item because IPFS is cheaper than CODE at that size,
+    /// even though it would fit on-chain — is a cost-optimization call the contract has no
+    /// opinion on; it belongs to the SDK (or whatever calls this contract), which can see gas
+    /// price and off-chain pinning cost together and this contract cannot.
+    uint256 public constant MAX_CHUNK_BYTES_CEILING = 65_536;
 
     /// @notice Hard cap on the admin-settable fee. A constant, so no admin can raise it.
     uint256 public constant MAX_FEE_PER_BYTE = 1e14; // 0.0001 MON/byte
 
     /// @notice Largest payload accepted into a single CODE chunk. An immutable rather than a
-    ///         constant because the enforcing limit is the EVM's code-size cap, which
-    ///         differs per environment: ~120 KB on Monad, 24 KB under local EIP-170. Larger
-    ///         items are assembled from several chunks via the staged-append path.
+    ///         constant because the enforcing limit used to be the EVM's own code-size cap
+    ///         (~120 KB on Monad, 24 KB under local EIP-170) before `MAX_CHUNK_BYTES_CEILING`
+    ///         tightened it — see that constant for why 64 KiB is the real ceiling now, and
+    ///         why a deployer choosing anything under that value is still just as valid.
+    ///         Larger items are assembled from several chunks via the staged-append path.
     uint256 public immutable maxChunkBytes;
 
     /// @notice EXTERNAL items pay a flat fee equal to 25% of a maximum on-chain upload.

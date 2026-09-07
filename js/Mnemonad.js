@@ -136,7 +136,20 @@ export default class Mnemonad {
 		/** @type {?number} Contract version the vector was created with. */
 		this.madeWithVersion = null;
 
-		/** @type {number} Max payload accepted in a single on-chain chunk. From chain. */
+		/**
+		 * @type {number} Max payload the registry will accept into a single on-chain chunk.
+		 * From chain — bounded by `MAX_CHUNK_BYTES_CEILING` (64 KiB as of this writing; see
+		 * that constant's own comment for why the contract deliberately holds this well
+		 * under Monad's 128 KB code-size cap).
+		 *
+		 * This is a ceiling, not a routing target: the contract has no opinion on whether
+		 * something *under* this size should go on-chain at all. `push()` only reaches for
+		 * IPFS when a payload doesn't fit here — it never chooses to offload something
+		 * smaller just because that might be cheaper. Whether it's worth doing so is a real
+		 * question this class doesn't answer today (it needs gas price and off-chain pinning
+		 * cost together, which only a caller has both sides of) — a future `push()` or an
+		 * explicit `{ preferOffload: true }`-style option would be the place to add it.
+		 */
 		this.maxChunkBytes = 0;
 		/**
 		 * @type {number} Largest slice fetched per read call. Items above this are read in
@@ -1353,6 +1366,9 @@ export default class Mnemonad {
 	 * @param {string} functionName
 	 * @param {Array} args
 	 * @param {Object} [options={}]
+	 * @param {bigint} [options.gas] - explicit gas limit, bypassing the estimate-and-buffer
+	 *   below entirely. Escape hatch for a write whose real cost this can't simulate
+	 *   accurately (see `withdrawRevenue`-style callers elsewhere in this codebase).
 	 * @returns {Promise<Object>} the transaction receipt
 	 */
 	async _write(functionName, args, options = {}) {
@@ -1373,6 +1389,41 @@ export default class Mnemonad {
 			chain: this.publicClient?.chain ?? null,
 		};
 		if (options.value) request.value = options.value;
+
+		// An explicit gas limit, from our own simulation rather than left to whatever the
+		// connected wallet decides. Two independent reasons this matters more here than on
+		// most chains: Monad bills the *limit*, not gas used, so a wallet's own padded
+		// estimate is a direct overcharge even when the write succeeds — and some wallets
+		// pad generously enough to push a genuinely-fitting write over the 30M per-tx cap,
+		// which fails outright rather than merely costing more. Observed for real: a ~97 KB
+		// CODE-tier `push` simulates at ~21.5M gas here — comfortably under the cap — yet
+		// failed with "Exceeds transaction gas limit" through a wallet padding past it.
+		// `estimateContractGas` hits the same node the write will, so it reflects the real
+		// cost; the buffer (matching `estimatePushCost`'s own) covers ordinary state drift
+		// between simulation and inclusion, not wallet guesswork.
+		if (options.gas) {
+			request.gas = options.gas;
+		} else {
+			try {
+				const estimated = await this.publicClient.estimateContractGas({
+					address: this._contractAddress,
+					abi: mnemonadAbi,
+					functionName,
+					args,
+					account: request.account,
+					value: request.value,
+				});
+				request.gas = (estimated * 110n) / 100n;
+			} catch {
+				// Simulation can fail for reasons that have nothing to do with gas — a stale
+				// `expectedLength`, an unauthorized caller — in which case the write itself
+				// is about to fail anyway, and surfaces more clearly as that specific revert
+				// than as a swallowed estimation error here. Falling through with no
+				// explicit `gas` preserves today's behavior (wallet/viem estimates) rather
+				// than blocking the write on a simulation issue this method has no business
+				// diagnosing.
+			}
+		}
 
 		const hash = this._sendTransaction
 			? await this._sendTransaction(request)

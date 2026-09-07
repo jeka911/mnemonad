@@ -49,6 +49,7 @@
         "test:rate-limiter-retry": "vitest run ./test/rate_limiter_retry.test.js",
         "test:custom-offloading-provider": "vitest run ./test/custom_offloading_provider.test.js",
         "test:upload-gateway": "vitest run ./test/upload_gateway_chain.test.js",
+        "test:write-gas-estimate": "vitest run ./test/write_gas_estimate.test.js",
         "test:real-ipfs": "vitest run --config vitest.real-ipfs.config.js"
     },
     "peerDependencies": {

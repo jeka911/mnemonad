@@ -33,13 +33,19 @@ const IDS_KEY = {
 const CHAINS = { monadTestnet, monad };
 
 /**
- * Real-network ceiling for the largest single on-chain chunk. The unit tests use small
+ * Real-network default for the largest single on-chain chunk. The unit tests use small
  * values (2-20 KB, see js/test/fixture.js) so the staged multi-chunk path is exercisable
- * without huge payloads; this is the value that matters for an actual deployment, and the
- * ~120 KB single-chunk path it unlocks cannot be verified locally at all — see
- * contracts/README.md's "Known gaps".
+ * without huge payloads; this is the value that matters for an actual deployment.
+ *
+ * Matches `Mnemonad.MAX_CHUNK_BYTES_CEILING` exactly — the contract's own hard cap, kept
+ * deliberately well under Monad's 128 KB code-size limit because the *gas* cost of deploying
+ * a chunk that large is what actually binds first, with too little headroom under the 30M
+ * per-transaction cap to survive a wallet's own gas-estimation padding. Passing a smaller
+ * value here is fine (see the constant's own doc comment on why a smaller ceiling is never
+ * wrong); passing anything larger reverts with `BadChunkCeiling`, since the constructor
+ * enforces the same ceiling.
  */
-const DEFAULT_MAX_CHUNK_BYTES = 122_880n;
+const DEFAULT_MAX_CHUNK_BYTES = 65_536n;
 
 /**
  * @param {'monadTestnet'|'monad'} networkKey

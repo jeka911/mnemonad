@@ -65,11 +65,15 @@ absent gateway degrades to charging normally rather than bricking every external
 `allowUnlimitedContractSize` for Solidity tests. Monad allows 128 KB. Consequences:
 
 - `maxChunkBytes` is a **constructor immutable**, not a constant — tests instantiate it at
-  20,000 so the boundary logic is exercisable; testnet is deployed at 122,880.
+  20,000 so the boundary logic is exercisable. Bounded by `MAX_CHUNK_BYTES_CEILING`
+  (64 KiB as of this writing — see that constant's own doc comment for why it's well under
+  Monad's 128 KB code-size cap: the *gas* cost of a chunk that large binds before the code
+  size does). **The currently-deployed testnet registry predates this ceiling and is still
+  running at 122,880** — the tightened value only takes effect on the next deploy.
 - The registry is compiled with `optimizer.runs = 200` to stay under 24 KB and remain
   unit-testable. Monad's headroom would permit far more aggressive inlining.
-- **The ~120 KB single-chunk path cannot be tested locally at all.** It is a testnet-only
-  verification.
+- **The single-chunk CODE path near the ceiling cannot be tested locally at all** — it needs
+  more code-size headroom than the local EDR node allows. Testnet-only verification.
 
 **2. Gas schedule.** Local EDR prices storage the Ethereum way (20,000 per new slot,
 EIP-2929 cold access). Monad uses MIP-8: 4 KB/128-slot pages, 8,000 per cold page + 2,800

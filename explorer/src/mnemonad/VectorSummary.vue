@@ -2,7 +2,13 @@
 	<div class="vector-summary">
 		<div class="vector-summary__row">
 			<span class="vector-summary__label">Id</span>
-			<span class="vector-summary__value vector-summary__value--mono">{{ idHex }}</span>
+			<ExplorerLink
+				type="token"
+				:value="vector.id"
+				:contract-address="contractAddress"
+				:chain="chain"
+				:label="idHex"
+			/>
 		</div>
 		<div class="vector-summary__row">
 			<span class="vector-summary__label">Owner</span>
@@ -65,6 +71,13 @@ export default {
 	props: {
 		vector: {
 			type: Object,
+			required: true,
+		},
+		// The registry contract's address — needed to link the vector's id to its own
+		// per-token page (`/nft/{contract}/{tokenId}`), distinct from `vector.owner`'s
+		// address page.
+		contractAddress: {
+			type: String,
 			required: true,
 		},
 		chain: {
@@ -146,10 +159,6 @@ export default {
 	color: var(--q-text-bright, #ffffff);
 	font-family: var(--font-mono, monospace);
 	font-size: 0.9em;
-}
-
-.vector-summary__value--mono {
-	font-size: 0.85em;
 }
 
 .vector-summary__value--stacked {

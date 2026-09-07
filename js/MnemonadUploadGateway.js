@@ -184,13 +184,42 @@ export default class MnemonadUploadGateway {
 	}
 
 	async _write(functionName, args, value, params = {}) {
+		const account = this.walletClient.account ?? this._senderAddress;
+
+		// An explicit gas limit rather than leaving it to the connected wallet — same
+		// reasoning as `Mnemonad._write`: Monad bills the limit, not gas used, so a
+		// wallet's own padded estimate is a direct overcharge even when it succeeds, and on
+		// a large enough write can pad past the 30M per-tx cap outright. This class of
+		// gateway call is small and fixed-cost (no payload-sized deploy involved), so the
+		// risk of that second failure is low here — but the overcharge risk is identical to
+		// `Mnemonad._write`, so it gets the same fix rather than being a special case.
+		let gas = params.gas;
+		if (!gas) {
+			try {
+				const estimated = await this.publicClient.estimateContractGas({
+					address: this.address,
+					abi: uploadGatewayAbi,
+					functionName,
+					args,
+					account,
+					value,
+				});
+				gas = (estimated * 110n) / 100n;
+			} catch {
+				// See Mnemonad._write's identical catch: a simulation failure here means the
+				// write itself is about to fail, more clearly surfaced as that revert than
+				// swallowed into a missing estimate.
+			}
+		}
+
 		const hash = await this.walletClient.writeContract({
 			address: this.address,
 			abi: uploadGatewayAbi,
 			functionName,
 			args,
 			value,
-			account: this.walletClient.account ?? this._senderAddress,
+			account,
+			...(gas ? { gas } : {}),
 			// viem reads three distinct meanings here, and the difference decides whether a
 			// write is even attempted: a chain object asserts the wallet is on that network,
 			// `null` deliberately waives that assertion, and `undefined` falls back to

@@ -12,19 +12,24 @@
 </template>
 
 <script>
-import { addressUrl } from '../includes/explorerUrl.js';
+import { addressUrl, tokenUrl } from '../includes/explorerUrl.js';
 
 export default {
 	name: 'ExplorerLink',
 	props: {
-		// Only 'address' is supported for now — see includes/explorerUrl.js.
+		// 'address', or 'token' (an ERC-721 token id — pass the contract via `contractAddress`).
 		type: {
 			type: String,
 			default: 'address',
 		},
 		value: {
-			type: String,
+			type: [String, Number, BigInt],
 			required: true,
+		},
+		// Required when type is 'token'; ignored for 'address'.
+		contractAddress: {
+			type: String,
+			default: null,
 		},
 		chain: {
 			type: Object,
@@ -37,8 +42,9 @@ export default {
 	},
 	computed: {
 		href: function() {
-			if (this.type !== 'address') return null;
-			return addressUrl(this.chain, this.value);
+			if (this.type === 'token') return tokenUrl(this.chain, this.contractAddress, this.value);
+			if (this.type === 'address') return addressUrl(this.chain, this.value);
+			return null;
 		},
 	},
 };

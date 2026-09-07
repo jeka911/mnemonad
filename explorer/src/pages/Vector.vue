@@ -25,6 +25,7 @@
 						<VectorSummary
 							v-else-if="vector"
 							:vector="vector"
+							:contract-address="mnemonadStore.contractAddress"
 							:chain="activeNetwork.chain"
 							:loaded-items="loadedItemsCount"
 							:loaded-binary-length="loadedBinaryLength"
@@ -45,7 +46,7 @@
 					</template>
 				</GradientPanel>
 
-				<JPanel  icon="add" title="Add" class="q-mt-md add-panel">
+				<JPanel icon="add" title="Add" class="q-mt-md add-panel">
 					<template #header>
 						<q-tabs
 							v-model="addTab"
@@ -60,39 +61,55 @@
 							<q-tab name="offload" label="IPFS" />
 						</q-tabs>
 					</template>
-					<!-- Plain v-show, not <q-tab-panels>: that component left both panels
-					     rendered with display:block simultaneously in this app (likely the
-					     two-Quasar-instances issue already documented in GradientPanel.vue) —
-					     confirmed live, not assumed. v-show keeps each form's own state
-					     intact when switching tabs, same as q-tab-panels would have. -->
-					<div class="add-panel__panel q-pa-md">
-						<AddRandomBytes
-							v-show="addTab === 'random'"
-							:disable="!canWrite"
-							:loading="pushingRandom"
-							:max-bytes="vector.maxChunkBytes"
-							@submit="onAddRandomBytes"
-						/>
-						<AddTextChunk
-							v-show="addTab === 'text'"
-							:disable="!canWrite"
-							:hint="writeHint"
-							:loading="pushing"
-							:max-bytes="vector.maxChunkBytes"
-							:can-offload="presignConfigured"
-							:estimate="estimateCost"
-							@submit="onAddText"
-						/>
-						<OffloadUpload
-							v-show="addTab === 'offload'"
-							:disable="!canWrite || !presignConfigured"
-							:hint="offloadHint"
-							:loading="offloading"
-							:max-chunk-bytes="vector.maxChunkBytes"
-							:gateway="mnemonadStore.gateway"
-							:quote-for="quoteOffload"
-							@submit="onOffloadUpload"
-						/>
+					<!-- Tabs stay at full brightness (they're harmless to click either way —
+					     every form underneath is gated the same way regardless of which one
+					     shows); only the form content itself dims, with one overlay message
+					     covering all three tabs uniformly. Today only AddTextChunk/OffloadUpload
+					     take a `hint` prop of their own, so AddRandomBytes silently showed
+					     disabled controls with no explanation at all — this fixes that too. -->
+					<div class="add-panel__panel-wrap">
+						<!-- Plain v-show, not <q-tab-panels>: that component left both panels
+						     rendered with display:block simultaneously in this app (likely the
+						     two-Quasar-instances issue already documented in GradientPanel.vue) —
+						     confirmed live, not assumed. v-show keeps each form's own state
+						     intact when switching tabs, same as q-tab-panels would have. -->
+						<div class="add-panel__panel q-pa-md" :class="{ 'add-panel__panel--disabled': !canWrite }">
+							<AddRandomBytes
+								v-show="addTab === 'random'"
+								:disable="!canWrite"
+								:loading="pushingRandom"
+								:max-bytes="vector.maxChunkBytes"
+								@submit="onAddRandomBytes"
+							/>
+							<AddTextChunk
+								v-show="addTab === 'text'"
+								:disable="!canWrite"
+								:hint="writeHint"
+								:loading="pushing"
+								:max-bytes="vector.maxChunkBytes"
+								:can-offload="presignConfigured"
+								:estimate="estimateCost"
+								@submit="onAddText"
+							/>
+							<OffloadUpload
+								v-show="addTab === 'offload'"
+								:disable="!canWrite || !presignConfigured"
+								:hint="offloadHint"
+								:loading="offloading"
+								:max-chunk-bytes="vector.maxChunkBytes"
+								:gateway="mnemonadStore.gateway"
+								:quote-for="quoteOffload"
+								@submit="onOffloadUpload"
+							/>
+						</div>
+						<!-- Sibling of the dimmed content above, not a descendant — CSS opacity
+						     applies to every descendant with no way to opt a child back out, so
+						     this has to sit outside `.add-panel__panel` to stay readable. -->
+						<div v-if="!canWrite" class="add-panel__overlay">
+							<q-icon name="lock" size="20px" class="add-panel__overlay-icon" />
+							<p class="add-panel__overlay-title">Connect as the owner to manage this vector</p>
+							<p class="add-panel__overlay-hint">{{ writeHint }}</p>
+						</div>
 					</div>
 				</JPanel>
 			</div>
@@ -538,6 +555,54 @@ function sleep(ms) {
 /* Sits in JPanel's header slot, alongside the "Add" title — see the template. */
 .add-panel__tabs {
 	margin-left: 8px;
+}
+
+/* Positions the overlay below against the dimmed form content, not the page. */
+.add-panel__panel-wrap {
+	position: relative;
+}
+
+/* Dims and disables the form content — tabs stay bright, see the template comment.
+   The individual `:disable` props on each form are still there underneath (belt and
+   suspenders: this is only a visual/pointer-events treatment, not the actual guard). */
+.add-panel__panel--disabled {
+	opacity: 0.35;
+	pointer-events: none;
+}
+
+.add-panel__overlay {
+	position: absolute;
+	inset: 0;
+	display: flex;
+	flex-direction: column;
+	align-items: center;
+	justify-content: center;
+	gap: 6px;
+	padding: 16px;
+	text-align: center;
+	/* Not dimmed — a sibling of `.add-panel__panel--disabled`, not a descendant. */
+}
+
+.add-panel__overlay-icon {
+	color: var(--q-text-muted, #8a94a6);
+	opacity: 0.8;
+}
+
+.add-panel__overlay-title {
+	margin: 0;
+	font-size: 14px;
+	font-weight: 600;
+	color: var(--q-text-bright, #ffffff);
+}
+
+.add-panel__overlay-hint {
+	margin: 0;
+	font-size: 12px;
+	color: var(--q-text-muted, #8a94a6);
+}
+
+body.body--light .add-panel__overlay-title {
+	color: #2a2440;
 }
 
 .vector-layout {

@@ -9,8 +9,16 @@ pragma solidity ^0.8.28;
 /// gas/byte under MIP-8 (17,000 gas per net-new slot dominates), while deploying them as
 /// code costs ~216 gas/byte, and reading them back via `EXTCODECOPY` is roughly 44× cheaper
 /// than the equivalent `SLOAD` run. Monad also raises the max contract size to 128 KB (from
-/// Ethereum's 24 KB), so a single chunk can hold ~120 KB and still fit in one 30M-gas
-/// transaction.
+/// Ethereum's 24 KB) — but the code-size cap and the *gas* cap are two separate limits, and
+/// the gas one binds first: at ~221 gas/byte measured live (this comment's own ~216 estimate
+/// plus calldata and bookkeeping), a chunk anywhere near 128 KB computes to ~28-30M gas —
+/// against Monad's 30M-gas *per-transaction* cap, with only single-digit-percent headroom.
+/// That is not a safe number to build a ceiling around: it leaves no room for a wallet's own
+/// gas-estimation padding, which is exactly what turned a real ~97 KB chunk (well inside the
+/// registry's old 120 KB ceiling) into an "Exceeds transaction gas limit" failure rather than
+/// a successful, if expensive, deploy. See `Mnemonad.MAX_CHUNK_BYTES_CEILING` for the ceiling
+/// this pushed the registry to: 64 KiB, computing to roughly half the 30M cap with real
+/// margin to spare.
 ///
 /// The trade-off, which the caller must accept: a chunk is immutable and can never be
 /// deleted (`SELFDESTRUCT` no longer frees code post-Cancun), so there are no storage
