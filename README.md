@@ -1,6 +1,12 @@
 # Mnemonad
 
-An append-only bytes[] that lives on-chain and grows past what one transaction can carry. Items are tiered by cost — packed storage slots, contract code, or an IPFS pointer — with optional client-side encryption. Each vector is an ERC-721 token, so ownership and access control come for free.
+##### TLDR:
+
+On the base protocol layer, Mnemonad is an infinite bytes[] that lives entirely on-chain on Monad — append-only and unbounded in length, growing past what any single transaction could hold via chunked/staged writes — exposed as an ERC-721 NFT, so each "vector" is a token you own, can grant others write access to, and can optionally encrypt client-side. Storage auto-tiers by cost: packed slots → contract code → off-chain offload with just a hash+locator kept on-chain, paid for without ever putting a pinning-service credential in the browser. IPFS is the offload backend implemented today — the pointer format (codec + locator) is deliberately generic, so other backends (Arweave, HTTPS, Filecoin, Walrus, whatever comes next) can be added without a redeploy.
+
+As we extend it — sets of vectors, version control, sync, richer per-item structure, more offload backends — that base layer is what stays fixed underneath.
+
+It ships as smart contracts, an SDK, a dApp, and a set of supporting tools — not just a protocol spec.
 
 ## Layout
 
