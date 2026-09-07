@@ -61,6 +61,26 @@ export function fetchPresignConfig() {
 }
 
 /**
+ * Live liveness check — never cached, unlike `fetchPresignConfig`, since the whole point is
+ * "is it up *right now*". The server itself decides what "healthy" means (chain reachable,
+ * gateway resolved — see `meta.js`'s own `/health` handler) and reports it as `status: 'ok'`
+ * (HTTP 200) or `status: 'degraded'` (HTTP 503, with `error`); this just surfaces whichever it
+ * said rather than re-deriving health from the status code alone.
+ *
+ * @returns {Promise<{status: string, error?: string}>}
+ * @throws if unconfigured, unreachable, or the response isn't JSON.
+ */
+export async function fetchPresignHealth() {
+	if (!PRESIGN_URL) throw new Error('No sign server configured');
+	const res = await fetch(`${PRESIGN_URL}/health`);
+	const body = await res.json().catch(() => ({}));
+	// 503 is itself a valid, meaningful "degraded" answer from this endpoint — not a fetch
+	// failure — so it's returned like any other body rather than thrown.
+	if (res.ok || res.status === 503) return body;
+	throw new Error(body.error || `sign server /health failed (HTTP ${res.status})`);
+}
+
+/**
  * A provider that asks the sign server for an upload URL per payload.
  *
  * @param {Object} params

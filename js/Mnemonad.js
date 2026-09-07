@@ -3,6 +3,8 @@ import MnemonadItem, { Store } from './MnemonadItem.js';
 import MnemonadIpfs from './offloading/MnemonadIpfs.js';
 import MnemonadCrypto from './MnemonadCrypto.js';
 import MnemonadRateLimiter from './MnemonadRateLimiter.js';
+import { wrapClientForRecording } from './MnemonadRpcRecorder.js';
+import MnemonadChunkCache from './MnemonadChunkCache.js';
 import { mnemonadAbi } from './abi.js';
 import ids from './ids.js';
 
@@ -64,18 +66,69 @@ function _getSharedRateLimiter(maxPerSecond, chainId) {
  * other deterministic errors are still not retried, so a test asserting one sees it at the
  * same speed as before.
  *
+ * When `debug` is on, the pacing/retry wrap is itself wrapped one layer further out by
+ * `MnemonadRpcRecorder`, so every logical call `Mnemonad` makes — one entry regardless of how
+ * many times the limiter underneath retries it — lands in the process-wide RPC call log. Off
+ * by default: recording is pure overhead for anything that isn't watching it.
+ *
  * @param {?PublicClient} publicClient
  * @param {?WalletClient} walletClient
  * @param {?number} maxRPCRequestsPerSecond
+ * @param {boolean} [debug=false]
  * @returns {{publicClient: ?PublicClient, walletClient: ?WalletClient}}
  */
-function _rateLimitClients(publicClient, walletClient, maxRPCRequestsPerSecond) {
+function _rateLimitClients(publicClient, walletClient, maxRPCRequestsPerSecond, debug = false) {
 	const chainId = publicClient?.chain?.id ?? walletClient?.chain?.id ?? null;
 	const limiter = _getSharedRateLimiter(maxRPCRequestsPerSecond ?? null, chainId);
-	return {
-		publicClient: publicClient ? limiter.wrapClient(publicClient) : publicClient,
-		walletClient: walletClient ? limiter.wrapClient(walletClient) : walletClient,
-	};
+	let wrappedPublic = publicClient ? limiter.wrapClient(publicClient) : publicClient;
+	let wrappedWallet = walletClient ? limiter.wrapClient(walletClient) : walletClient;
+	if (debug) {
+		if (wrappedPublic) wrappedPublic = wrapClientForRecording(wrappedPublic, { chainId });
+		if (wrappedWallet) wrappedWallet = wrapClientForRecording(wrappedWallet, { chainId });
+	}
+	return { publicClient: wrappedPublic, walletClient: wrappedWallet };
+}
+
+/**
+ * Shared by its (canonicalized) options, same reasoning as `_getSharedRateLimiter`:
+ * IndexedDB durability is the whole point of this cache, and a cache scoped to one
+ * `Mnemonad` instance would defeat it by dying with that instance. Two instances configured
+ * with the same `cacheOptions` share one cache; different options (or an explicit
+ * `namespace`) get their own, deliberately — the namespace exists for exactly this, letting
+ * an app isolate caches on purpose rather than only by accident of differing options.
+ *
+ * @param {import('./MnemonadChunkCache.js').ChunkCacheOptions} options
+ * @returns {MnemonadChunkCache}
+ */
+/**
+ * Shared by chain id + contract address: `CONTRACT_VERSION` and `maxChunkBytes` are immutable
+ * contract constants, so once one `Mnemonad` instance has read them for a given deployment,
+ * no other instance pointed at the same one ever needs to ask again. Without this, every
+ * fresh instance an app constructs — a new page load, a new write action, `Mnemonad.create()`
+ * — repeats both reads for no reason, since neither value can ever change for an already
+ * deployed, immutable contract. Same reasoning as `_getSharedRateLimiter`/`_getSharedChunkCache`.
+ *
+ * @type {Map<string, {madeWithVersion: number, maxChunkBytes: number}>}
+ */
+const _sharedContractConstants = new Map();
+function _contractConstantsKey(chainId, contractAddress) {
+	return `${chainId ?? 'unknown'}:${contractAddress}`;
+}
+
+const _sharedChunkCaches = new Map();
+function _getSharedChunkCache(options) {
+	const key = JSON.stringify({
+		maxEntries: options.maxEntries,
+		maxTotalBytes: options.maxTotalBytes,
+		maxEntryBytes: options.maxEntryBytes,
+		namespace: options.namespace,
+	});
+	let cache = _sharedChunkCaches.get(key);
+	if (!cache) {
+		cache = new MnemonadChunkCache(options);
+		_sharedChunkCaches.set(key, cache);
+	}
+	return cache;
 }
 
 /**
@@ -110,12 +163,23 @@ export default class Mnemonad {
 	 *   configured with the same rate on the same chain (see `_getSharedRateLimiter`) — a
 	 *   fan-out read over many vectors needs one budget, not one per vector. Omit for
 	 *   unlimited (the default); public RPC endpoints commonly 429 an unthrottled fan-out.
+	 * @param {boolean|Object} [params.cache] - `false`/`null` disables item-payload caching
+	 *   entirely; an object with `get`/`set` is used as a custom cache verbatim; omit for the
+	 *   shared default (see `MnemonadChunkCache`).
+	 * @param {import('./MnemonadChunkCache.js').ChunkCacheOptions} [params.cacheOptions] -
+	 *   tunes the shared default cache (`maxEntries`, `maxTotalBytes`, `maxEntryBytes`,
+	 *   `namespace`); ignored if `params.cache` is set.
+	 * @param {boolean} [params.debug=false] - when true, every RPC call this instance makes
+	 *   (`readContract`, `writeContract`, `getBlockNumber`, ...) is recorded into
+	 *   `MnemonadRpcRecorder`'s process-wide log — see `getRpcCallCount`/`subscribeRpcCalls`.
+	 *   Off by default; purely observational, no effect on caching or pacing.
 	 */
 	constructor(params = {}) {
 		const { publicClient, walletClient } = _rateLimitClients(
 			params.publicClient,
 			params.walletClient,
-			params.maxRPCRequestsPerSecond
+			params.maxRPCRequestsPerSecond,
+			!!params.debug
 		);
 
 		/** @type {PublicClient} */
@@ -204,6 +268,25 @@ export default class Mnemonad {
 		 * @type {MnemonadCrypto}
 		 */
 		this.crypto = new MnemonadCrypto({ ...params, mnemonad: this });
+
+		/**
+		 * Caches item payload bytes — pre-decryption, exactly as fetched from chain or IPFS;
+		 * see `MnemonadChunkCache`'s own file comment for why that matters. Consulted by
+		 * `_readItemBytes` (on-chain) and `MnemonadIpfs.readPointerBytes` (off-chain, via
+		 * `this._mnemonad`). `params.cache`:
+		 *   - omitted → the shared default for `params.cacheOptions` (IndexedDB in a browser,
+		 *     an in-memory Map elsewhere — see `_getSharedChunkCache`).
+		 *   - `false`/`null` → disabled outright, no caching at all.
+		 *   - anything else (an object with `get`/`set`) → used exactly as given, not shared.
+		 * @type {?{get: Function, set: Function}}
+		 */
+		if (params.cache === false || params.cache === null) {
+			this._chunkCache = null;
+		} else if (params.cache && typeof params.cache === 'object') {
+			this._chunkCache = params.cache;
+		} else {
+			this._chunkCache = _getSharedChunkCache(params.cacheOptions || {});
+		}
 	}
 
 	/** @returns {?string} The registry contract address. */
@@ -432,21 +515,22 @@ export default class Mnemonad {
 		if (!this._contractAddress) throw new Error('contractAddress is required');
 
 		// One batch for everything this needs — constants (unless another instance already
-		// loaded them) alongside the vector's own fields. None of these reads depend on
-		// each other's values, only the version check below depends on having read them,
-		// so there's no reason to pay for a second round trip's latency (and, with the
-		// transport's JSON-RPC batching enabled, a second HTTP request) just to validate
-		// before reading the rest.
-		const needsConstants = !this._constantsLoaded;
-		const [len, binLen, firstIdx, meta, encKey, version, maxChunk] = await Promise.all([
-			this._read('length', [this.id]),
-			this._read('binaryLength', [this.id]),
-			this._read('firstAvailableIndex', [this.id]),
-			this._read('vectorMeta', [this.id]),
-			this._read('encKeyWrapped', [this.id]),
+		// loaded them, on this chain+contract, and left them in the shared cache) alongside
+		// the vector's own fields, which now cost one `getVectorInfo` call instead of five
+		// separate ones (`length`/`binaryLength`/`firstAvailableIndex`/`vectorMeta`/
+		// `encKeyWrapped` — removed from the contract; see `getVectorInfo`'s own comment in
+		// Mnemonad.sol for why folding them in was worth the one-time API break). None of
+		// these reads depend on each other's values, only the version check below depends on
+		// having read them, so there's no reason to pay for a second round trip's latency
+		// (and, with the transport's JSON-RPC batching enabled, a second HTTP request) just
+		// to validate before reading the rest.
+		const needsConstants = !this._constantsLoaded && !this._applyCachedConstants();
+		const [info, version, maxChunk] = await Promise.all([
+			this._read('getVectorInfo', [this.id]),
 			needsConstants ? this._read('CONTRACT_VERSION', []) : Promise.resolve(null),
 			needsConstants ? this._read('maxChunkBytes', []) : Promise.resolve(null),
 		]);
+		const [len, binLen, firstIdx, meta, encKey] = info;
 
 		if (needsConstants) {
 			await this._applyConstants([version, maxChunk]);
@@ -765,6 +849,39 @@ export default class Mnemonad {
 	}
 
 	/**
+	 * Batched form of {@link itemAt}: refs for every index in `indices` in one RPC call via
+	 * {@link getItemRefsBatch}, instead of one call per index. Already-cached indices are
+	 * skipped, matching `itemAt`'s own cache check — this only fetches what isn't already
+	 * known.
+	 *
+	 * EXTERNAL items still cost one extra `pointerAt` call each — there is no batched
+	 * pointer read on-chain (yet), only a batched refs read. Worth reaching for regardless
+	 * on a listing made mostly of SLOT/CODE items, which is the common case; a vector that's
+	 * mostly EXTERNAL items gets less benefit here.
+	 *
+	 * @param {number[]} indices
+	 * @returns {Promise<MnemonadItem[]>} in the same order as `indices`
+	 */
+	async itemsAt(indices) {
+		await this.initialize();
+		const missing = indices.filter((i) => !this._items[i]);
+		if (missing.length) {
+			const refs = await this.getItemRefsBatch(missing);
+			await Promise.all(
+				missing.map(async (i, k) => {
+					const r = refs[k];
+					const raw = { store: r.store, size: r.size, meta: r.meta };
+					if (r.store === Store.EXTERNAL) {
+						raw.pointerData = await this.pointerAt(i);
+					}
+					this._items[i] = MnemonadItem.fromChain(raw, { mnemonad: this, index: i });
+				})
+			);
+		}
+		return indices.map((i) => this._items[i]);
+	}
+
+	/**
 	 * Fetches and hex-decodes index `i`'s on-chain payload via a single `at()` contract
 	 * read. Internal — called by `MnemonadItem.bytes()` to lazily fetch what `itemAt()`
 	 * deliberately left unset. Not for external/off-chain items.
@@ -772,7 +889,48 @@ export default class Mnemonad {
 	 * @returns {Promise<Uint8Array>}
 	 */
 	async _readItemBytes(i) {
-		return hexToBytes(await this._read('at', [this.id, BigInt(i)]));
+		await this.initialize(); // chainId, needed for the cache key, is set here
+		const key = this._chunkCache && this._onchainCacheKey(i);
+		if (key) {
+			const cached = await this._chunkCache.get(key);
+			if (cached) return cached;
+		}
+		const bytes = hexToBytes(await this._read('at', [this.id, BigInt(i)]));
+		if (key) this._chunkCache.set(key, bytes).catch(() => {});
+		return bytes;
+	}
+
+	/**
+	 * Cache key for an on-chain item's payload: location-addressed, not content-addressed —
+	 * unlike an EXTERNAL item's pointer hash (known before fetching), nothing on-chain gives
+	 * this a content hash cheaply ahead of time, so it keys on where the item lives instead.
+	 * @param {number} i
+	 * @returns {string}
+	 */
+	_onchainCacheKey(i) {
+		return `onchain:${this.chainId}:${this._contractAddress}:${this.id}:${i}`;
+	}
+
+	/**
+	 * Cache key for an item's *refs* (tier/size/chunk locations) — same location tuple as
+	 * `_onchainCacheKey`, different prefix, so the two never collide in one shared cache.
+	 * @param {number} i
+	 * @returns {string}
+	 */
+	_refsCacheKey(i) {
+		return `refs:${this.chainId}:${this._contractAddress}:${this.id}:${i}`;
+	}
+
+	/**
+	 * Cache key for an EXTERNAL item's *pointer* (the CID, not the payload it points to) —
+	 * distinct from both of the above: it needs its own entry because it's fetched by a
+	 * separate contract call (`pointerAt`, not `getItemRefs`), and the payload itself is
+	 * already cached under `ipfs:<hash>` once fetched, keyed by content rather than location.
+	 * @param {number} i
+	 * @returns {string}
+	 */
+	_pointerCacheKey(i) {
+		return `pointer:${this.chainId}:${this._contractAddress}:${this.id}:${i}`;
 	}
 
 	/**
@@ -791,18 +949,32 @@ export default class Mnemonad {
 
 	/**
 	 * Reads the off-chain pointer at `i`.
+	 *
+	 * Cached like everything else in this file that's immutable once written — a pointer
+	 * never changes after an EXTERNAL push commits it. Cheap to skip a real read for: the
+	 * whole point of caching this alongside the payload (under a *different* key — see
+	 * `_pointerCacheKey`) is that a fully-cached EXTERNAL item costs zero RPC calls for
+	 * `itemAt`, not just for the bytes once you already know where they are.
+	 *
 	 * @param {number} i
 	 * @returns {Promise<{hash: string, size: bigint, codec: number, locator: string}>}
 	 */
 	async pointerAt(i) {
 		await this.initialize();
+		const key = this._chunkCache && this._pointerCacheKey(i);
+		if (key) {
+			const cached = await this._chunkCache.get(key);
+			if (cached) return _decodePointerFromCache(cached);
+		}
 		const p = await this._read('pointerAt', [this.id, BigInt(i)]);
-		return {
+		const pointer = {
 			hash: p.hash,
 			size: p.size,
 			codec: Number(p.codec),
 			locator: new TextDecoder().decode(hexToBytes(p.locator)),
 		};
+		if (key) this._chunkCache.set(key, _encodePointerForCache(pointer)).catch(() => {});
+		return pointer;
 	}
 
 	/**
@@ -811,22 +983,100 @@ export default class Mnemonad {
 	 * The migration primitive: because the contract is immutable, a successor registry
 	 * adopts existing CODE chunks by address rather than re-uploading bytes.
 	 *
+	 * Cached under `_refsCacheKey` — immutable once an item is committed (append-only;
+	 * `concat`/`truncateFrom` never mutate an existing item's own record, only what's
+	 * reachable around it), so a cache hit skips the RPC call entirely rather than merely
+	 * answering it faster. This is what lets `itemAt` cost zero network calls once both this
+	 * and the payload are cached, even from a brand new instance after a reload.
+	 *
 	 * @param {number} i
 	 * @returns {Promise<{store: number, chunks: string[], offset: number, size: number, meta: Uint8Array}>}
 	 */
 	async getItemRefs(i) {
 		await this.initialize();
+		const key = this._chunkCache && this._refsCacheKey(i);
+		if (key) {
+			const cached = await this._chunkCache.get(key);
+			if (cached) return _decodeRefsFromCache(cached);
+		}
 		const [store, chunks, offset, size, meta] = await this._read('getItemRefs', [
 			this.id,
 			BigInt(i),
 		]);
-		return {
+		const refs = {
 			store: Number(store),
 			chunks: [...chunks],
 			offset: Number(offset),
 			size: Number(size),
 			meta: hexToBytes(meta),
 		};
+		if (key) this._chunkCache.set(key, _encodeRefsForCache(refs)).catch(() => {});
+		return refs;
+	}
+
+	/**
+	 * Batched form of {@link getItemRefs}: every ref in `indices` not already cached, one
+	 * RPC call for the rest.
+	 *
+	 * Worth reaching for over N individual `getItemRefs` calls specifically because it
+	 * collapses N calls into exactly one at every layer that counts them — the shared rate
+	 * limiter (`MnemonadRateLimiter.wrapClient` wraps `readContract` as a whole method, so
+	 * it sees "one call" here regardless of how many indices are inside), the node, and the
+	 * wire. viem's own JSON-RPC transport batching only ever helps at the wire: N separate
+	 * `readContract` calls still count as N against the rate limiter even when the
+	 * transport coalesces them into one HTTP request — confirmed directly against a real
+	 * node, not assumed.
+	 *
+	 * Cache-aware the same way `getItemRefs` is: an index whose refs are already cached
+	 * never enters the batch RPC call at all, so a request that's entirely cache hits costs
+	 * zero network calls, not merely one small one.
+	 *
+	 * @param {number[]} indices
+	 * @returns {Promise<Array<{store: number, chunks: string[], offset: number, size: number, meta: Uint8Array}>>}
+	 *   in the same order as `indices`
+	 */
+	async getItemRefsBatch(indices) {
+		await this.initialize();
+		const results = new Array(indices.length);
+		const missingPositions = [];
+		const missingIndices = [];
+
+		if (this._chunkCache) {
+			await Promise.all(
+				indices.map(async (index, pos) => {
+					const cached = await this._chunkCache.get(this._refsCacheKey(index));
+					if (cached) results[pos] = _decodeRefsFromCache(cached);
+				})
+			);
+		}
+		indices.forEach((index, pos) => {
+			if (!results[pos]) {
+				missingPositions.push(pos);
+				missingIndices.push(index);
+			}
+		});
+
+		if (missingIndices.length) {
+			const fetched = await this._read('getItemRefsBatch', [
+				this.id,
+				missingIndices.map((i) => BigInt(i)),
+			]);
+			fetched.forEach((r, k) => {
+				const refs = {
+					store: Number(r.store),
+					chunks: [...r.chunks],
+					offset: Number(r.offset),
+					size: Number(r.size),
+					meta: hexToBytes(r.meta),
+				};
+				results[missingPositions[k]] = refs;
+				if (this._chunkCache) {
+					const index = missingIndices[k];
+					this._chunkCache.set(this._refsCacheKey(index), _encodeRefsForCache(refs)).catch(() => {});
+				}
+			});
+		}
+		return results;
 	}
 
 	/** @returns {Promise<string>} The vector's owner address. */
@@ -1317,11 +1567,33 @@ export default class Mnemonad {
 	async _loadConstants() {
 		if (this._constantsLoaded) return;
 		if (!this._contractAddress) throw new Error('contractAddress is required');
+		if (this._applyCachedConstants()) return;
 
 		await this._applyConstants(await Promise.all([
 			this._read('CONTRACT_VERSION', []),
 			this._read('maxChunkBytes', []),
 		]));
+	}
+
+	/**
+	 * Applies constants from the process-wide shared cache (`_sharedContractConstants`) if
+	 * another instance already read them for this chain+contract. The lookup key uses only
+	 * whatever chain id is available synchronously (`publicClient`/`walletClient`'s own
+	 * `chain.id`, same fallback `_rateLimitClients` already uses) — never a `getChainId()`
+	 * RPC call, which would spend a call trying to avoid two others. A client without chain
+	 * metadata attached simply won't hit the cache; it still gets a correct answer, just not
+	 * this optimization.
+	 * @returns {boolean} true if constants were applied (skip fetching)
+	 */
+	_applyCachedConstants() {
+		const chainId = this.publicClient?.chain?.id ?? this._walletClient?.chain?.id ?? null;
+		const cached = _sharedContractConstants.get(_contractConstantsKey(chainId, this._contractAddress));
+		if (!cached) return false;
+		this.madeWithVersion = cached.madeWithVersion;
+		this.maxChunkBytes = cached.maxChunkBytes;
+		this.chainId = chainId;
+		this._constantsLoaded = true;
+		return true;
 	}
 
 	/**
@@ -1343,6 +1615,14 @@ export default class Mnemonad {
 		this.maxChunkBytes = Number(maxChunk);
 		this.chainId = this.publicClient?.chain?.id ?? (await this.publicClient.getChainId());
 		this._constantsLoaded = true;
+
+		// Left for every other instance pointed at this same chain+contract — see
+		// `_sharedContractConstants`'s own comment for why that's safe: these two values are
+		// immutable for a deployed contract.
+		_sharedContractConstants.set(_contractConstantsKey(this.chainId, this._contractAddress), {
+			madeWithVersion: this.madeWithVersion,
+			maxChunkBytes: this.maxChunkBytes,
+		});
 	}
 
 	/**
@@ -1566,6 +1846,54 @@ function hexToBytes(hex) {
 		out[i] = parseInt(clean.substr(i * 2, 2), 16);
 	}
 	return out;
+}
+
+/**
+ * `MnemonadChunkCache` stores `Uint8Array` values — that's what a payload is already, but
+ * item *metadata* (refs, pointers) is a small structured object, not bytes. These two pairs
+ * encode/decode it as JSON-over-bytes so it can share the exact same cache and eviction
+ * logic as payloads, rather than needing a second cache class for something this small.
+ *
+ * @param {{store: number, chunks: string[], offset: number, size: number, meta: Uint8Array}} refs
+ * @returns {Uint8Array}
+ */
+function _encodeRefsForCache(refs) {
+	return new TextEncoder().encode(
+		JSON.stringify({
+			store: refs.store,
+			chunks: refs.chunks,
+			offset: refs.offset,
+			size: refs.size,
+			meta: bytesToHex(refs.meta),
+		})
+	);
+}
+
+/** @param {Uint8Array} bytes @returns {{store: number, chunks: string[], offset: number, size: number, meta: Uint8Array}} */
+function _decodeRefsFromCache(bytes) {
+	const obj = JSON.parse(new TextDecoder().decode(bytes));
+	return { store: obj.store, chunks: obj.chunks, offset: obj.offset, size: obj.size, meta: hexToBytes(obj.meta) };
+}
+
+/**
+ * @param {{hash: string, size: bigint, codec: number, locator: string}} pointer
+ * @returns {Uint8Array}
+ */
+function _encodePointerForCache(pointer) {
+	return new TextEncoder().encode(
+		JSON.stringify({
+			hash: pointer.hash,
+			size: pointer.size.toString(), // BigInt (uint64) — JSON has no BigInt of its own
+			codec: pointer.codec,
+			locator: pointer.locator,
+		})
+	);
+}
+
+/** @param {Uint8Array} bytes @returns {{hash: string, size: bigint, codec: number, locator: string}} */
+function _decodePointerFromCache(bytes) {
+	const obj = JSON.parse(new TextDecoder().decode(bytes));
+	return { hash: obj.hash, size: BigInt(obj.size), codec: obj.codec, locator: obj.locator };
 }
 
 /** @returns {string} a random 0x-prefixed 32-byte hex salt */

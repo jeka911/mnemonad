@@ -134,6 +134,19 @@ contract Mnemonad is ERC721Enumerable, Ownable2Step, ReentrancyGuardTransient {
         uint32 received;
     }
 
+    /// @dev Bundles `getItemRefs`'s tuple into one struct so `getItemRefsBatch` can return an
+    ///      array of them — a client-side rate limiter (or anything else counting "how many
+    ///      reads did this take") sees this as ONE call for N items, not N. Coalescing several
+    ///      `eth_call`s into one HTTP request (viem's transport batching) still costs N against
+    ///      that budget; this is what actually collapses it to 1.
+    struct ItemRefs {
+        Store store;
+        address[] chunks;
+        uint32 offset;
+        uint32 size;
+        bytes meta;
+    }
+
     // ---------------------------------------------------------------------------------
     // Storage
     // ---------------------------------------------------------------------------------
@@ -508,34 +521,33 @@ contract Mnemonad is ERC721Enumerable, Ownable2Step, ReentrancyGuardTransient {
     // Reading
     // ---------------------------------------------------------------------------------
 
-    function length(uint256 id) public view returns (uint64) {
-        _requireExists(id);
-        return uint64(_items[id].length);
-    }
-
-    function binaryLength(uint256 id) external view returns (uint64) {
-        _requireExists(id);
-        return _vectors[id].binaryLength;
-    }
-
-    function firstAvailableIndex(uint256 id) external view returns (uint64) {
-        _requireExists(id);
-        return _vectors[id].firstAvailableIndex;
-    }
-
-    function vectorMeta(uint256 id) external view returns (bytes memory) {
-        _requireExists(id);
-        return _vectorMeta[id];
-    }
-
     function itemMeta(uint256 id, uint256 index) external view returns (bytes memory) {
         _requireItem(id, index);
         return _itemMeta[id][index];
     }
 
-    function encKeyWrapped(uint256 id) external view returns (bytes memory) {
+    /// @notice The 5 fields a client needs to open a vector: item count, total payload bytes,
+    ///         first readable index, vector-level metadata, and the wrapped encryption key (if
+    ///         any) — in one call instead of five.
+    /// @dev These previously existed as five separate getters (`length`, `binaryLength`,
+    ///      `firstAvailableIndex`, `vectorMeta`, `encKeyWrapped`). Removed rather than kept
+    ///      alongside this one (contrast `getItemRefs`/`getItemRefsBatch`, where both stay):
+    ///      nothing else in this codebase called them individually, unlike `getItemRefs`,
+    ///      which migration tooling still needs standalone — and the contract is already
+    ///      within a few hundred bytes of the 24,576-byte size cap, so five rarely-useful
+    ///      single-field getters were the cheapest thing to give up for this. Tuple return,
+    ///      not a struct — measured smaller in bytecode for the same fields.
+    function getVectorInfo(uint256 id)
+        external
+        view
+        returns (uint64 len, uint64 binLen, uint64 firstIdx, bytes memory meta, bytes memory encKey)
+    {
         _requireExists(id);
-        return _encKeyWrapped[id];
+        len = uint64(_items[id].length);
+        binLen = _vectors[id].binaryLength;
+        firstIdx = _vectors[id].firstAvailableIndex;
+        meta = _vectorMeta[id];
+        encKey = _encKeyWrapped[id];
     }
 
     function isEncrypted(uint256 id) public view returns (bool) {
@@ -663,6 +675,36 @@ contract Mnemonad is ERC721Enumerable, Ownable2Step, ReentrancyGuardTransient {
     ///      re-uploading every byte.
     function getItemRefs(uint256 id, uint256 index)
         external
+        view
+        returns (Store store, address[] memory chunks, uint32 offset, uint32 size, bytes memory meta)
+    {
+        return _itemRefs(id, index);
+    }
+
+    /// @notice Batched `getItemRefs`: every ref in `indices` in one call, one round trip.
+    /// @dev Not merely a convenience — a client-side rate limiter (or anything counting calls
+    ///      rather than bytes) charges `getItemRefs` called N times as N, even when the
+    ///      transport later coalesces those N `eth_call`s into a single HTTP request. This is
+    ///      what actually turns "list N items" into one call at every layer: the limiter, the
+    ///      node, and the wire. No length cap here deliberately — the existing 8 MB
+    ///      per-transaction memory ceiling already bounds how many refs a caller can
+    ///      realistically ask for in one go, and duplicating that bound here would just be a
+    ///      second guess at the same limit.
+    function getItemRefsBatch(uint256 id, uint256[] calldata indices)
+        external
+        view
+        returns (ItemRefs[] memory refs)
+    {
+        refs = new ItemRefs[](indices.length);
+        for (uint256 i = 0; i < indices.length; ++i) {
+            (Store store, address[] memory chunks, uint32 offset, uint32 size, bytes memory meta) =
+                _itemRefs(id, indices[i]);
+            refs[i] = ItemRefs(store, chunks, offset, size, meta);
+        }
+    }
+
+    function _itemRefs(uint256 id, uint256 index)
+        internal
         view
         returns (Store store, address[] memory chunks, uint32 offset, uint32 size, bytes memory meta)
     {

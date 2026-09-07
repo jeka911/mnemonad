@@ -3,6 +3,7 @@ import { getPublicClient, getWalletClient } from '@wagmi/core';
 import Mnemonad, { MnemonadUploadGateway, mnemonadAbi, ids as mnemonadIds } from '@mnemonad';
 import { config } from '../wagmi';
 import { getActiveNetwork } from '../settings.js';
+import { useDebugStore } from './debug.js';
 
 // ids.js keys by contract-key name ('monadTestnet'/'monadMainnet'), settings.js keys by a
 // different name ('testnet'/'mainnet') — matching on chainId instead of threading one
@@ -67,6 +68,12 @@ export const useMnemonadStore = defineStore('mnemonad', {
 							contractAddress: MNEMONAD_ADDRESS,
 							id,
 							maxRPCRequestsPerSecond: MAX_RPC_REQUESTS_PER_SECOND,
+							// A Pinia store, not a component — no `this.debugStore`/`mapStores`
+							// here, so the debug store is pulled directly (Pinia stores can call
+							// other stores this way). Same false/undefined resolution as
+							// Vector.vue's `cacheParam`.
+							cache: useDebugStore().cachingDisabled ? false : undefined,
+							debug: true,
 						});
 						await v.initialize();
 						return {

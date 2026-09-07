@@ -121,16 +121,38 @@ export default class MnemonadIpfs extends MnemonadOffloadingProvider {
 	/**
 	 * Fetches and verifies the payload behind a Pointer.
 	 *
+	 * Checks the attached `Mnemonad`'s chunk cache first, keyed on the pointer's own hash —
+	 * known before ever touching IPFS, unlike an on-chain item's cache key (see
+	 * `Mnemonad._onchainCacheKey`'s comment on why those two differ). A cache hit still runs
+	 * through the same `_verify` call below as a network fetch would: a corrupted local
+	 * cache entry gets caught by the check that already exists, rather than needing its own.
+	 *
 	 * @param {Object} pointerData - decoded on-chain Pointer
+	 * @param {Object} [options={}]
+	 * @param {boolean} [options.skipCache] - forces a real fetch, ignoring a cache hit (the
+	 *   result is still written back afterward). For `verifyAvailability`, whose entire job
+	 *   is to answer "is this retrievable from the remote store *right now*" — a cache hit
+	 *   would answer a different, useless question here, since it says nothing about
+	 *   whether the remote copy still exists.
 	 * @returns {Promise<Uint8Array>}
 	 * @throws {Error} If the fetched bytes don't match the recorded size or hash.
 	 */
-	async readPointerBytes(pointerData) {
+	async readPointerBytes(pointerData, options = {}) {
 		if (!this.isEnabled) {
 			throw new Error('ipfs.readPointerBytes requires gatewayUrl or ipfsClient');
 		}
 		if (!pointerData?.locator) {
 			throw new Error('ipfs: pointer has no locator');
+		}
+
+		const cache = this._mnemonad?._chunkCache;
+		const key = cache ? `ipfs:${pointerData.hash}` : null;
+		if (key && !options.skipCache) {
+			const cached = await cache.get(key);
+			if (cached) {
+				this._verify(cached, pointerData);
+				return cached;
+			}
 		}
 
 		const locator = pointerData.locator;
@@ -140,6 +162,7 @@ export default class MnemonadIpfs extends MnemonadOffloadingProvider {
 
 		const data = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes);
 		this._verify(data, pointerData);
+		if (key) cache.set(key, data).catch(() => {});
 		return data;
 	}
 
@@ -213,7 +236,9 @@ export default class MnemonadIpfs extends MnemonadOffloadingProvider {
 
 			try {
 				if (params.verify) {
-					await this.readPointerBytes(pointer);
+					// skipCache: this exists to answer "is it retrievable right now", which a
+					// cache hit cannot answer — see readPointerBytes's own doc comment.
+					await this.readPointerBytes(pointer, { skipCache: true });
 				} else {
 					await this._getViaGateway(pointer.locator);
 				}

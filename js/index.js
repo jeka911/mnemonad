@@ -7,6 +7,13 @@ import MnemonadPresignProvider from './offloading/MnemonadPresignProvider.js';
 import MnemonadUploadGateway from './MnemonadUploadGateway.js';
 import MnemonadCrypto from './MnemonadCrypto.js';
 import MnemonadRateLimiter, { isTransientRpcError } from './MnemonadRateLimiter.js';
+import MnemonadChunkCache, { DEFAULT_CHUNK_CACHE_OPTIONS } from './MnemonadChunkCache.js';
+import {
+	getRpcCallCount,
+	getRpcCallLog,
+	subscribeRpcCalls,
+	resetRpcCalls,
+} from './MnemonadRpcRecorder.js';
 import { mnemonadAbi } from './abi.js';
 import { uploadGatewayAbi } from './gatewayAbi.js';
 import ids from './ids.js';
@@ -23,6 +30,12 @@ export {
 	MnemonadCrypto,
 	MnemonadRateLimiter,
 	isTransientRpcError,
+	MnemonadChunkCache,
+	DEFAULT_CHUNK_CACHE_OPTIONS,
+	getRpcCallCount,
+	getRpcCallLog,
+	subscribeRpcCalls,
+	resetRpcCalls,
 	Store,
 	StoreName,
 	Codec,

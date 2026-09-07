@@ -10,7 +10,7 @@ export default {
 	monadTestnet: {
 		chainId: 10143,
 		version: 2,
-		contractAddress: '0xbea34c1500832dc0dbf1402d8c15c1cf720d0ad2',
+		contractAddress: '0xe3f6869dd2c8573bffc3aab69a8792bb61a8393e',
 	},
 	monadMainnet: {
 		chainId: 143,

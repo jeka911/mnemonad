@@ -87,6 +87,26 @@ const RETRYABLE_METHODS = new Set([
 const WRAPPED = Symbol.for('mnemonad.ratelimiter.wrapped');
 
 /**
+ * Client methods that actually hit the network. Shared with `MnemonadRpcRecorder`, which
+ * wraps this exact same set one layer further out — one list, so the two wrappers can never
+ * quietly drift apart on what counts as "an RPC call".
+ */
+export const NETWORK_CLIENT_METHODS = [
+	'readContract',
+	'simulateContract',
+	'writeContract',
+	'getBlockNumber',
+	'waitForTransactionReceipt',
+	'getTransactionReceipt',
+	'getBalance',
+	'estimateContractGas',
+	'estimateGas',
+	'getGasPrice',
+	'getChainId',
+	'call',
+];
+
+/**
  * True when `err` looks like a failure a later identical call might survive.
  *
  * A revert anywhere in the cause chain vetoes the decision regardless of what wraps it:
@@ -240,21 +260,7 @@ export default class MnemonadRateLimiter {
 
 		const limiter = this;
 		const wrapped = Object.create(client);
-		const methods = [
-			'readContract',
-			'simulateContract',
-			'writeContract',
-			'getBlockNumber',
-			'waitForTransactionReceipt',
-			'getTransactionReceipt',
-			'getBalance',
-			'estimateContractGas',
-			'estimateGas',
-			'getGasPrice',
-			'getChainId',
-			'call',
-		];
-		for (const name of methods) {
+		for (const name of NETWORK_CLIENT_METHODS) {
 			if (typeof client[name] !== 'function') continue;
 			wrapped[name] = RETRYABLE_METHODS.has(name)
 				? (...args) => limiter.runWithRetry(() => client[name](...args), name)

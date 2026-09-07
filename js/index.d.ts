@@ -127,6 +127,20 @@ export interface MnemonadParams {
 	 * unlimited (the default).
 	 */
 	maxRPCRequestsPerSecond?: number | null;
+	/**
+	 * Item-payload cache. `false`/`null` disables caching entirely; a custom object with
+	 * `get`/`set` is used verbatim (not shared); omit for the shared default — IndexedDB in
+	 * a browser, an in-memory Map elsewhere. Always stores pre-decryption bytes (ciphertext
+	 * for an encrypted vector), never plaintext. See `MnemonadChunkCache`.
+	 */
+	cache?: boolean | { get(key: string): Promise<Uint8Array | undefined>; set(key: string, bytes: Uint8Array): Promise<void> } | null;
+	/** Tunes the shared default cache; ignored if `cache` is set. See `ChunkCacheOptions`. */
+	cacheOptions?: ChunkCacheOptions;
+	/**
+	 * When true, every RPC call this instance makes is recorded into the process-wide log —
+	 * see `getRpcCallCount`/`subscribeRpcCalls`. Off by default; purely observational.
+	 */
+	debug?: boolean;
 }
 
 export interface CreateParams extends MnemonadParams {
@@ -272,6 +286,72 @@ export declare class MnemonadRateLimiter {
 	 */
 	wrapClient(client: unknown): unknown;
 }
+
+export interface ChunkCacheOptions {
+	/** Default 300. */
+	maxEntries?: number;
+	/** Default 50 MB. */
+	maxTotalBytes?: number;
+	/** An entry larger than this is never cached at all. Default 8 MB. */
+	maxEntryBytes?: number;
+	/** Lets an app deliberately share or isolate caches. Default 'default'. */
+	namespace?: string;
+	/** Mainly for tests: an explicit backend, skipping auto-detection. */
+	backend?: unknown;
+	/** An explicit `IDBFactory` (e.g. `fake-indexeddb`'s) rather than the ambient global. */
+	indexedDB?: unknown;
+}
+
+export declare const DEFAULT_CHUNK_CACHE_OPTIONS: Required<
+	Omit<ChunkCacheOptions, 'backend' | 'indexedDB'>
+>;
+
+/**
+ * Caches item payload bytes — on-chain or off-chain — so re-reading the same item skips the
+ * network. IndexedDB in a browser, an in-memory Map elsewhere; LRU eviction by `maxEntries`
+ * and `maxTotalBytes`, skipping anything over `maxEntryBytes` outright. Always stores
+ * pre-decryption bytes; see the class's own file comment for why that's load-bearing.
+ */
+export declare class MnemonadChunkCache {
+	constructor(options?: ChunkCacheOptions);
+	maxEntries: number;
+	maxTotalBytes: number;
+	maxEntryBytes: number;
+	namespace: string;
+	get(key: string): Promise<Uint8Array | undefined>;
+	set(key: string, bytes: Uint8Array): Promise<void>;
+	clear(): Promise<void>;
+	stats(): Promise<{ entryCount: number; totalBytes: number }>;
+}
+
+/** One entry in the process-wide RPC call log; see `getRpcCallLog`. */
+export interface RpcCallLogEntry {
+	/** 1-based, stable for this entry's lifetime — matches the count when it was made. */
+	position: number;
+	method: string;
+	functionName: string | null;
+	chainId: number | null;
+	/** When the call was initiated, not when it settled. */
+	at: number;
+	/** Starts 'pending', settles in place once the underlying call resolves or rejects. */
+	status: 'pending' | 'ok' | 'error';
+	/** Set only once `status` becomes 'error'. */
+	error: string | null;
+}
+
+/** Total RPC calls recorded so far this session, across every `debug: true` instance. */
+export declare function getRpcCallCount(): number;
+/** A copy of the most recent recorded calls (oldest first), capped at 2000 entries. */
+export declare function getRpcCallLog(): RpcCallLogEntry[];
+/**
+ * Called once when a call is recorded ('pending'), and again when it settles ('ok'/'error') —
+ * match on `entry.position` to tell an update from a new call. Returns an unsubscribe function.
+ */
+export declare function subscribeRpcCalls(
+	fn: (info: { count: number; entry: RpcCallLogEntry }) => void
+): () => void;
+/** Clears the count and log. Does not affect subscriptions. */
+export declare function resetRpcCalls(): void;
 
 /** Encryption companion. */
 export declare class MnemonadCrypto {

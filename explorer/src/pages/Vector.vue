@@ -32,13 +32,18 @@
 						/>
 					</template>
 				</GradientPanel>
+				<DebugPanel />
 			</div>
 
 			<div v-if="vector" class="vector-layout__main">
 				<GradientPanel always-expanded dense variant="corner" title="Items">
+					<template #actions>
+						<span v-if="loadStrategyLabel" class="items-panel__strategy">{{ loadStrategyLabel }}</span>
+					</template>
 					<template #body>
 						<ItemList
 							:items="items"
+							:loading="itemsLoading"
 							:omitted="omitted"
 							:load-bytes="loadItemBytes"
 							:is-loaded="isItemLoaded"
@@ -93,6 +98,7 @@
 							/>
 							<OffloadUpload
 								v-show="addTab === 'offload'"
+								:active="addTab === 'offload'"
 								:disable="!canWrite || !presignConfigured"
 								:hint="offloadHint"
 								:loading="offloading"
@@ -125,6 +131,7 @@ import { config } from '../wagmi';
 import { getActiveNetwork } from '../settings.js';
 import { useWalletStore } from '../stores/wallet.js';
 import { useMnemonadStore, MAX_RPC_REQUESTS_PER_SECOND } from '../stores/mnemonad.js';
+import { useDebugStore } from '../stores/debug.js';
 import { createPresignProvider, presignConfigured, presignServerUrl } from '../mnemonad/presignProvider.js';
 import { JPanel } from 'themed_varmory';
 import GradientPanel from '../components/GradientPanel.vue';
@@ -134,11 +141,68 @@ import ItemList from '../mnemonad/ItemList.vue';
 import AddTextChunk from '../mnemonad/AddTextChunk.vue';
 import AddRandomBytes from '../mnemonad/AddRandomBytes.vue';
 import OffloadUpload from '../mnemonad/OffloadUpload.vue';
+import DebugPanel from '../mnemonad/DebugPanel.vue';
 
 /** Items beyond this are counted, never silently dropped — see ItemList's `omitted`. */
 const ITEM_DISPLAY_CAP = 50;
-/** Pause between each incrementally-loaded item — see loadItems(). */
-const ITEM_LOAD_DELAY_MS = 100;
+/** Pause between each incrementally-loaded item, or between batches — see loadItems(). */
+const ITEM_LOAD_DELAY_MS = 10;
+/** Items fetched concurrently per group under the 'batches' load strategy — see loadItems(). */
+const ITEM_LOAD_BATCH_SIZE = 6;
+
+const LOAD_STRATEGIES = ['asc', 'desc', 'random', 'batches'];
+/** Persists which strategy was used last, so the rotation survives a real browser reload —
+ *  not just navigation within the app, which keeps this module's state anyway. */
+const LOAD_STRATEGY_STORAGE_KEY = 'mnemonad_load_strategy_index';
+
+/**
+ * Picks how this page load reveals its items — cycling through all four strategies in a
+ * fixed loop, one step per call, rather than randomly, so a demo visibly rotates through
+ * every mode in turn instead of repeating one by chance. Purely cosmetic either way: item
+ * *positions* on screen never move (`this.items` stays index-ordered, row #0 always above
+ * row #1) — only how fast, and in what order, each placeholder resolves into real data.
+ *
+ * @returns {'asc'|'desc'|'random'|'batches'}
+ */
+function pickLoadStrategy() {
+	let previous = -1;
+	try {
+		const stored = parseInt(localStorage.getItem(LOAD_STRATEGY_STORAGE_KEY), 10);
+		if (Number.isFinite(stored)) previous = stored;
+	} catch {
+		// localStorage unavailable — falls through to always starting the loop from 0.
+	}
+	const index = (previous + 1) % LOAD_STRATEGIES.length;
+	try {
+		localStorage.setItem(LOAD_STRATEGY_STORAGE_KEY, String(index));
+	} catch {
+		// Best-effort persistence only — the loop still advances within this session
+		// either way, it just won't survive a reload without storage to remember it in.
+	}
+	return LOAD_STRATEGIES[index];
+}
+
+/**
+ * Fetch order for the three one-at-a-time strategies. 'batches' isn't built here — it
+ * doesn't have a single order, it fetches several indices at once; see loadItems().
+ *
+ * @param {number} count
+ * @param {'asc'|'desc'|'random'} strategy
+ * @returns {number[]} indices 0..count-1, in the order they should be fetched
+ */
+function buildLoadOrder(count, strategy) {
+	const indices = Array.from({ length: count }, (_, i) => i);
+	if (strategy === 'desc') return indices.reverse();
+	if (strategy === 'random') {
+		// Fisher-Yates. Order only matters for the visible reveal, never for correctness —
+		// each index still lands in its own slot in `this.items` regardless of fetch order.
+		for (let i = indices.length - 1; i > 0; i--) {
+			const j = Math.floor(Math.random() * (i + 1));
+			[indices[i], indices[j]] = [indices[j], indices[i]];
+		}
+	}
+	return indices; // 'asc', or 'random' after shuffling in place above
+}
 
 export default {
 	name: 'Vector',
@@ -147,7 +211,7 @@ export default {
 	title: 'Vector',
 	components: {
 		JPanel, GradientPanel, GradientButton, VectorSummary,
-		ItemList, AddTextChunk, AddRandomBytes, OffloadUpload,
+		ItemList, AddTextChunk, AddRandomBytes, OffloadUpload, DebugPanel,
 	},
 	data() {
 		return {
@@ -158,6 +222,14 @@ export default {
 			items: [],
 			omitted: 0,
 			loading: false,
+			// Separate from `loading`: that one covers the initial vector fetch, gating the
+			// whole sidebar+items column. This one covers the narrower gap right after —
+			// vector metadata is in hand (so the column has mounted) but `loadItems()`
+			// hasn't populated `this.items` yet. Without it, ItemList briefly sees an empty
+			// array and shows "No items yet." for a vector that's still finding out how many
+			// items it actually has. True until loadItems() has synchronously built its
+			// placeholders (or established there really are none).
+			itemsLoading: true,
 			pushing: false,
 			pushingRandom: false,
 			offloading: false,
@@ -172,10 +244,33 @@ export default {
 			// always empty (nothing pre-fetches payloads anymore; see loadOneItem below).
 			loadedItemsCount: 0,
 			loadedBinaryLength: 0,
+			// Which of the four strategies (see pickLoadStrategy) is currently populating
+			// `items`. Set when the per-item loop starts, cleared when it ends — so the
+			// header label below only shows while that loop is genuinely still running, not
+			// for the whole page-load window `itemsLoading` covers.
+			loadStrategy: null,
 		};
 	},
 	computed: {
-		...mapStores(useWalletStore, useMnemonadStore),
+		...mapStores(useWalletStore, useMnemonadStore, useDebugStore),
+		// Passed as every Mnemonad's `cache` param below — `false` disables caching outright
+		// (see MnemonadChunkCache), `undefined` leaves the SDK's own default (the shared
+		// cache) untouched. Never write `!this.debugStore.cachingDisabled` directly as the
+		// param value: that would be `true` when caching is enabled, and `true` isn't one of
+		// the values `Mnemonad`'s constructor treats specially (see its own doc comment) —
+		// only `false`/`null`/an object are.
+		cacheParam: function() {
+			return this.debugStore.cachingDisabled ? false : undefined;
+		},
+		loadStrategyLabel: function() {
+			const labels = {
+				asc: 'loading in order',
+				desc: 'loading newest-first',
+				random: 'loading shuffled',
+				batches: 'loading in batches',
+			};
+			return this.loadStrategy ? labels[this.loadStrategy] : '';
+		},
 		validId: function() {
 			try {
 				BigInt(this.$route.params.id);
@@ -221,6 +316,7 @@ export default {
 		async load() {
 			if (!this.mnemonadStore.isDeployed || !this.validId) return;
 			this.loading = true;
+			this.itemsLoading = true;
 			this.error = null;
 			try {
 				const publicClient = getPublicClient(config);
@@ -231,6 +327,8 @@ export default {
 					id,
 					maxRPCRequestsPerSecond: MAX_RPC_REQUESTS_PER_SECOND,
 					offloadingProvider: createPresignProvider({}),
+					cache: this.cacheParam,
+					debug: true,
 				});
 				// Run together, not sequentially — owner() doesn't depend on initialize()'s
 				// result, and firing both in the same tick lets the transport's JSON-RPC
@@ -250,12 +348,15 @@ export default {
 					maxChunkBytes: v.maxChunkBytes,
 				};
 
-				await this.checkCanWrite();
-				// Deliberately not awaited — see loadItems()'s own comment on why it streams
-				// items in one at a time instead of loading them all before returning. The
-				// sidebar (vector metadata, already in hand above) shouldn't have to wait for
-				// every single item just to appear.
+				// Fired before checkCanWrite (an unrelated read — write permission has nothing
+				// to do with item listing) and deliberately not awaited — see loadItems()'s
+				// own comment on why it streams items in one at a time instead of loading
+				// them all before returning. Both together mean this.items gets its
+				// placeholders in the same tick `this.vector` is set, with no gap where the
+				// Items panel has mounted but doesn't yet know whether there's anything to
+				// show — see `itemsLoading`.
 				this.loadItems();
+				await this.checkCanWrite();
 				this.startLoadedPoll();
 			} catch (e) {
 				this.error = e?.shortMessage || e?.message || 'Failed to load vector';
@@ -283,16 +384,54 @@ export default {
 				locator: null,
 				hash: null,
 			}));
+			// Only now do we actually know whether there's anything to show — flips
+			// ItemList from its loading skeleton to either real placeholders or a genuine
+			// "No items yet." (cap === 0), never the wrong one of those two.
+			this.itemsLoading = false;
+			if (cap === 0) return; // nothing to fetch, so no strategy to report either
+
+			// Rerolled each load — see pickLoadStrategy. Three strategies fetch one index at
+			// a time in a different order (see buildLoadOrder); 'batches' fetches several at
+			// once instead, which is the odd one out and handled separately below. Exposed
+			// via `loadStrategyLabel` for the header while this loop is running (cleared in
+			// `finally` below, win or lose).
+			const strategy = pickLoadStrategy();
+			this.loadStrategy = strategy;
 			try {
-				// Loaded one at a time, with a short pause before starting the next — not a
-				// Promise.all. Deliberately trades away the transport's JSON-RPC batching
-				// (see wagmi.js) consolidating these into one HTTP request — sequential
-				// awaited calls with a real gap between them don't share a batching window —
-				// in exchange for a visible, paced reveal instead of a long wait followed by
-				// everything appearing at once.
-				for (let index = 0; index < cap; index++) {
-					this.items[index] = await this.loadOneItem(index);
-					if (index < cap - 1) await sleep(ITEM_LOAD_DELAY_MS);
+				if (strategy === 'batches') {
+					// Several items fetched in ONE contract call per group (loadItemsBatch,
+					// backed by Mnemonad.itemsAt / getItemRefsBatch), not one call per item.
+					// Stronger than merely firing several individual calls within the same
+					// tick: that only coalesces at the HTTP transport (see wagmi.js), while a
+					// client-side rate limiter still counts each individual call against its
+					// own budget regardless — this collapses the whole group to exactly one
+					// call at every layer: the limiter, the node, and the wire. A batch
+					// resolves as one cluster (one contract call, one response), not a
+					// staggered trickle — the trade the other three strategies deliberately
+					// don't take (see their comment below).
+					for (let start = 0; start < cap; start += ITEM_LOAD_BATCH_SIZE) {
+						const batch = [];
+						for (let index = start; index < Math.min(start + ITEM_LOAD_BATCH_SIZE, cap); index++) {
+							batch.push(index);
+						}
+						const rows = await this.loadItemsBatch(batch);
+						for (const index of batch) this.items[index] = rows[index];
+						if (start + ITEM_LOAD_BATCH_SIZE < cap) await sleep(ITEM_LOAD_DELAY_MS);
+					}
+				} else {
+					// Loaded one at a time, with a short pause before starting the next — not a
+					// Promise.all. Deliberately trades away the transport's JSON-RPC batching
+					// (see wagmi.js) consolidating these into one HTTP request — sequential
+					// awaited calls with a real gap between them don't share a batching window —
+					// in exchange for a visible, paced reveal instead of a long wait followed by
+					// everything appearing at once. ('batches' above takes the opposite trade,
+					// explicitly, for speed instead of pacing.)
+					const order = buildLoadOrder(cap, strategy);
+					for (let i = 0; i < order.length; i++) {
+						const index = order[i];
+						this.items[index] = await this.loadOneItem(index);
+						if (i < order.length - 1) await sleep(ITEM_LOAD_DELAY_MS);
+					}
 				}
 			} catch (e) {
 				this.$q.notify({
@@ -300,6 +439,8 @@ export default {
 					message: e?.shortMessage || e?.message || 'Failed to load some items',
 					position: 'top',
 				});
+			} finally {
+				this.loadStrategy = null;
 			}
 		},
 		async loadOneItem(index) {
@@ -318,6 +459,42 @@ export default {
 				locator: pointer?.locator ?? null,
 				hash: pointer?.hash ?? null,
 			};
+		},
+		/**
+		 * Batched form of `loadOneItem`: every index in `indices`, one contract call via
+		 * `Mnemonad.itemsAt` (see loadItems()'s 'batches' branch for why that's a stronger
+		 * win than firing the same N calls concurrently). Truncated indices are filtered out
+		 * before the call — the same "no fetch needed" case `loadOneItem` also short-circuits
+		 * on — so a batch never asks the chain about an index that can't answer.
+		 *
+		 * @param {number[]} indices
+		 * @returns {Promise<Object<number, Object>>} row per index, keyed by index
+		 */
+		async loadItemsBatch(indices) {
+			const rows = {};
+			const toFetch = [];
+			for (const index of indices) {
+				if (index < this.vector.firstAvailableIndex) {
+					rows[index] = { index, tier: 'truncated', size: 0, locator: null, hash: null };
+				} else {
+					toFetch.push(index);
+				}
+			}
+			if (toFetch.length) {
+				const items = await this._vector.itemsAt(toFetch);
+				toFetch.forEach((index, k) => {
+					const item = items[k];
+					const pointer = item.isExternal ? item.pointerData() : null;
+					rows[index] = {
+						index,
+						tier: item.storeName,
+						size: item.size,
+						locator: pointer?.locator ?? null,
+						hash: pointer?.hash ?? null,
+					};
+				});
+			}
+			return rows;
 		},
 		/**
 		 * Fetches one item's raw bytes on demand — called by ItemList's view/download
@@ -397,6 +574,8 @@ export default {
 				// Only its `canWrite` matters here: estimatePushCost uses it to decide
 				// whether an oversized item routes off-chain, and never uploads anything.
 				offloadingProvider: createPresignProvider({ account: this.walletStore.address }),
+				cache: this.cacheParam,
+				debug: true,
 			});
 			return await estimator.estimatePushCost(new TextEncoder().encode(text));
 		},
@@ -413,6 +592,8 @@ export default {
 					id: this._vector.id,
 					maxRPCRequestsPerSecond: MAX_RPC_REQUESTS_PER_SECOND,
 					offloadingProvider: createPresignProvider({ account: this.walletStore.address }),
+					cache: this.cacheParam,
+					debug: true,
 				});
 				await writable.push(new TextEncoder().encode(text));
 				await this.load();
@@ -444,6 +625,8 @@ export default {
 					id: this._vector.id,
 					maxRPCRequestsPerSecond: MAX_RPC_REQUESTS_PER_SECOND,
 					offloadingProvider: createPresignProvider({ account: this.walletStore.address }),
+					cache: this.cacheParam,
+					debug: true,
 				});
 				const chunks = Array.from({ length: count }, () => randomBytes(chunkSize));
 				await writable.push(chunks);
@@ -492,6 +675,8 @@ export default {
 					id: this._vector.id,
 					maxRPCRequestsPerSecond: MAX_RPC_REQUESTS_PER_SECOND,
 					offloadingProvider: createPresignProvider({ account: this.walletStore.address }),
+					cache: this.cacheParam,
+					debug: true,
 				});
 
 				const data = randomBytes(size);
@@ -552,6 +737,14 @@ function sleep(ms) {
 </script>
 
 <style scoped>
+/* Right-aligned for free: GradientPanel's #actions slot sits in a `justify-content:
+   space-between` row alongside the title, so this needs no positioning of its own. */
+.items-panel__strategy {
+	font-size: 12px;
+	color: var(--q-text-muted, #8a94a6);
+	white-space: nowrap;
+}
+
 /* Sits in JPanel's header slot, alongside the "Add" title — see the template. */
 .add-panel__tabs {
 	margin-left: 8px;

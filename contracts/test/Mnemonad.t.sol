@@ -43,6 +43,32 @@ contract MnemonadTest is EvTest {
         id = ev.create(salt, "", "", new bytes[](0));
     }
 
+    // `length`/`binaryLength`/`firstAvailableIndex`/`vectorMeta`/`encKeyWrapped` no longer
+    // exist as separate getters — folded into `getVectorInfo` to reclaim bytecode size (see
+    // its own comment in Mnemonad.sol). These wrappers keep every assertion below reading the
+    // same as before rather than tuple-destructuring at each call site; each still reverts
+    // exactly like its removed counterpart did, since `getVectorInfo` runs the same
+    // `_requireExists` check.
+    function _length(Mnemonad ev_, uint256 id) internal view returns (uint64 len) {
+        (len,,,,) = ev_.getVectorInfo(id);
+    }
+
+    function _binaryLength(Mnemonad ev_, uint256 id) internal view returns (uint64 binLen) {
+        (, binLen,,,) = ev_.getVectorInfo(id);
+    }
+
+    function _firstAvailableIndex(Mnemonad ev_, uint256 id) internal view returns (uint64 firstIdx) {
+        (,, firstIdx,,) = ev_.getVectorInfo(id);
+    }
+
+    function _vectorMeta(Mnemonad ev_, uint256 id) internal view returns (bytes memory meta) {
+        (,,, meta,) = ev_.getVectorInfo(id);
+    }
+
+    function _encKeyWrapped(Mnemonad ev_, uint256 id) internal view returns (bytes memory encKey) {
+        (,,,, encKey) = ev_.getVectorInfo(id);
+    }
+
     // -----------------------------------------------------------------------------
     // Deployment / version
     // -----------------------------------------------------------------------------
@@ -130,8 +156,8 @@ contract MnemonadTest is EvTest {
 
         assertEq(uint8(ev.itemStore(id, 0)), uint8(Mnemonad.Store.SLOT));
         assertEq(ev.at(id, 0), data);
-        assertEq(ev.length(id), 1);
-        assertEq(ev.binaryLength(id), 31);
+        assertEq(_length(ev, id), 1);
+        assertEq(_binaryLength(ev, id), 31);
     }
 
     function test_thirtyTwoBytesCrossesIntoCodeTier() public {
@@ -159,7 +185,7 @@ contract MnemonadTest is EvTest {
             assertEq(ev.itemSize(id, i), uint32(sizes[i]));
         }
 
-        assertEq(ev.length(id), sizes.length);
+        assertEq(_length(ev, id), sizes.length);
     }
 
     function test_pushAboveChunkLimitReverts() public {
@@ -197,7 +223,7 @@ contract MnemonadTest is EvTest {
         vm.prank(owner);
         ev.pushMany(id, 0, items);
 
-        assertEq(ev.length(id), 5);
+        assertEq(_length(ev, id), 5);
 
         // Every item must read back exactly, sliced out of the shared chunk by offset/size.
         (, address[] memory chunks0,,,) = ev.getItemRefs(id, 0);
@@ -230,7 +256,7 @@ contract MnemonadTest is EvTest {
         assertEq(sz1, 50);
         assertEq(off2, 150);
         assertEq(sz2, 70);
-        assertEq(ev.binaryLength(id), 220);
+        assertEq(_binaryLength(ev, id), 220);
     }
 
     function test_pushManyFallsBackToPerItemChunksWhenBatchTooLarge() public {
@@ -258,10 +284,10 @@ contract MnemonadTest is EvTest {
         vm.prank(owner);
         uint256 id = ev.create("init", hex"DEAD", hex"BEEF", items);
 
-        assertEq(ev.length(id), 3);
+        assertEq(_length(ev, id), 3);
         assertEq(ev.at(id, 2), items[2]);
-        assertEq(ev.vectorMeta(id), hex"DEAD");
-        assertEq(ev.encKeyWrapped(id), hex"BEEF");
+        assertEq(_vectorMeta(ev, id), hex"DEAD");
+        assertEq(_encKeyWrapped(ev, id), hex"BEEF");
         assertTrue(ev.isEncrypted(id));
     }
 
@@ -281,7 +307,7 @@ contract MnemonadTest is EvTest {
         vm.expectRevert(abi.encodeWithSelector(Mnemonad.LengthMismatch.selector, 0, 1));
         ev.push(id, 0, data, "");
 
-        assertEq(ev.length(id), 1);
+        assertEq(_length(ev, id), 1);
     }
 
     function test_expectedLengthSentinelSkipsCheck() public {
@@ -293,7 +319,7 @@ contract MnemonadTest is EvTest {
         vm.prank(owner);
         ev.push(id, ANY, data, "");
 
-        assertEq(ev.length(id), 2);
+        assertEq(_length(ev, id), 2);
     }
 
     // -----------------------------------------------------------------------------
@@ -313,22 +339,22 @@ contract MnemonadTest is EvTest {
         uint256 sid = ev.beginItem(id, total, hex"AA");
 
         // Invisible until commit: readers never see a partial item.
-        assertEq(ev.length(id), 0);
+        assertEq(_length(ev, id), 0);
 
         ev.appendChunk(sid, 0, p0);
         ev.appendChunk(sid, partSize, p1);
         ev.appendChunk(sid, partSize * 2, p2);
-        assertEq(ev.length(id), 0);
+        assertEq(_length(ev, id), 0);
 
         uint256 index = ev.commitItem(sid);
         vm.stopPrank();
 
         assertEq(index, 0);
-        assertEq(ev.length(id), 1);
+        assertEq(_length(ev, id), 1);
         assertEq(ev.itemSize(id, 0), total);
         assertEq(ev.at(id, 0), bytes.concat(p0, p1, p2));
         assertEq(ev.itemMeta(id, 0), hex"AA");
-        assertEq(ev.binaryLength(id), total);
+        assertEq(_binaryLength(ev, id), total);
 
         (, address[] memory chunks,,,) = ev.getItemRefs(id, 0);
         assertEq(chunks.length, 3);
@@ -384,7 +410,7 @@ contract MnemonadTest is EvTest {
         vm.expectRevert(abi.encodeWithSelector(Mnemonad.BadStaging.selector, sid));
         ev.commitItem(sid);
         vm.stopPrank();
-        assertEq(ev.length(id), 0);
+        assertEq(_length(ev, id), 0);
     }
 
     function test_stagingIsCallerScoped() public {
@@ -415,7 +441,7 @@ contract MnemonadTest is EvTest {
         ev.pushExternal(id, 0, p, hex"BB");
 
         assertEq(uint8(ev.itemStore(id, 0)), uint8(Mnemonad.Store.EXTERNAL));
-        assertEq(ev.binaryLength(id), 1_000_000_000);
+        assertEq(_binaryLength(ev, id), 1_000_000_000);
 
         Mnemonad.Pointer memory got = ev.pointerAt(id, 0);
         assertEq(got.locator, cid);
@@ -468,7 +494,7 @@ contract MnemonadTest is EvTest {
 
         vm.prank(writer);
         ev.push(id, 0, _bytes(100, 1), "");
-        assertEq(ev.length(id), 1);
+        assertEq(_length(ev, id), 1);
 
         vm.prank(owner);
         ev.setWriterApproval(id, writer, false);
@@ -522,16 +548,16 @@ contract MnemonadTest is EvTest {
         ev.concat(dst, src, 1);
         vm.stopPrank();
 
-        assertEq(ev.length(dst), 3);
+        assertEq(_length(ev, dst), 3);
         assertEq(ev.at(dst, 0), d0);
         assertEq(ev.at(dst, 1), s0);
         assertEq(ev.at(dst, 2), s1);
         assertEq(ev.itemMeta(dst, 1), hex"11", "item meta must survive relinking");
-        assertEq(ev.binaryLength(dst), 320);
+        assertEq(_binaryLength(ev, dst), 320);
 
         // Source is consumed.
         vm.expectRevert(abi.encodeWithSelector(Mnemonad.NoSuchVector.selector, src));
-        ev.length(src);
+        _length(ev, src);
     }
 
     function test_concatSharesChunksRatherThanCopyingBytes() public {
@@ -607,9 +633,9 @@ contract MnemonadTest is EvTest {
         ev.truncateFrom(id, 2);
         vm.stopPrank();
 
-        assertEq(ev.firstAvailableIndex(id), 2);
+        assertEq(_firstAvailableIndex(ev, id), 2);
         // length never decreases — indices stay stable.
-        assertEq(ev.length(id), 4);
+        assertEq(_length(ev, id), 4);
 
         vm.expectRevert(abi.encodeWithSelector(Mnemonad.IndexTruncated.selector, id, 0));
         ev.at(id, 0);
@@ -629,7 +655,7 @@ contract MnemonadTest is EvTest {
         ev.truncateFrom(id, 2);
         ev.truncateFrom(id, 1); // no-op, must not rewind
         vm.stopPrank();
-        assertEq(ev.firstAvailableIndex(id), 2);
+        assertEq(_firstAvailableIndex(ev, id), 2);
     }
 
     function test_truncateBeyondLengthReverts() public {
@@ -647,7 +673,7 @@ contract MnemonadTest is EvTest {
         ev.push(id, 1, _bytes(100, 2), "");
         vm.stopPrank();
 
-        assertEq(ev.length(id), 2);
+        assertEq(_length(ev, id), 2);
         assertEq(ev.at(id, 1), _bytes(100, 2));
     }
 
@@ -659,7 +685,7 @@ contract MnemonadTest is EvTest {
         ev.burn(id);
 
         vm.expectRevert(abi.encodeWithSelector(Mnemonad.NoSuchVector.selector, id));
-        ev.length(id);
+        _length(ev, id);
     }
 
     // -----------------------------------------------------------------------------
@@ -673,13 +699,13 @@ contract MnemonadTest is EvTest {
         vm.prank(owner);
         ev.setEncKeyWrapped(id, hex"AABB");
         assertTrue(ev.isEncrypted(id));
-        assertEq(ev.encKeyWrapped(id), hex"AABB");
+        assertEq(_encKeyWrapped(ev, id), hex"AABB");
 
         // Owner-may-rewrap rather than write-once: the prerequisite for ever handing an
         // encrypted vector to a new owner.
         vm.prank(owner);
         ev.setEncKeyWrapped(id, hex"CCDD");
-        assertEq(ev.encKeyWrapped(id), hex"CCDD");
+        assertEq(_encKeyWrapped(ev, id), hex"CCDD");
     }
 
     function test_unencryptedVectorTransfersFreely() public {
@@ -711,7 +737,7 @@ contract MnemonadTest is EvTest {
         ev.burn(id);
 
         vm.expectRevert(abi.encodeWithSelector(Mnemonad.NoSuchVector.selector, id));
-        ev.length(id);
+        _length(ev, id);
     }
 
     function test_clearingKeyReenablesTransfer() public {
@@ -838,7 +864,7 @@ contract MnemonadTest is EvTest {
     function test_readingMissingVectorReverts() public {
         uint256 ghost = ev.vectorIdFor(owner, "nope");
         vm.expectRevert(abi.encodeWithSelector(Mnemonad.NoSuchVector.selector, ghost));
-        ev.length(ghost);
+        _length(ev, ghost);
     }
 
     function test_indexOutOfBoundsReverts() public {

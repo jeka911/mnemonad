@@ -11,6 +11,8 @@
         "MnemonadCrypto.js",
         "MnemonadItem.js",
         "MnemonadRateLimiter.js",
+        "MnemonadChunkCache.js",
+        "MnemonadRpcRecorder.js",
         "MnemonadUploadGateway.js",
         "offloading/",
         "abi.js",
@@ -50,6 +52,10 @@
         "test:custom-offloading-provider": "vitest run ./test/custom_offloading_provider.test.js",
         "test:upload-gateway": "vitest run ./test/upload_gateway_chain.test.js",
         "test:write-gas-estimate": "vitest run ./test/write_gas_estimate.test.js",
+        "test:item-refs-batch": "vitest run ./test/item_refs_batch.test.js",
+        "test:chunk-cache": "vitest run ./test/chunk_cache.test.js ./test/chunk_cache_wiring.test.js",
+        "test:rpc-recorder": "vitest run ./test/rpc_recorder.test.js",
+        "test:shared-contract-constants": "vitest run ./test/shared_contract_constants.test.js",
         "test:real-ipfs": "vitest run --config vitest.real-ipfs.config.js"
     },
     "peerDependencies": {
@@ -60,6 +66,7 @@
         "@noble/hashes": "^2.0.0"
     },
     "devDependencies": {
+        "fake-indexeddb": "^6.2.5",
         "viem": "^2.56.3",
         "vitest": "^4.1.11"
     }

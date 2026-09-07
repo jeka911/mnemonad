@@ -1039,25 +1039,6 @@ export const mnemonadAbi = [
 				"type": "uint256"
 			}
 		],
-		"name": "binaryLength",
-		"outputs": [
-			{
-				"internalType": "uint64",
-				"name": "",
-				"type": "uint64"
-			}
-		],
-		"stateMutability": "view",
-		"type": "function"
-	},
-	{
-		"inputs": [
-			{
-				"internalType": "uint256",
-				"name": "id",
-				"type": "uint256"
-			}
-		],
 		"name": "burn",
 		"outputs": [],
 		"stateMutability": "nonpayable",
@@ -1164,25 +1145,6 @@ export const mnemonadAbi = [
 		"type": "function"
 	},
 	{
-		"inputs": [
-			{
-				"internalType": "uint256",
-				"name": "id",
-				"type": "uint256"
-			}
-		],
-		"name": "encKeyWrapped",
-		"outputs": [
-			{
-				"internalType": "bytes",
-				"name": "",
-				"type": "bytes"
-			}
-		],
-		"stateMutability": "view",
-		"type": "function"
-	},
-	{
 		"inputs": [],
 		"name": "externalFeeBytes",
 		"outputs": [
@@ -1229,25 +1191,6 @@ export const mnemonadAbi = [
 				"internalType": "uint256",
 				"name": "",
 				"type": "uint256"
-			}
-		],
-		"stateMutability": "view",
-		"type": "function"
-	},
-	{
-		"inputs": [
-			{
-				"internalType": "uint256",
-				"name": "id",
-				"type": "uint256"
-			}
-		],
-		"name": "firstAvailableIndex",
-		"outputs": [
-			{
-				"internalType": "uint64",
-				"name": "",
-				"type": "uint64"
 			}
 		],
 		"stateMutability": "view",
@@ -1310,6 +1253,96 @@ export const mnemonadAbi = [
 			{
 				"internalType": "bytes",
 				"name": "meta",
+				"type": "bytes"
+			}
+		],
+		"stateMutability": "view",
+		"type": "function"
+	},
+	{
+		"inputs": [
+			{
+				"internalType": "uint256",
+				"name": "id",
+				"type": "uint256"
+			},
+			{
+				"internalType": "uint256[]",
+				"name": "indices",
+				"type": "uint256[]"
+			}
+		],
+		"name": "getItemRefsBatch",
+		"outputs": [
+			{
+				"components": [
+					{
+						"internalType": "enum Mnemonad.Store",
+						"name": "store",
+						"type": "uint8"
+					},
+					{
+						"internalType": "address[]",
+						"name": "chunks",
+						"type": "address[]"
+					},
+					{
+						"internalType": "uint32",
+						"name": "offset",
+						"type": "uint32"
+					},
+					{
+						"internalType": "uint32",
+						"name": "size",
+						"type": "uint32"
+					},
+					{
+						"internalType": "bytes",
+						"name": "meta",
+						"type": "bytes"
+					}
+				],
+				"internalType": "struct Mnemonad.ItemRefs[]",
+				"name": "refs",
+				"type": "tuple[]"
+			}
+		],
+		"stateMutability": "view",
+		"type": "function"
+	},
+	{
+		"inputs": [
+			{
+				"internalType": "uint256",
+				"name": "id",
+				"type": "uint256"
+			}
+		],
+		"name": "getVectorInfo",
+		"outputs": [
+			{
+				"internalType": "uint64",
+				"name": "len",
+				"type": "uint64"
+			},
+			{
+				"internalType": "uint64",
+				"name": "binLen",
+				"type": "uint64"
+			},
+			{
+				"internalType": "uint64",
+				"name": "firstIdx",
+				"type": "uint64"
+			},
+			{
+				"internalType": "bytes",
+				"name": "meta",
+				"type": "bytes"
+			},
+			{
+				"internalType": "bytes",
+				"name": "encKey",
 				"type": "bytes"
 			}
 		],
@@ -1426,25 +1459,6 @@ export const mnemonadAbi = [
 				"internalType": "enum Mnemonad.Store",
 				"name": "",
 				"type": "uint8"
-			}
-		],
-		"stateMutability": "view",
-		"type": "function"
-	},
-	{
-		"inputs": [
-			{
-				"internalType": "uint256",
-				"name": "id",
-				"type": "uint256"
-			}
-		],
-		"name": "length",
-		"outputs": [
-			{
-				"internalType": "uint64",
-				"name": "",
-				"type": "uint64"
 			}
 		],
 		"stateMutability": "view",
@@ -2096,25 +2110,6 @@ export const mnemonadAbi = [
 			}
 		],
 		"stateMutability": "pure",
-		"type": "function"
-	},
-	{
-		"inputs": [
-			{
-				"internalType": "uint256",
-				"name": "id",
-				"type": "uint256"
-			}
-		],
-		"name": "vectorMeta",
-		"outputs": [
-			{
-				"internalType": "bytes",
-				"name": "",
-				"type": "bytes"
-			}
-		],
-		"stateMutability": "view",
 		"type": "function"
 	},
 	{

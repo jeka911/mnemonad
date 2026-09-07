@@ -116,6 +116,14 @@ export default {
 			type: Function,
 			default: null,
 		},
+		// True only while the "Offload" tab is the one showing. This component stays
+		// mounted the whole time via `v-show` (see Vector.vue's own comment on why), so
+		// without this a quote would fire the moment the page loads — an `uploadGateway()` +
+		// `quote()` round trip the user never asked for, for a tab they may never open.
+		active: {
+			type: Boolean,
+			default: false,
+		},
 	},
 	emits: ['submit'],
 	data() {
@@ -143,18 +151,25 @@ export default {
 	},
 	watch: {
 		size() {
-			this.scheduleQuote();
+			if (this.active) this.scheduleQuote();
 		},
 		gateway() {
-			this.scheduleQuote();
+			if (this.active) this.scheduleQuote();
+		},
+		// `immediate: true` so switching to this tab (active goes false → true) and the
+		// tab already being active at creation (were that ever the default) both fetch —
+		// while never firing for the common case, active starting false and staying that
+		// way until the user clicks over.
+		active: {
+			handler(isActive) {
+				if (isActive) this.scheduleQuote();
+			},
+			immediate: true,
 		},
 	},
 	created() {
 		// Plain timer handle, kept off reactive state — same reasoning as AddTextChunk.
 		this._timer = null;
-	},
-	mounted() {
-		this.scheduleQuote();
 	},
 	beforeUnmount() {
 		clearTimeout(this._timer);
