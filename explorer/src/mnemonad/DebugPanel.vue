@@ -17,6 +17,20 @@
 			<a href="https://github.com/jeka-kiselyov/mnemonad/blob/main/docs/caching.md" target="_blank" rel="noopener noreferrer">docs/caching.md</a>.
 		</p>
 		<div class="debug-panel__row debug-panel__row--rpc">
+			<span class="debug-panel__label">Presentation mode</span>
+			<q-toggle
+				:model-value="debugStore.presentationMode"
+				color="primary"
+				dense
+				@update:model-value="debugStore.setPresentationMode($event)"
+			/>
+		</div>
+		<p class="debug-panel__hint">
+			Dims the header, footer, and the "Add" panel to a low opacity — nothing is disabled
+			or hidden, just visually de-emphasized so a screen recording or live demo draws the
+			eye to the vector/items instead of the surrounding chrome. Session-only.
+		</p>
+		<div class="debug-panel__row debug-panel__row--rpc">
 			<span class="debug-panel__label">RPC calls this session</span>
 			<button
 				type="button"

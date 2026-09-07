@@ -1,5 +1,5 @@
 <template>
-	<div class="item-list">
+	<div class="item-list q-py-md">
 		<div v-if="loading" class="item-list__grid">
 			<div v-for="i in 3" :key="i" class="item-card item-card--skeleton">
 				<q-skeleton type="text" width="30%" />

@@ -1,18 +1,24 @@
 <template>
 	<div class="overall_layout">
 		<div class="app-container">
-			<AppHeader />
+			<div class="presentation-dim" :class="{ 'presentation-dim--active': debugStore.presentationMode }">
+				<AppHeader />
+			</div>
 			<RoutedPage />
 		</div>
 
-		<AppFooter />
+		<div class="presentation-dim" :class="{ 'presentation-dim--active': debugStore.presentationMode }">
+			<AppFooter />
+		</div>
 	</div>
 </template>
 
 <script>
+import { mapStores } from 'pinia';
 import AppHeader from './Header.vue';
 import AppFooter from './AppFooter.vue';
 import RoutedPage from './RoutedPage.vue';
+import { useDebugStore } from '../stores/debug.js';
 
 export default {
 	name: 'LayoutDefault',
@@ -20,6 +26,9 @@ export default {
 		AppHeader,
 		AppFooter,
 		RoutedPage,
+	},
+	computed: {
+		...mapStores(useDebugStore),
 	},
 };
 </script>
@@ -51,5 +60,18 @@ export default {
 	.app-container {
 		padding: 12px 16px;
 	}
+}
+
+/* Presentation mode: dims non-essential chrome for a recording/demo, without disabling it —
+   a stray click on the header/footer still works exactly as before, this is purely visual.
+   Same class name (and rule) also appears in Vector.vue's "Add" panel — not shared via a
+   global stylesheet since every other style in this app stays scoped per-component; small
+   enough to duplicate rather than break that convention for. */
+.presentation-dim {
+	transition: opacity 0.2s ease;
+}
+
+.presentation-dim--active {
+	opacity: 0.35;
 }
 </style>

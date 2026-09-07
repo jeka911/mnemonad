@@ -36,7 +36,7 @@
 			</div>
 
 			<div v-if="vector" class="vector-layout__main">
-				<GradientPanel always-expanded dense variant="corner" title="Items">
+				<GradientPanel always-expanded dense variant="corner" title="Chunks">
 					<template #actions>
 						<span v-if="loadStrategyLabel" class="items-panel__strategy">{{ loadStrategyLabel }}</span>
 					</template>
@@ -51,7 +51,12 @@
 					</template>
 				</GradientPanel>
 
-				<JPanel icon="add" title="Add" class="q-mt-md add-panel">
+				<JPanel
+					icon="add"
+					title="Add"
+					class="q-mt-md add-panel presentation-dim"
+					:class="{ 'presentation-dim--active': debugStore.presentationMode }"
+				>
 					<template #header>
 						<q-tabs
 							v-model="addTab"
@@ -745,7 +750,7 @@ function sleep(ms) {
    space-between` row alongside the title, so this needs no positioning of its own. */
 .items-panel__strategy {
 	font-size: 12px;
-	color: var(--q-text-muted, #8a94a6);
+	color: #d3dcee;
 	white-space: nowrap;
 }
 
@@ -765,6 +770,20 @@ function sleep(ms) {
 .add-panel__panel--disabled {
 	opacity: 0.35;
 	pointer-events: none;
+}
+
+/* Presentation mode: dims the whole "Add" panel for a recording/demo, without disabling it
+   — unlike .add-panel__panel--disabled above, this is purely visual, so it deliberately
+   skips pointer-events: none. Same class name (and rule, same opacity) also appears in
+   layout/Default.vue for the header/footer — not shared via a global stylesheet since every
+   other style in this app stays scoped per-component; small enough to duplicate rather than
+   break that convention for. */
+.presentation-dim {
+	transition: opacity 0.2s ease;
+}
+
+.presentation-dim--active {
+	opacity: 0.35;
 }
 
 .add-panel__overlay {
