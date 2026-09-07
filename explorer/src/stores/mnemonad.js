@@ -20,6 +20,16 @@ const MNEMONAD_ADDRESS = ENTRY ? ENTRY.contractAddress : null;
 // number; raise it if this still 429s, or once the RPC's real limit is known.
 export const MAX_RPC_REQUESTS_PER_SECOND = 8;
 
+// More generous than MnemonadRateLimiter's own defaults (4 attempts, ~1.75s total backoff).
+// Monad's public testnet RPC can stay rate-limited longer than that under a real burst —
+// several vectors' worth of concurrent reads all sharing the one 8/sec budget above — and a
+// visible "RPC Request failed" toast for what's really just transient congestion is worse
+// than waiting a bit longer. Still bounded, not infinite: worst case here is ~24s
+// (250+500+1000+2000+4000+8000+8000ms across the 7 backoffs before the 8th/final attempt)
+// before a genuinely dead endpoint surfaces as a real failure — a caller stuck retrying
+// forever with no way to cancel would be worse than an eventual, honest error.
+export const RPC_RETRY = { attempts: 8, maxDelayMs: 8000 };
+
 export const useMnemonadStore = defineStore('mnemonad', {
 	state: () => ({
 		vectors: [],
@@ -59,7 +69,8 @@ export const useMnemonadStore = defineStore('mnemonad', {
 					publicClient,
 					MNEMONAD_ADDRESS,
 					owner,
-					MAX_RPC_REQUESTS_PER_SECOND
+					MAX_RPC_REQUESTS_PER_SECOND,
+					RPC_RETRY
 				);
 				this.vectors = await Promise.all(
 					ids.map(async (id) => {
@@ -68,6 +79,7 @@ export const useMnemonadStore = defineStore('mnemonad', {
 							contractAddress: MNEMONAD_ADDRESS,
 							id,
 							maxRPCRequestsPerSecond: MAX_RPC_REQUESTS_PER_SECOND,
+							rpcRetry: RPC_RETRY,
 							// A Pinia store, not a component — no `this.debugStore`/`mapStores`
 							// here, so the debug store is pulled directly (Pinia stores can call
 							// other stores this way). Same false/undefined resolution as
@@ -106,7 +118,8 @@ export const useMnemonadStore = defineStore('mnemonad', {
 				// against the shared budget nor retried when the endpoint is busy.
 				const publicClient = Mnemonad.wrapClient(
 					getPublicClient(config),
-					MAX_RPC_REQUESTS_PER_SECOND
+					MAX_RPC_REQUESTS_PER_SECOND,
+					RPC_RETRY
 				);
 				const address = await publicClient.readContract({
 					address: MNEMONAD_ADDRESS,
@@ -157,6 +170,7 @@ export const useMnemonadStore = defineStore('mnemonad', {
 					contractAddress: MNEMONAD_ADDRESS,
 					meta,
 					maxRPCRequestsPerSecond: MAX_RPC_REQUESTS_PER_SECOND,
+					rpcRetry: RPC_RETRY,
 				});
 				// Append locally rather than re-running the whole list — this vector is
 				// known-fresh (just minted), no need to re-fetch it.

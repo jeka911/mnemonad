@@ -34,23 +34,33 @@ export const EXPECTED_CONTRACT_VERSION = 2;
 const ANY_LENGTH = (1n << 64n) - 1n;
 
 /**
- * Shared by chain id + rate, so every Mnemonad instance (and static call) configured with
- * the same `maxRPCRequestsPerSecond` for the same chain shares one budget. A fan-out read
- * pattern — several fields per vector, times several vectors, all via `Promise.all` — needs
- * the limit enforced across instances, not per instance, or N independently-throttled
- * instances still add up to N × maxRPCRequestsPerSecond against the RPC. Public RPC
- * endpoints commonly 429 exactly that burst.
+ * Shared by chain id + rate + retry policy, so every Mnemonad instance (and static call)
+ * configured identically for the same chain shares one budget. A fan-out read pattern —
+ * several fields per vector, times several vectors, all via `Promise.all` — needs the limit
+ * enforced across instances, not per instance, or N independently-throttled instances still
+ * add up to N × maxRPCRequestsPerSecond against the RPC. Public RPC endpoints commonly 429
+ * exactly that burst. Retry policy is part of the key, not just the rate, because two
+ * instances asking for different `rpcRetry` clearly want different retry behavior — sharing
+ * a limiter between them would silently give one of them the other's policy instead.
  *
  * @param {number} maxPerSecond
  * @param {?number} chainId
+ * @param {import('./MnemonadRateLimiter.js').default} [rpcRetry]
  * @returns {MnemonadRateLimiter}
  */
 const _sharedRateLimiters = new Map();
-function _getSharedRateLimiter(maxPerSecond, chainId) {
-	const key = `${chainId ?? 'unknown'}:${maxPerSecond}`;
+function _getSharedRateLimiter(maxPerSecond, chainId, rpcRetry = {}) {
+	const key = JSON.stringify({
+		chainId: chainId ?? 'unknown',
+		maxPerSecond,
+		attempts: rpcRetry.attempts,
+		baseDelayMs: rpcRetry.baseDelayMs,
+		maxDelayMs: rpcRetry.maxDelayMs,
+		jitter: rpcRetry.jitter,
+	});
 	let limiter = _sharedRateLimiters.get(key);
 	if (!limiter) {
-		limiter = new MnemonadRateLimiter({ maxPerSecond });
+		limiter = new MnemonadRateLimiter({ maxPerSecond, ...rpcRetry });
 		_sharedRateLimiters.set(key, limiter);
 	}
 	return limiter;
@@ -75,11 +85,14 @@ function _getSharedRateLimiter(maxPerSecond, chainId) {
  * @param {?WalletClient} walletClient
  * @param {?number} maxRPCRequestsPerSecond
  * @param {boolean} [debug=false]
+ * @param {?{attempts?: number, baseDelayMs?: number, maxDelayMs?: number, jitter?: boolean}} [rpcRetry]
+ *   - overrides `MnemonadRateLimiter`'s own retry defaults (4 attempts, ~1.75s total backoff).
+ *   Still bounded, never infinite — see `Mnemonad`'s constructor doc for why.
  * @returns {{publicClient: ?PublicClient, walletClient: ?WalletClient}}
  */
-function _rateLimitClients(publicClient, walletClient, maxRPCRequestsPerSecond, debug = false) {
+function _rateLimitClients(publicClient, walletClient, maxRPCRequestsPerSecond, debug = false, rpcRetry = {}) {
 	const chainId = publicClient?.chain?.id ?? walletClient?.chain?.id ?? null;
-	const limiter = _getSharedRateLimiter(maxRPCRequestsPerSecond ?? null, chainId);
+	const limiter = _getSharedRateLimiter(maxRPCRequestsPerSecond ?? null, chainId, rpcRetry);
 	let wrappedPublic = publicClient ? limiter.wrapClient(publicClient) : publicClient;
 	let wrappedWallet = walletClient ? limiter.wrapClient(walletClient) : walletClient;
 	if (debug) {
@@ -173,13 +186,23 @@ export default class Mnemonad {
 	 *   (`readContract`, `writeContract`, `getBlockNumber`, ...) is recorded into
 	 *   `MnemonadRpcRecorder`'s process-wide log — see `getRpcCallCount`/`subscribeRpcCalls`.
 	 *   Off by default; purely observational, no effect on caching or pacing.
+	 * @param {?{attempts?: number, baseDelayMs?: number, maxDelayMs?: number, jitter?: boolean}}
+	 *   [params.rpcRetry] - overrides how hard a read retries a transient RPC failure (writes
+	 *   are never retried, regardless — see `MnemonadRateLimiter`'s own doc). Omit for the
+	 *   class defaults (4 attempts, backing off 250ms→500ms→1000ms, ~1.75s total). Raising
+	 *   `attempts`/`maxDelayMs` tolerates a longer rate-limit window on a busy public RPC —
+	 *   still bounded, never infinite: an app that wants a failure to eventually surface
+	 *   rather than retry forever with no way to cancel needs *some* ceiling. Shared across
+	 *   every instance configured identically for the same chain + rate, same as
+	 *   `maxRPCRequestsPerSecond` (see `_getSharedRateLimiter`).
 	 */
 	constructor(params = {}) {
 		const { publicClient, walletClient } = _rateLimitClients(
 			params.publicClient,
 			params.walletClient,
 			params.maxRPCRequestsPerSecond,
-			!!params.debug
+			!!params.debug,
+			params.rpcRetry || {}
 		);
 
 		/** @type {PublicClient} */
@@ -335,10 +358,11 @@ export default class Mnemonad {
 	 * @param {string} creator
 	 * @param {string} salt - 0x-prefixed 32-byte hex
 	 * @param {?number} [maxRPCRequestsPerSecond] - see the constructor's param of the same name
+	 * @param {?Object} [rpcRetry] - see the constructor's `params.rpcRetry`
 	 * @returns {bigint}
 	 */
-	static async computeVectorId(publicClient, contractAddress, creator, salt, maxRPCRequestsPerSecond) {
-		({ publicClient } = _rateLimitClients(publicClient, null, maxRPCRequestsPerSecond));
+	static async computeVectorId(publicClient, contractAddress, creator, salt, maxRPCRequestsPerSecond, rpcRetry) {
+		({ publicClient } = _rateLimitClients(publicClient, null, maxRPCRequestsPerSecond, false, rpcRetry || {}));
 		return await publicClient.readContract({
 			address: contractAddress,
 			abi: mnemonadAbi,
@@ -367,6 +391,8 @@ export default class Mnemonad {
 	 * @param {?number} [maxRPCRequestsPerSecond] - see the constructor's param of the same name.
 	 *   Worth setting here specifically: this method's own fan-out (one call per owned
 	 *   vector) is exactly the burst shape that trips a public RPC's rate limit.
+	 * @param {?Object} [rpcRetry] - see the constructor's `params.rpcRetry`. Worth raising
+	 *   here for the same reason as `maxRPCRequestsPerSecond` above.
 	 * @returns {Promise<bigint[]>}
 	 */
 	/**
@@ -383,14 +409,15 @@ export default class Mnemonad {
 	 *
 	 * @param {Object} client - a viem Public or Wallet client
 	 * @param {?number} [maxRPCRequestsPerSecond] - omit for retry without pacing.
+	 * @param {?Object} [rpcRetry] - see the constructor's `params.rpcRetry`.
 	 * @returns {Object}
 	 */
-	static wrapClient(client, maxRPCRequestsPerSecond) {
-		return _rateLimitClients(client, null, maxRPCRequestsPerSecond).publicClient;
+	static wrapClient(client, maxRPCRequestsPerSecond, rpcRetry) {
+		return _rateLimitClients(client, null, maxRPCRequestsPerSecond, false, rpcRetry || {}).publicClient;
 	}
 
-	static async listOwned(publicClient, contractAddress, owner, maxRPCRequestsPerSecond) {
-		({ publicClient } = _rateLimitClients(publicClient, null, maxRPCRequestsPerSecond));
+	static async listOwned(publicClient, contractAddress, owner, maxRPCRequestsPerSecond, rpcRetry) {
+		({ publicClient } = _rateLimitClients(publicClient, null, maxRPCRequestsPerSecond, false, rpcRetry || {}));
 		const blockNumber = await publicClient.getBlockNumber({ cacheTime: 0 });
 		const balance = await publicClient.readContract({
 			address: contractAddress,

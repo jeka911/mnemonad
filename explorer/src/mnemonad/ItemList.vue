@@ -135,6 +135,11 @@ export default {
 	display: grid;
 	grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
 	gap: 10px;
+	/* Grid's default align-items: stretch forces every card in a row to match its tallest
+	   neighbor's height — so one IPFS card with a two-line locator/hash was inflating the
+	   plain on-chain cards sharing its row too, not just growing on its own. Each card sizes
+	   to its own (now fixed, see ItemListItem's .item-card__body) height instead. */
+	align-items: start;
 }
 
 .item-list__empty {

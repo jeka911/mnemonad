@@ -128,6 +128,13 @@ export interface MnemonadParams {
 	 */
 	maxRPCRequestsPerSecond?: number | null;
 	/**
+	 * Overrides how hard a read retries a transient RPC failure (writes are never retried,
+	 * regardless). Omit for the class defaults (4 attempts, backing off 250ms→500ms→1000ms,
+	 * ~1.75s total). Still bounded, never infinite, even when raised — see `MnemonadRateLimiter`.
+	 * Shared across every instance configured identically for the same chain + rate.
+	 */
+	rpcRetry?: { attempts?: number; baseDelayMs?: number; maxDelayMs?: number; jitter?: boolean } | null;
+	/**
 	 * Item-payload cache. `false`/`null` disables caching entirely; a custom object with
 	 * `get`/`set` is used verbatim (not shared); omit for the shared default — IndexedDB in
 	 * a browser, an in-memory Map elsewhere. Always stores pre-decryption bytes (ciphertext
@@ -436,7 +443,8 @@ export declare class Mnemonad {
 		contractAddress: string,
 		creator: string,
 		salt: string,
-		maxRPCRequestsPerSecond?: number | null
+		maxRPCRequestsPerSecond?: number | null,
+		rpcRetry?: MnemonadParams['rpcRetry']
 	): Promise<bigint>;
 	/**
 	 * Lists vector ids currently owned by `owner`, via `ERC721Enumerable`'s per-owner index.
@@ -446,7 +454,8 @@ export declare class Mnemonad {
 		publicClient: unknown,
 		contractAddress: string,
 		owner: string,
-		maxRPCRequestsPerSecond?: number | null
+		maxRPCRequestsPerSecond?: number | null,
+		rpcRetry?: MnemonadParams['rpcRetry']
 	): Promise<bigint[]>;
 
 	initialize(): Promise<void>;

@@ -266,10 +266,19 @@ function buildPreview(bytes) {
 .item-card__tier--truncated { color: var(--q-text-muted, #8a94a6); }
 
 .item-card__body {
-	flex: 1;
+	/* No flex: 1 — that shorthand sets flex-basis: 0%, which makes the browser ignore the
+	   `height` below as a starting size entirely and instead size this box purely from
+	   flex-grow's leftover-space distribution. With flex-basis: auto (the default when
+	   `flex` is unset), `height` is what auto resolves to, so it actually holds. */
 	display: flex;
 	align-items: center;
-	min-height: 40px;
+	flex-shrink: 0;
+	/* Fixed, not min-height: an external item's two-line locator/hash (or a loaded item's
+	   up-to-3-line preview) is taller than the single-line skeleton/tier/truncated states,
+	   so a min-height alone still lets the card grow the moment it finishes loading. This
+	   caps it at whichever is tallest, so nothing ever changes height on load. */
+	height: 58px;
+	overflow: hidden;
 	border-radius: 8px;
 	padding: 8px 10px;
 	background: rgba(140, 120, 200, 0.05);
@@ -343,6 +352,11 @@ function buildPreview(bytes) {
 	align-items: center;
 	justify-content: space-between;
 	gap: 8px;
+	/* The pending tier renders neither action button (view/download don't apply to it), so
+	   .item-card__actions sits empty and this row shrinks to just the size-skeleton's own
+	   height — then grows once the real icon buttons render alongside a loaded size. This
+	   floor matches that grown height, so the row never actually gets there. */
+	min-height: 24px;
 }
 
 .item-card__size {

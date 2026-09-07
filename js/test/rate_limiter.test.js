@@ -185,3 +185,65 @@ describe('Mnemonad maxRPCRequestsPerSecond', () => {
 		expect(order.sort()).toEqual(['x', 'y', 'z']);
 	});
 });
+
+describe('Mnemonad rpcRetry', () => {
+	// Real timers, not the file's fake ones: these tests exercise actual retry delays
+	// (`baseDelayMs: 1`), and asserting on the resulting backoff timing isn't the point here
+	// (rate_limiter_retry.test.js already covers that in detail) — only that `rpcRetry`
+	// reaches the limiter at all, which is simplest to prove by just letting 1ms delays run.
+	beforeEach(() => {
+		vi.useRealTimers();
+	});
+
+	/** A client whose first `attempts - 1` reads fail with a transient error. */
+	function flakyClient(chainId, failUntilAttempt) {
+		let calls = 0;
+		return {
+			chain: { id: chainId },
+			async readContract() {
+				calls += 1;
+				if (calls < failUntilAttempt) {
+					const err = new Error('rate limited');
+					err.name = 'HttpRequestError';
+					err.status = 429;
+					throw err;
+				}
+				return 'ok';
+			},
+		};
+	}
+
+	it('reaches the shared limiter — a higher attempts budget survives more failures', async () => {
+		// MnemonadRateLimiter's own default (attempts: 4) would give up before the 5th try;
+		// this only passes if params.rpcRetry actually reached the limiter underneath.
+		const ev = new Mnemonad({
+			publicClient: flakyClient(900010, 5),
+			rpcRetry: { attempts: 6, baseDelayMs: 1, maxDelayMs: 1, jitter: false },
+		});
+		await expect(ev.publicClient.readContract({ functionName: 'x' })).resolves.toBe('ok');
+	});
+
+	it('still gives up per the class default when rpcRetry is omitted', async () => {
+		const ev = new Mnemonad({ publicClient: flakyClient(900011, 5) });
+		await expect(ev.publicClient.readContract({ functionName: 'x' })).rejects.toThrow('rate limited');
+	});
+
+	it('does not share a limiter between differently-configured rpcRetry on the same chain+rate', async () => {
+		// Same chain, same maxRPCRequestsPerSecond — only rpcRetry differs. If these shared a
+		// limiter, whichever instance's config "won" would silently apply to both.
+		const chainId = 900012;
+		const generous = new Mnemonad({
+			publicClient: flakyClient(chainId, 5),
+			maxRPCRequestsPerSecond: 50,
+			rpcRetry: { attempts: 6, baseDelayMs: 1, maxDelayMs: 1, jitter: false },
+		});
+		const strict = new Mnemonad({
+			publicClient: flakyClient(chainId, 5),
+			maxRPCRequestsPerSecond: 50,
+			rpcRetry: { attempts: 2, baseDelayMs: 1, maxDelayMs: 1, jitter: false },
+		});
+
+		await expect(generous.publicClient.readContract({ functionName: 'x' })).resolves.toBe('ok');
+		await expect(strict.publicClient.readContract({ functionName: 'y' })).rejects.toThrow('rate limited');
+	});
+});

@@ -34,7 +34,7 @@
 		</p>
 		<RpcCallLogDialog v-model="rpcLogOpen" />
 		<div class="debug-panel__row debug-panel__row--rpc">
-			<span class="debug-panel__label">Sign server</span>
+			<span class="debug-panel__label">Sign server (IPFS)</span>
 			<span class="debug-panel__status" :class="`debug-panel__status--${signServerStatus}`">
 				<span class="debug-panel__status-dot" />{{ signServerStatusLabel }}
 			</span>

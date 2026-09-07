@@ -130,7 +130,7 @@ import Mnemonad, { MnemonadUploadGateway } from '@mnemonad';
 import { config } from '../wagmi';
 import { getActiveNetwork } from '../settings.js';
 import { useWalletStore } from '../stores/wallet.js';
-import { useMnemonadStore, MAX_RPC_REQUESTS_PER_SECOND } from '../stores/mnemonad.js';
+import { useMnemonadStore, MAX_RPC_REQUESTS_PER_SECOND, RPC_RETRY } from '../stores/mnemonad.js';
 import { useDebugStore } from '../stores/debug.js';
 import { createPresignProvider, presignConfigured, presignServerUrl } from '../mnemonad/presignProvider.js';
 import { JPanel } from 'themed_varmory';
@@ -326,6 +326,7 @@ export default {
 					contractAddress: this.mnemonadStore.contractAddress,
 					id,
 					maxRPCRequestsPerSecond: MAX_RPC_REQUESTS_PER_SECOND,
+					rpcRetry: RPC_RETRY,
 					offloadingProvider: createPresignProvider({}),
 					cache: this.cacheParam,
 					debug: true,
@@ -591,6 +592,7 @@ export default {
 					contractAddress: this.mnemonadStore.contractAddress,
 					id: this._vector.id,
 					maxRPCRequestsPerSecond: MAX_RPC_REQUESTS_PER_SECOND,
+					rpcRetry: RPC_RETRY,
 					offloadingProvider: createPresignProvider({ account: this.walletStore.address }),
 					cache: this.cacheParam,
 					debug: true,
@@ -624,6 +626,7 @@ export default {
 					contractAddress: this.mnemonadStore.contractAddress,
 					id: this._vector.id,
 					maxRPCRequestsPerSecond: MAX_RPC_REQUESTS_PER_SECOND,
+					rpcRetry: RPC_RETRY,
 					offloadingProvider: createPresignProvider({ account: this.walletStore.address }),
 					cache: this.cacheParam,
 					debug: true,
@@ -674,6 +677,7 @@ export default {
 					contractAddress: this.mnemonadStore.contractAddress,
 					id: this._vector.id,
 					maxRPCRequestsPerSecond: MAX_RPC_REQUESTS_PER_SECOND,
+					rpcRetry: RPC_RETRY,
 					offloadingProvider: createPresignProvider({ account: this.walletStore.address }),
 					cache: this.cacheParam,
 					debug: true,

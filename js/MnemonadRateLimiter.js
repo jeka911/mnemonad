@@ -46,7 +46,10 @@ const RETRYABLE_STATUS = new Set([408, 425, 429, 500, 502, 503, 504]);
  * other permanent answers — retrying those only wastes time and muddies the error.
  */
 const RETRYABLE_RPC_CODES = new Set([
-	-32005, // limit exceeded
+	-32005, // limit exceeded (the EIP-1474 standard rate-limit code)
+	-32011, // Monad testnet RPC's own rate-limit code — "requests limited to 15/sec", empirically
+	// confirmed via scripts/smoke_rpc_rate_limit.mjs firing a real burst against
+	// https://testnet-rpc.monad.xyz. Not a standard code; specific to this endpoint.
 	-32603, // internal error
 ]);
 
@@ -147,6 +150,30 @@ export function isTransientRpcError(err) {
 		if (typeof e.message === 'string' && RETRYABLE_MESSAGE.test(e.message)) return true;
 		return false;
 	});
+}
+
+/**
+ * Debugging aid: dumps exactly what `isTransientRpcError` saw at each layer of `err.cause`
+ * (name, HTTP status, JSON-RPC code, message), so a surprising verdict can be checked against
+ * the real shape instead of guessed at — this is exactly how `-32011` (Monad testnet RPC's own
+ * rate-limit code, not a standard one) was found missing from `RETRYABLE_RPC_CODES`. See
+ * `scripts/smoke_rpc_rate_limit.mjs` for a script that reproduces a real rate-limit response
+ * and prints this for it.
+ *
+ * @param {unknown} err
+ * @returns {Array<{name: ?string, status: ?number, code: ?(number|string), message: ?string}>}
+ */
+export function describeErrorChain(err) {
+	const chain = [];
+	for (let e = err, depth = 0; e && typeof e === 'object' && depth < MAX_CAUSE_DEPTH; e = e.cause, depth += 1) {
+		chain.push({
+			name: e.name ?? null,
+			status: typeof e.status === 'number' ? e.status : null,
+			code: e.code ?? null,
+			message: e.message ?? null,
+		});
+	}
+	return chain;
 }
 
 export default class MnemonadRateLimiter {

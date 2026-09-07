@@ -57,6 +57,20 @@ describe('isTransientRpcError', () => {
 		expect(isTransientRpcError(viemError('Error', { code: 'ECONNRESET' }))).toBe(true);
 	});
 
+	it('retries Monad testnet RPC\'s own rate-limit shape — code -32011, no HTTP status', () => {
+		// The exact cause chain a real `readContract` produces against
+		// https://testnet-rpc.monad.xyz under load, reproduced via
+		// scripts/smoke_rpc_rate_limit.mjs — no `.status` anywhere in the chain (this never
+		// surfaces as an HTTP-layer error), so this only passes if the *code* check
+		// recognizes -32011, not just the more common -32005.
+		const rateLimited = viemError(
+			'ContractFunctionExecutionError',
+			{},
+			viemError('CallExecutionError', {}, viemError('RpcRequestError', { code: -32011 }))
+		);
+		expect(isTransientRpcError(rateLimited)).toBe(true);
+	});
+
 	it('finds a transient cause nested under a viem wrapper', () => {
 		// How this actually arrives in practice: viem wraps the transport failure in a
 		// call-level error, so only the cause carries the status.
