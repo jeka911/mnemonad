@@ -1,5 +1,16 @@
 <template>
 	<div class="wallet-connect-wrapper">
+		<q-icon
+			v-if="walletStore.isConnected && isLocalSignerSession"
+			name="vpn_key"
+			size="16px"
+			class="local-signer-badge"
+		>
+			<q-tooltip>
+				Connected with a local private key — every transaction signs immediately, with
+				no wallet confirmation.
+			</q-tooltip>
+		</q-icon>
 		<GradientButton
 			:label="walletLabel"
 			:loading="isConnecting"
@@ -33,6 +44,21 @@
 					<div v-if="!connectors.length" class="no-wallets">
 						No wallet extensions detected. Install MetaMask or another browser wallet.
 					</div>
+
+					<template v-if="localSignerEnabled">
+						<q-separator />
+						<q-btn
+							v-if="!showLocalSigner"
+							flat
+							dense
+							no-caps
+							color="primary"
+							label="Use a private key instead"
+							class="local-signer-toggle"
+							@click="showLocalSigner = true"
+						/>
+						<LocalSignerCard v-else @connected="onLocalSignerConnected" />
+					</template>
 				</div>
 
 				<template #header-action>
@@ -47,19 +73,33 @@
 </template>
 
 <script>
+import { defineAsyncComponent } from 'vue';
 import { connect, getConnectors, watchConnectors } from '@wagmi/core';
 import { mapStores } from 'pinia';
 import { JPanel } from 'themed_varmory';
 import { config } from './wagmi';
 import { useWalletStore } from './stores/wallet';
 import GradientButton from './components/GradientButton.vue';
+import { LOCAL_SIGNER_CONNECTOR_NAME } from './wallet/localSignerConnector.js';
 import { getActiveNetwork } from './settings.js';
+
+// Off by default and read once at module load, matching `wagmi.js`'s own pattern.
+const LOCAL_SIGNER_ENABLED = import.meta.env.VITE_ENABLE_LOCAL_SIGNER === 'true';
+
+// A dynamic import rather than a static one: `components: { LocalSignerCard }` with a
+// static import would still bundle the component into this chunk regardless of the flag
+// above — Rollup sees it referenced in the components map and keeps it, runtime env check
+// or not. Loading it lazily means a build with the flag off never fetches this component's
+// code at all, not merely never renders it — genuinely absent from what ships to a user who
+// never clicks the toggle, not just hidden behind one.
+const LocalSignerCard = defineAsyncComponent(() => import('./wallet/LocalSignerCard.vue'));
 
 export default {
 	name: 'WalletConnect',
 	components: {
 		JPanel,
 		GradientButton,
+		LocalSignerCard,
 	},
 	data() {
 		return {
@@ -68,6 +108,8 @@ export default {
 			// Locally tracked so it always resets, even when the user cancels in the wallet.
 			isConnecting: false,
 			connectors: getConnectors(config),
+			localSignerEnabled: LOCAL_SIGNER_ENABLED,
+			showLocalSigner: false,
 		};
 	},
 	computed: {
@@ -77,6 +119,12 @@ export default {
 			return this.walletStore.isConnected
 				? this.walletStore.formattedAddress
 				: 'Connect Wallet';
+		},
+		// Whichever session is live — real extension or local signer — this only ever
+		// reads `connectorName`, which every connector (including ours) already reports
+		// via wagmi's own `account.connector.name`. No separate flag to keep in sync.
+		isLocalSignerSession: function() {
+			return this.walletStore.connectorName === LOCAL_SIGNER_CONNECTOR_NAME;
 		},
 	},
 	mounted() {
@@ -123,6 +171,17 @@ export default {
 				this.isConnecting = false;
 			}
 		},
+		onLocalSignerConnected() {
+			this.showModal = false;
+			this.walletStore.refreshAccount();
+		},
+	},
+	watch: {
+		// Reopening later should offer the toggle again, not a form left expanded (or
+		// mid-edit) from the last time the dialog was open.
+		showModal(isOpen) {
+			if (!isOpen) this.showLocalSigner = false;
+		},
 	},
 };
 </script>
@@ -130,6 +189,11 @@ export default {
 <style scoped>
 .wallet-connect-wrapper {
 	display: contents;
+}
+
+.local-signer-badge {
+	color: var(--q-warning, #f2c037);
+	margin-right: 4px;
 }
 
 .dialog-content {
@@ -151,6 +215,10 @@ export default {
 	text-align: center;
 	font-size: 13px;
 	opacity: 0.8;
+}
+
+.local-signer-toggle {
+	align-self: center;
 }
 
 .chain-info {

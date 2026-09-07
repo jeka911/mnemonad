@@ -8,7 +8,7 @@ An append-only bytes[] that lives on-chain and grows past what one transaction c
 |---|---|
 | [`contracts/`](contracts/) | The Solidity registry contract + paid-upload gateway, Hardhat 3 project |
 | [`js/`](js/) | The JavaScript/TypeScript SDK |
-| [`explorer/`](explorer/) | Vue 3 + Quasar block explorer / demo app |
+| [`explorer/`](explorer/README.md) | Vue 3 + Quasar block explorer / demo app |
 | [`presign-server/`](presign-server/) | Issues Pinata upload URLs against paid on-chain escrow |
 | [`scripts/`](scripts/) | Deployment and ABI-sync tooling |
 

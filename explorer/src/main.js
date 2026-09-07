@@ -66,4 +66,35 @@ try {
 app.use(WagmiPlugin, { config });
 app.use(VueQueryPlugin);
 
+// Console/agent shortcut for the wallet picker's "Use a private key instead" card — same
+// capability, without clicking through a dialog first. Exists so an automated driver (or a
+// person testing by hand) can do `await window.mnemonadConnectWithKey('0x...')` from
+// devtools and get back the connected address, rather than typing into a password field
+// through the DOM every time.
+//
+// Registered only when the feature itself is on, and even then only as a function that
+// *dynamically* imports its own dependencies at call time — so with the flag unset, neither
+// global exists and nothing behind them is ever fetched, matching `WalletConnect.vue`'s lazy
+// chunk for the same UI. `connectLocalSigner.js` is the single place enforcing the
+// testnet-only gate; both this and the card go through it, so neither can drift out of sync
+// with the other's safety check.
+if (import.meta.env.VITE_ENABLE_LOCAL_SIGNER === 'true') {
+	window.mnemonadConnectWithKey = async (privateKey) => {
+		const { connectLocalSigner } = await import('./wallet/connectLocalSigner.js');
+		return connectLocalSigner(privateKey);
+	};
+	// Goes through the Pinia store rather than calling `@wagmi/core`'s `disconnect` action
+	// directly. wagmi's own connection persistence can — even mid-session, not just across a
+	// reload — replace a connector that was never in its static `connectors` list with a
+	// storage-rehydrated stub carrying only `{id, name, type, uid}` and no methods, which
+	// makes a raw `disconnect(config)` throw "connector.disconnect is not a function"
+	// (`stores/wallet.js` already documents and defends against exactly this, for the same
+	// reason, for extension wallets). Reusing that store action means this global inherits
+	// the same defense automatically instead of needing its own copy.
+	window.mnemonadDisconnect = async () => {
+		const { useWalletStore } = await import('./stores/wallet.js');
+		await useWalletStore().disconnect();
+	};
+}
+
 app.mount('#app');
