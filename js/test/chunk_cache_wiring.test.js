@@ -5,7 +5,7 @@ import { startNode, makeClients, deployRegistry, makeMockIpfs, makeBytes } from 
 
 /**
  * Verifies the cache is actually consulted end to end — not just that the cache class works
- * in isolation (see chunk_cache.test.js), but that a real vector's reads genuinely skip the
+ * in isolation (see chunk_cache.test.js), but that a real stream's reads genuinely skip the
  * network on a hit. Each test uses its own `cacheOptions.namespace` so caches never leak
  * between tests despite the shared-by-options instance (`_getSharedChunkCache`).
  */
@@ -83,7 +83,7 @@ describe('on-chain items', () => {
 		expect(await (await fresh.itemAt(1)).bytes()).toEqual(b);
 	});
 
-	it('two different vectors on the same registry do not collide', async () => {
+	it('two different streams on the same registry do not collide', async () => {
 		const cacheOptions = { namespace: freshNamespace() };
 		const evA = await Mnemonad.create(baseParams({ cacheOptions }));
 		await evA.push(makeBytes(30, 5));

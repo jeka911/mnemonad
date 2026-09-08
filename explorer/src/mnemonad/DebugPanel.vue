@@ -28,7 +28,7 @@
 		<p class="debug-panel__hint">
 			Dims the header, footer, and the "Add" panel to a low opacity — nothing is disabled
 			or hidden, just visually de-emphasized so a screen recording or live demo draws the
-			eye to the vector/items instead of the surrounding chrome. Session-only.
+			eye to the stream/items instead of the surrounding chrome. Session-only.
 		</p>
 		<div class="debug-panel__row debug-panel__row--rpc">
 			<span class="debug-panel__label">RPC calls this session</span>
@@ -76,8 +76,8 @@ const SIGN_SERVER_POLL_MS = 10_000;
 
 /**
  * Session-only debug controls. Deliberately its own small component rather than folded into
- * VectorSummary — this isn't information about the vector, it's a knob affecting the whole
- * app's SDK behavior, so it gets its own panel rather than blurring into vector info.
+ * StreamSummary — this isn't information about the stream, it's a knob affecting the whole
+ * app's SDK behavior, so it gets its own panel rather than blurring into stream info.
  */
 export default {
 	name: 'DebugPanel',

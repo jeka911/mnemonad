@@ -86,7 +86,7 @@ export default {
 	name: 'OffloadUpload',
 	components: { GradientButton },
 	props: {
-		// True when the connected wallet can't push right now — see Vector.vue's canWrite.
+		// True when the connected wallet can't push right now — see Stream.vue's canWrite.
 		disable: {
 			type: Boolean,
 			default: false,
@@ -99,7 +99,7 @@ export default {
 			type: Boolean,
 			default: false,
 		},
-		// This vector's on-chain ceiling. Anything above it routes off-chain, which is the
+		// This stream's on-chain ceiling. Anything above it routes off-chain, which is the
 		// only case the gateway applies to at all.
 		maxChunkBytes: {
 			type: Number,
@@ -110,14 +110,14 @@ export default {
 			type: Object,
 			default: null,
 		},
-		// (size: number) => Promise<bigint|null> — Vector.vue owns the SDK clients, so
+		// (size: number) => Promise<bigint|null> — Stream.vue owns the SDK clients, so
 		// quoting is delegated up, same as AddTextChunk's `estimate`.
 		quoteFor: {
 			type: Function,
 			default: null,
 		},
 		// True only while the "Offload" tab is the one showing. This component stays
-		// mounted the whole time via `v-show` (see Vector.vue's own comment on why), so
+		// mounted the whole time via `v-show` (see Stream.vue's own comment on why), so
 		// without this a quote would fire the moment the page loads — an `uploadGateway()` +
 		// `quote()` round trip the user never asked for, for a tab they may never open.
 		active: {

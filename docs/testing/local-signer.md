@@ -49,7 +49,7 @@ the account wasn't a browser extension.
 ## Verified end to end
 
 Connected with a funded testnet key and drove a real session with zero wallet
-popups: create a vector, `pushMany` five items, then the full paid-IPFS path —
+popups: create a stream, `pushMany` five items, then the full paid-IPFS path —
 gateway quote, `payForUpload` escrow, presign-server upload, `pushExternal`
 settlement. Confirmed independently of the UI's own success message: the returned
 CID was fetched directly from the IPFS gateway and matched byte-for-byte, and the

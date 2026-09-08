@@ -50,7 +50,7 @@ const DEFAULT_LOG2_FRAME_SIZE = 16;
  *     at all — deriving the data key straight from a signature would bind the ciphertext to
  *     one signer forever.
  *   - Because a wrapped key is bound to its owner, the contract refuses to transfer an
- *     encrypted vector. Lifting that needs the propose/accept rewrap flow, which is not in
+ *     encrypted stream. Lifting that needs the propose/accept rewrap flow, which is not in
  *     v1 (see PLAN.md §3.9).
  *
  * The wrapped key itself (as opposed to item payloads, which use the framed layout below)
@@ -62,7 +62,7 @@ export default class MnemonadCrypto {
 	 * @param {Mnemonad} params.mnemonad - parent Mnemonad
 	 * @param {?Object} [params.signer] - viem Account or WalletClient able to signMessage
 	 * @param {?Uint8Array} [params.aesKey] - pre-known plaintext data key, skips unwrapping
-	 * @param {boolean} [params.encrypt=false] - request encryption when creating a vector
+	 * @param {boolean} [params.encrypt=false] - request encryption when creating a stream
 	 */
 	constructor(params = {}) {
 		/** @type {Mnemonad} */
@@ -83,7 +83,7 @@ export default class MnemonadCrypto {
 		return !!(this._signer || this._aesKey);
 	}
 
-	/** @returns {boolean} Whether `create()` was asked to produce an encrypted vector. */
+	/** @returns {boolean} Whether `create()` was asked to produce an encrypted stream. */
 	get isEncryptRequested() {
 		return this._encryptRequested;
 	}
@@ -114,13 +114,13 @@ export default class MnemonadCrypto {
 	 * `setEncKeyWrapped` (or passes it to `create()`).
 	 *
 	 * @param {Uint8Array} aesKey
-	 * @param {?bigint} [vectorId] - target vector id; defaults to the parent's. Accepted
+	 * @param {?bigint} [streamId] - target stream id; defaults to the parent's. Accepted
 	 *        explicitly because ids are deterministic and therefore known BEFORE creation,
 	 *        which is what allows create + key + push in a single transaction.
 	 * @returns {Promise<Uint8Array>} `nonce || ciphertext || tag`
 	 */
-	async wrapAesKey(aesKey, vectorId = null) {
-		const kek = await this._deriveKek(vectorId);
+	async wrapAesKey(aesKey, streamId = null) {
+		const kek = await this._deriveKek(streamId);
 		const nonce = randomBytes(AES_NONCE_BYTES);
 		const ct = gcm(kek, nonce).encrypt(aesKey);
 		const out = new Uint8Array(AES_NONCE_BYTES + ct.length);
@@ -132,14 +132,14 @@ export default class MnemonadCrypto {
 	/**
 	 * Unwraps a data key read from `encKeyWrapped`.
 	 * @param {Uint8Array} wrapped
-	 * @param {?bigint} [vectorId]
+	 * @param {?bigint} [streamId]
 	 * @returns {Promise<Uint8Array>}
 	 */
-	async unwrapAesKey(wrapped, vectorId = null) {
+	async unwrapAesKey(wrapped, streamId = null) {
 		if (wrapped.length < AES_NONCE_BYTES + AES_TAG_BYTES) {
 			throw new Error(`crypto.unwrapAesKey: wrapped key too short (${wrapped.length})`);
 		}
-		const kek = await this._deriveKek(vectorId);
+		const kek = await this._deriveKek(streamId);
 		const nonce = wrapped.subarray(0, AES_NONCE_BYTES);
 		const ct = wrapped.subarray(AES_NONCE_BYTES);
 		return gcm(kek, nonce).decrypt(ct);
@@ -377,7 +377,7 @@ export default class MnemonadCrypto {
 
 	/**
 	 * Resolves the plaintext data key: returns the cached one, else fetches the wrapped key
-	 * from the vector's on-chain state and unwraps it.
+	 * from the stream's on-chain state and unwraps it.
 	 * @returns {Promise<Uint8Array>}
 	 */
 	async _ensureAesKey() {
@@ -388,7 +388,7 @@ export default class MnemonadCrypto {
 		await ev.initialize();
 
 		if (!ev.encKeyWrapped || ev.encKeyWrapped.length === 0) {
-			throw new Error('crypto: vector has no encryption key on-chain');
+			throw new Error('crypto: stream has no encryption key on-chain');
 		}
 		if (!this._signer) {
 			throw new Error('crypto: a signer is required to unwrap the encryption key');
@@ -401,28 +401,28 @@ export default class MnemonadCrypto {
 	/**
 	 * Derives the key-encryption key from an owner signature.
 	 *
-	 * The signed message binds chain id, contract address and vector id, so the same wallet
-	 * produces a different KEK per vector and a key wrapped on one deployment cannot be
+	 * The signed message binds chain id, contract address and stream id, so the same wallet
+	 * produces a different KEK per stream and a key wrapped on one deployment cannot be
 	 * replayed against another.
 	 *
-	 * @param {?bigint} [vectorId]
+	 * @param {?bigint} [streamId]
 	 * @returns {Promise<Uint8Array>}
 	 */
-	async _deriveKek(vectorId = null) {
+	async _deriveKek(streamId = null) {
 		if (!this._signer) {
 			throw new Error('crypto: a signer is required to derive the key-encryption key');
 		}
 		const ev = this._mnemonad;
-		const id = vectorId ?? ev?.id;
+		const id = streamId ?? ev?.id;
 		if (id === null || id === undefined) {
-			throw new Error('crypto: a vector id is required to derive the key-encryption key');
+			throw new Error('crypto: a stream id is required to derive the key-encryption key');
 		}
 
 		const message = [
 			KEK_DOMAIN,
 			`chainId:${ev?.chainId ?? 0}`,
 			`contract:${(ev?.contractAddress ?? '').toLowerCase()}`,
-			`vector:${id.toString()}`,
+			`stream:${id.toString()}`,
 		].join('\n');
 
 		const signature = await this._signMessage(message);

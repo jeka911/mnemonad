@@ -1,57 +1,57 @@
 <template>
-	<div class="vector-summary">
-		<div class="vector-summary__row">
-			<span class="vector-summary__label">Id</span>
+	<div class="stream-summary">
+		<div class="stream-summary__row">
+			<span class="stream-summary__label">Id</span>
 			<ExplorerLink
 				type="token"
-				:value="vector.id"
+				:value="stream.id"
 				:contract-address="contractAddress"
 				:chain="chain"
 				:label="idHex"
 			/>
 		</div>
-		<div class="vector-summary__row">
-			<span class="vector-summary__label">Owner</span>
-			<ExplorerLink type="address" :value="vector.owner" :chain="chain" :label="formatAddress(vector.owner)" />
+		<div class="stream-summary__row">
+			<span class="stream-summary__label">Owner</span>
+			<ExplorerLink type="address" :value="stream.owner" :chain="chain" :label="formatAddress(stream.owner)" />
 		</div>
-		<div class="vector-summary__row">
-			<span class="vector-summary__label">Items</span>
-			<span class="vector-summary__value vector-summary__value--stacked">
-				<span class="vector-summary__value-line">{{ vector.length }}</span>
-				<span class="vector-summary__value-line vector-summary__value-line--muted">
+		<div class="stream-summary__row">
+			<span class="stream-summary__label">Items</span>
+			<span class="stream-summary__value stream-summary__value--stacked">
+				<span class="stream-summary__value-line">{{ stream.length }}</span>
+				<span class="stream-summary__value-line stream-summary__value-line--muted">
 					{{ loadedItems }} loaded
-					<q-icon name="help_outline" size="12px" class="vector-summary__help">
+					<q-icon name="help_outline" size="12px" class="stream-summary__help">
 						<q-tooltip>{{ LOADED_HELP_TEXT }}</q-tooltip>
 					</q-icon>
 				</span>
 			</span>
 		</div>
-		<div class="vector-summary__row">
-			<span class="vector-summary__label">Total size</span>
-			<span class="vector-summary__value vector-summary__value--stacked">
-				<span class="vector-summary__value-line">{{ formatBytes(vector.binaryLength) }}</span>
-				<span class="vector-summary__value-line vector-summary__value-line--muted">
+		<div class="stream-summary__row">
+			<span class="stream-summary__label">Total size</span>
+			<span class="stream-summary__value stream-summary__value--stacked">
+				<span class="stream-summary__value-line">{{ formatBytes(stream.binaryLength) }}</span>
+				<span class="stream-summary__value-line stream-summary__value-line--muted">
 					{{ formatBytes(loadedBinaryLength) }} loaded
-					<q-icon name="help_outline" size="12px" class="vector-summary__help">
+					<q-icon name="help_outline" size="12px" class="stream-summary__help">
 						<q-tooltip>{{ LOADED_HELP_TEXT }}</q-tooltip>
 					</q-icon>
 				</span>
 			</span>
 		</div>
-		<div v-if="vector.firstAvailableIndex > 0" class="vector-summary__row">
-			<span class="vector-summary__label">Truncated up to</span>
-			<span class="vector-summary__value">index {{ vector.firstAvailableIndex - 1 }}</span>
+		<div v-if="stream.firstAvailableIndex > 0" class="stream-summary__row">
+			<span class="stream-summary__label">Truncated up to</span>
+			<span class="stream-summary__value">index {{ stream.firstAvailableIndex - 1 }}</span>
 		</div>
-		<div class="vector-summary__row">
-			<span class="vector-summary__label">Encrypted</span>
-			<span class="vector-summary__value">
-				<q-icon v-if="vector.encrypted" name="lock" size="14px" />
-				{{ vector.encrypted ? 'Yes' : 'No' }}
+		<div class="stream-summary__row">
+			<span class="stream-summary__label">Encrypted</span>
+			<span class="stream-summary__value">
+				<q-icon v-if="stream.encrypted" name="lock" size="14px" />
+				{{ stream.encrypted ? 'Yes' : 'No' }}
 			</span>
 		</div>
-		<div class="vector-summary__row">
-			<span class="vector-summary__label">Contract version</span>
-			<span class="vector-summary__value">{{ vector.madeWithVersion }}</span>
+		<div class="stream-summary__row">
+			<span class="stream-summary__label">Contract version</span>
+			<span class="stream-summary__value">{{ stream.madeWithVersion }}</span>
 		</div>
 	</div>
 </template>
@@ -66,15 +66,15 @@ const LOADED_HELP_TEXT =
 	'not what\'s stored on-chain or IPFS. It grows as you preview, view, or download items below.';
 
 export default {
-	name: 'VectorSummary',
+	name: 'StreamSummary',
 	components: { ExplorerLink },
 	props: {
-		vector: {
+		stream: {
 			type: Object,
 			required: true,
 		},
-		// The registry contract's address — needed to link the vector's id to its own
-		// per-token page (`/nft/{contract}/{tokenId}`), distinct from `vector.owner`'s
+		// The registry contract's address — needed to link the stream's id to its own
+		// per-token page (`/nft/{contract}/{tokenId}`), distinct from `stream.owner`'s
 		// address page.
 		contractAddress: {
 			type: String,
@@ -85,7 +85,7 @@ export default {
 			required: true,
 		},
 		// How many of the displayed items already have their payload cached in memory —
-		// see Vector.vue's recomputeLoaded(). Polled rather than pushed live from every
+		// see Stream.vue's recomputeLoaded(). Polled rather than pushed live from every
 		// place an item can become loaded (a preview click, View, or Download, several
 		// components away), so this can lag the real state by a beat rather than never
 		// updating at all.
@@ -105,7 +105,7 @@ export default {
 	},
 	computed: {
 		idHex: function() {
-			const hex = BigInt(this.vector.id).toString(16).padStart(64, '0');
+			const hex = BigInt(this.stream.id).toString(16).padStart(64, '0');
 			return `0x${hex.slice(0, 10)}...${hex.slice(-8)}`;
 		},
 	},
@@ -119,13 +119,13 @@ export default {
 </script>
 
 <style scoped>
-.vector-summary {
+.stream-summary {
 	display: grid;
 	grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
 	gap: 10px 24px;
 }
 
-.vector-summary__row {
+.stream-summary__row {
 	display: flex;
 	align-items: center;
 	justify-content: space-between;
@@ -134,7 +134,7 @@ export default {
 	border-bottom: 1px solid rgba(140, 120, 200, 0.1);
 }
 
-.vector-summary__label {
+.stream-summary__label {
 	display: inline-flex;
 	align-items: center;
 	gap: 4px;
@@ -142,17 +142,17 @@ export default {
 	font-size: 0.85em;
 }
 
-.vector-summary__help {
+.stream-summary__help {
 	color: var(--q-text-muted, #8a94a6);
 	opacity: 0.7;
 	cursor: help;
 }
 
-.vector-summary__help:hover {
+.stream-summary__help:hover {
 	opacity: 1;
 }
 
-.vector-summary__value {
+.stream-summary__value {
 	display: flex;
 	align-items: center;
 	gap: 4px;
@@ -161,13 +161,13 @@ export default {
 	font-size: 0.9em;
 }
 
-.vector-summary__value--stacked {
+.stream-summary__value--stacked {
 	flex-direction: column;
 	align-items: flex-end;
 	gap: 2px;
 }
 
-.vector-summary__value-line--muted {
+.stream-summary__value-line--muted {
 	display: inline-flex;
 	align-items: center;
 	gap: 3px;
@@ -175,11 +175,11 @@ export default {
 	font-size: 0.8em;
 }
 
-body.body--light .vector-summary__row {
+body.body--light .stream-summary__row {
 	border-bottom-color: rgba(60, 40, 110, 0.1);
 }
 
-body.body--light .vector-summary__value {
+body.body--light .stream-summary__value {
 	color: #2a2440;
 }
 </style>

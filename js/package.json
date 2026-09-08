@@ -1,7 +1,7 @@
 {
     "name": "mnemonad",
     "version": "0.0.1",
-    "description": "Scalable append-only on-chain vector for Monad with IPFS offloading and client-side encryption",
+    "description": "Scalable append-only on-chain stream for Monad with IPFS offloading and client-side encryption",
     "type": "module",
     "main": "./index.js",
     "types": "./index.d.ts",
@@ -24,7 +24,7 @@
     "keywords": [
         "mnemonad",
         "monad",
-        "vector",
+        "stream",
         "database",
         "storage",
         "evm",

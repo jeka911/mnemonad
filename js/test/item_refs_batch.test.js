@@ -93,7 +93,7 @@ describe('itemsAt', () => {
 		// Reference values, fetched individually.
 		const individual = await Promise.all([2, 0, 1].map((i) => ev.itemAt(i)));
 
-		// A second, independent instance (same vector, empty cache) so itemsAt actually
+		// A second, independent instance (same stream, empty cache) so itemsAt actually
 		// exercises the batched-fetch path instead of just returning ev's own warm cache.
 		const fresh = new Mnemonad({ publicClient: clients.publicClient, contractAddress, id: ev.id, ipfsClient });
 		const batch = await fresh.itemsAt([2, 0, 1]);

@@ -1,8 +1,8 @@
 <template>
 	<div>
-		<GradientPanel always-expanded dense variant="fill" title="My vectors">
+		<GradientPanel always-expanded dense variant="fill" title="My streams">
 			<template #body>
-				<MyVectors />
+				<MyStreams />
 			</template>
 		</GradientPanel>
 	</div>
@@ -10,13 +10,13 @@
 
 <script>
 import GradientPanel from '../components/GradientPanel.vue';
-import MyVectors from '../mnemonad/MyVectors.vue';
+import MyStreams from '../mnemonad/MyStreams.vue';
 
 export default {
 	name: 'Home',
 	// Static route metadata read by pages/index.js to self-register this page.
 	path: '/',
 	title: 'Home',
-	components: { GradientPanel, MyVectors },
+	components: { GradientPanel, MyStreams },
 };
 </script>

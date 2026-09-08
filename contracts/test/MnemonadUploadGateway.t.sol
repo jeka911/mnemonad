@@ -108,7 +108,7 @@ contract MnemonadUploadGatewayTest is EvTest {
         return Mnemonad.Pointer({hash: hash, size: size, codec: 0, locator: hex"01551220AABB"});
     }
 
-    function _vector(address as_, bytes32 salt) internal returns (uint256 id) {
+    function _stream(address as_, bytes32 salt) internal returns (uint256 id) {
         vm.prank(as_);
         id = ev.create(salt, "", "", new bytes[](0));
     }
@@ -582,7 +582,7 @@ contract MnemonadUploadGatewayTest is EvTest {
         uint256 flat = ev.quotePushFee(0, Mnemonad.Store.EXTERNAL);
         assertTrue(flat > 0);
 
-        uint256 id = _vector(payer, "prepaid");
+        uint256 id = _stream(payer, "prepaid");
         bytes32 hash = keccak256("payload");
         uint256 cost = gw.quote(1_000_000);
 
@@ -603,7 +603,7 @@ contract MnemonadUploadGatewayTest is EvTest {
         ev.setFeePerByte(1e6);
         uint256 flat = ev.quotePushFee(0, Mnemonad.Store.EXTERNAL);
 
-        uint256 id = _vector(payer, "unpaid");
+        uint256 id = _stream(payer, "unpaid");
         vm.prank(payer);
         ev.pushExternal{value: flat}(id, 0, _pointer(keccak256("nothing-prepaid"), 100), "");
 
@@ -614,7 +614,7 @@ contract MnemonadUploadGatewayTest is EvTest {
         ev.setFeePerByte(1e6);
         uint256 flat = ev.quotePushFee(0, Mnemonad.Store.EXTERNAL);
 
-        uint256 id = _vector(payer, "replay");
+        uint256 id = _stream(payer, "replay");
         bytes32 hash = keccak256("payload");
         uint256 cost = gw.quote(1_000);
 
@@ -637,7 +637,7 @@ contract MnemonadUploadGatewayTest is EvTest {
 
         ev.setUploadGateway(address(new RevertingGateway()));
 
-        uint256 id = _vector(payer, "broken");
+        uint256 id = _stream(payer, "broken");
         vm.prank(payer);
         ev.pushExternal{value: flat}(id, 0, _pointer(keccak256("x"), 100), "");
 
@@ -652,7 +652,7 @@ contract MnemonadUploadGatewayTest is EvTest {
         ev.setUploadGateway(address(0));
         assertEq(ev.uploadGateway(), address(0));
 
-        uint256 id = _vector(payer, "nogw");
+        uint256 id = _stream(payer, "nogw");
         vm.prank(payer);
         ev.pushExternal{value: flat}(id, 0, _pointer(keccak256("x"), 100), "");
         assertEq(ev.feesAccrued(), flat);

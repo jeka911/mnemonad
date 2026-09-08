@@ -13,7 +13,7 @@ disagree). 113 unit tests passing.
 
 | Path | Purpose |
 |---|---|
-| `src/Mnemonad.sol` | The registry. One contract holds all vectors; each vector is an ERC-721 token. |
+| `src/Mnemonad.sol` | The registry. One contract holds all streams; each stream is an ERC-721 token. |
 | `src/DataChunk.sol` | SSTORE2-style library: stores bytes as non-callable contract code. |
 | `src/MnemonadUploadGateway.sol` | Sells off-chain pinning quota for MON, priced in USD via Pyth. Separate deployable — see below. |
 | `src/IMnemonadUploadGateway.sol` | The single call the registry makes into a gateway. |
@@ -100,7 +100,7 @@ drift as the contracts change, while the readings hold.
 - `SLOT_MAX_BYTES = 31` is derived from Monad's page model, which the local node does not
   implement. The exact crossover is an unconfirmed measurement, not a settled constant.
 - Key rewrapping (`registerPublicKey`, `proposeTransferWithRewrap`, `acceptTransfer`) is not
-  implemented. Encrypted vectors are currently non-transferable, full stop. This must exist
+  implemented. Encrypted streams are currently non-transferable, full stop. This must exist
   before mainnet.
 - `concat` is O(source item count). An O(1) segment-list design is possible but changes the
   storage layout.

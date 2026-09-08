@@ -57,7 +57,7 @@ describe('deployment', () => {
 });
 
 describe('create', () => {
-	it('creates an empty vector', async () => {
+	it('creates an empty stream', async () => {
 		const ev = await Mnemonad.create(baseParams());
 		await ev.initialize();
 		expect(ev.length).toBe(0);
@@ -67,7 +67,7 @@ describe('create', () => {
 
 	it('returns the id predicted from the salt before creation', async () => {
 		const salt = `0x${'11'.repeat(32)}`;
-		const predicted = await Mnemonad.computeVectorId(
+		const predicted = await Mnemonad.computeStreamId(
 			clients.publicClient,
 			contractAddress,
 			clients.account.address,
@@ -203,7 +203,7 @@ describe('staged append', () => {
 		expect(refs.chunks.length).toBe(3);
 	});
 
-	it('leaves the vector untouched until the item is committed', async () => {
+	it('leaves the stream untouched until the item is committed', async () => {
 		const ev = await Mnemonad.create(baseParams());
 		await ev.push(makeBytes(100, 1));
 		await ev.initialize();
@@ -216,7 +216,7 @@ describe('staged append', () => {
 });
 
 describe('concat', () => {
-	it('appends another vector and consumes it', async () => {
+	it('appends another stream and consumes it', async () => {
 		const dst = await Mnemonad.create(baseParams());
 		const src = await Mnemonad.create(baseParams());
 
@@ -247,7 +247,7 @@ describe('concat', () => {
 		expect(new Uint8Array(await dst.at(0))).toEqual(payload);
 	});
 
-	it('accepts a bare vector id', async () => {
+	it('accepts a bare stream id', async () => {
 		const dst = await Mnemonad.create(baseParams());
 		const src = await Mnemonad.create(baseParams());
 		await src.push(makeBytes(64, 4));
@@ -278,7 +278,7 @@ describe('truncateFrom', () => {
 });
 
 describe('burn', () => {
-	it('destroys the vector', async () => {
+	it('destroys the stream', async () => {
 		const ev = await Mnemonad.create(baseParams());
 		await ev.push(makeBytes(100, 1));
 		await ev.burn();

@@ -4,8 +4,8 @@
  *
  * The two halves answer the same problem from opposite sides. Pacing caps outbound calls at
  * `maxPerSecond`, queuing the rest instead of firing them at once: public endpoints
- * rate-limit bursts (HTTP 429), and a fan-out read — several fields per vector, times
- * several vectors, all via `Promise.all` — produces exactly that burst even though each
+ * rate-limit bursts (HTTP 429), and a fan-out read — several fields per stream, times
+ * several streams, all via `Promise.all` — produces exactly that burst even though each
  * individual call is cheap. Retrying catches what still slips through, whether because the
  * budget is shared with another tab or because the endpoint had an unrelated hiccup.
  *
@@ -269,7 +269,7 @@ export default class MnemonadRateLimiter {
 	 * (`readContract`, `writeContract`, `getBlockNumber`, `waitForTransactionReceipt`,
 	 * `getBalance`, `estimateContractGas`, `getGasPrice`, `getChainId`) is routed through
 	 * this limiter — nothing else needs to know the client is throttled, including
-	 * Mnemonad's own internals, its static helpers (`computeVectorId`, `listOwned`), and
+	 * Mnemonad's own internals, its static helpers (`computeStreamId`, `listOwned`), and
 	 * `estimatePushCost`'s own gas/price probes, which just call whatever client they're given.
 	 *
 	 * Reads additionally retry; `writeContract` is paced but never repeated, because it is

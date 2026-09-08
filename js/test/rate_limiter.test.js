@@ -128,7 +128,7 @@ describe('Mnemonad maxRPCRequestsPerSecond', () => {
 	}
 
 	it('shares one budget across instances with the same rate + chain', async () => {
-		// Exactly the real bug: hydrating several vectors concurrently, each its own
+		// Exactly the real bug: hydrating several streams concurrently, each its own
 		// Mnemonad instance — the limit must hold across all of them, not per instance.
 		const chainId = 900001;
 		const a = new Mnemonad({ publicClient: fakeClient(chainId), maxRPCRequestsPerSecond: 1 });

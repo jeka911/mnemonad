@@ -36,7 +36,7 @@ const ANY_LENGTH = (1n << 64n) - 1n;
 /**
  * Shared by chain id + rate + retry policy, so every Mnemonad instance (and static call)
  * configured identically for the same chain shares one budget. A fan-out read pattern —
- * several fields per vector, times several vectors, all via `Promise.all` — needs the limit
+ * several fields per stream, times several streams, all via `Promise.all` — needs the limit
  * enforced across instances, not per instance, or N independently-throttled instances still
  * add up to N × maxRPCRequestsPerSecond against the RPC. Public RPC endpoints commonly 429
  * exactly that burst. Retry policy is part of the key, not just the rate, because two
@@ -145,7 +145,7 @@ function _getSharedChunkCache(options) {
 }
 
 /**
- * Represents a Mnemonad vector: a scalable append-only on-chain `bytes[]`.
+ * Represents a Mnemonad stream: a scalable append-only on-chain `bytes[]`.
  *
  * Items too large for a single transaction are staged across several; items too large for
  * on-chain storage altogether can be offloaded to IPFS. See PLAN.md for the storage-tier
@@ -156,7 +156,7 @@ export default class Mnemonad {
 	/**
 	 * @param {Object} params
 	 * @param {PublicClient} [params.publicClient] - viem public client, for reads
-	 * @param {bigint|string} [params.id] - vector id (ERC-721 token id)
+	 * @param {bigint|string} [params.id] - stream id (ERC-721 token id)
 	 * @param {?string} [params.contractAddress] - registry address, or 'monadTestnet'/'monadMainnet'
 	 * @param {?WalletClient} [params.walletClient] - adds write capability
 	 * @param {?CustomSendTransactionFunction} [params.sendTransaction] - adds write capability
@@ -174,7 +174,7 @@ export default class Mnemonad {
 	 * @param {?number} [params.maxRPCRequestsPerSecond] - caps outbound RPC calls, queuing
 	 *   the rest rather than firing them all at once. Shared across every instance
 	 *   configured with the same rate on the same chain (see `_getSharedRateLimiter`) — a
-	 *   fan-out read over many vectors needs one budget, not one per vector. Omit for
+	 *   fan-out read over many streams needs one budget, not one per stream. Omit for
 	 *   unlimited (the default); public RPC endpoints commonly 429 an unthrottled fan-out.
 	 * @param {boolean|Object} [params.cache] - `false`/`null` disables item-payload caching
 	 *   entirely; an object with `get`/`set` is used as a custom cache verbatim; omit for the
@@ -216,11 +216,11 @@ export default class Mnemonad {
 		this.binaryLength = 0;
 		/** @type {number} First readable index. Advances on `truncateFrom`. */
 		this.firstAvailableIndex = 0;
-		/** @type {?Uint8Array} Vector-level metadata. */
+		/** @type {?Uint8Array} Stream-level metadata. */
 		this.meta = null;
 		/** @type {?Uint8Array} Wrapped encryption key, or null if unencrypted. */
 		this.encKeyWrapped = null;
-		/** @type {?number} Contract version the vector was created with. */
+		/** @type {?number} Contract version the stream was created with. */
 		this.madeWithVersion = null;
 
 		/**
@@ -336,7 +336,7 @@ export default class Mnemonad {
 	}
 
 	/**
-	 * @returns {Promise<boolean>} Whether the vector carries an encryption key on-chain.
+	 * @returns {Promise<boolean>} Whether the stream carries an encryption key on-chain.
 	 */
 	async isEncrypted() {
 		await this.initialize();
@@ -351,7 +351,7 @@ export default class Mnemonad {
 	 * Computes the id a creator/salt pair will produce, without touching the chain.
 	 *
 	 * This is the mechanism behind single-transaction encrypted creation: because the id is
-	 * known in advance, the data key can be wrapped scoped to a vector that doesn't exist
+	 * known in advance, the data key can be wrapped scoped to a stream that doesn't exist
 	 * yet, so create, key-wrap, and initial push all happen in one transaction with no
 	 * round trip needed first to learn what id a create call would produce.
 	 *
@@ -361,20 +361,20 @@ export default class Mnemonad {
 	 * @param {?Object} [rpcRetry] - see the constructor's `params.rpcRetry`
 	 * @returns {bigint}
 	 */
-	static async computeVectorId(publicClient, contractAddress, creator, salt, maxRPCRequestsPerSecond, rpcRetry) {
+	static async computeStreamId(publicClient, contractAddress, creator, salt, maxRPCRequestsPerSecond, rpcRetry) {
 		({ publicClient } = _rateLimitClients(publicClient, null, maxRPCRequestsPerSecond, false, rpcRetry || {}));
 		return await publicClient.readContract({
 			address: contractAddress,
 			abi: mnemonadAbi,
-			functionName: 'vectorIdFor',
+			functionName: 'streamIdFor',
 			args: [creator, salt],
 		});
 	}
 
 	/**
-	 * Lists vector ids currently owned by `owner`, via `ERC721Enumerable`'s per-owner index —
+	 * Lists stream ids currently owned by `owner`, via `ERC721Enumerable`'s per-owner index —
 	 * a direct on-chain read, not an off-chain event-log scan. Needed because ids are
-	 * deterministic (see `computeVectorId`/`vectorIdFor`), so there is no `0..totalSupply`
+	 * deterministic (see `computeStreamId`/`streamIdFor`), so there is no `0..totalSupply`
 	 * walk that would find them without this index.
 	 *
 	 * All reads are pinned to one block number, since `tokenOfOwnerByIndex` reads into an
@@ -390,7 +390,7 @@ export default class Mnemonad {
 	 * @param {string} owner
 	 * @param {?number} [maxRPCRequestsPerSecond] - see the constructor's param of the same name.
 	 *   Worth setting here specifically: this method's own fan-out (one call per owned
-	 *   vector) is exactly the burst shape that trips a public RPC's rate limit.
+	 *   stream) is exactly the burst shape that trips a public RPC's rate limit.
 	 * @param {?Object} [rpcRetry] - see the constructor's `params.rpcRetry`. Worth raising
 	 *   here for the same reason as `maxRPCRequestsPerSecond` above.
 	 * @returns {Promise<bigint[]>}
@@ -442,13 +442,13 @@ export default class Mnemonad {
 	}
 
 	/**
-	 * Creates a new vector on-chain and returns a wrapped instance.
+	 * Creates a new stream on-chain and returns a wrapped instance.
 	 *
 	 * @param {Object} params - every constructor param, plus:
 	 * @param {?Uint8Array|Uint8Array[]} [params.array] - initial item(s) to push
 	 * @param {?string} [params.salt] - 0x-prefixed 32-byte hex; random if omitted
-	 * @param {?Uint8Array} [params.meta] - vector-level metadata
-	 * @param {boolean} [params.encrypt=false] - create an encrypted vector
+	 * @param {?Uint8Array} [params.meta] - stream-level metadata
+	 * @param {boolean} [params.encrypt=false] - create an encrypted stream
 	 * @param {?Object} [params.options] - transaction options
 	 * @param {?number} [params.options.timeout] - receipt timeout in ms (default 30000)
 	 * @param {?number} [params.options.pollIntervalMs] - receipt poll interval (default 200)
@@ -472,7 +472,7 @@ export default class Mnemonad {
 		await ev._loadConstants();
 
 		const creator = ev._requireSender();
-		const id = await Mnemonad.computeVectorId(
+		const id = await Mnemonad.computeStreamId(
 			publicClient,
 			contractAddress,
 			creator,
@@ -543,9 +543,9 @@ export default class Mnemonad {
 
 		// One batch for everything this needs — constants (unless another instance already
 		// loaded them, on this chain+contract, and left them in the shared cache) alongside
-		// the vector's own fields, which now cost one `getVectorInfo` call instead of five
-		// separate ones (`length`/`binaryLength`/`firstAvailableIndex`/`vectorMeta`/
-		// `encKeyWrapped` — removed from the contract; see `getVectorInfo`'s own comment in
+		// the stream's own fields, which now cost one `getStreamInfo` call instead of five
+		// separate ones (`length`/`binaryLength`/`firstAvailableIndex`/`streamMeta`/
+		// `encKeyWrapped` — removed from the contract; see `getStreamInfo`'s own comment in
 		// Mnemonad.sol for why folding them in was worth the one-time API break). None of
 		// these reads depend on each other's values, only the version check below depends on
 		// having read them, so there's no reason to pay for a second round trip's latency
@@ -553,7 +553,7 @@ export default class Mnemonad {
 		// to validate before reading the rest.
 		const needsConstants = !this._constantsLoaded && !this._applyCachedConstants();
 		const [info, version, maxChunk] = await Promise.all([
-			this._read('getVectorInfo', [this.id]),
+			this._read('getStreamInfo', [this.id]),
 			needsConstants ? this._read('CONTRACT_VERSION', []) : Promise.resolve(null),
 			needsConstants ? this._read('maxChunkBytes', []) : Promise.resolve(null),
 		]);
@@ -656,9 +656,9 @@ export default class Mnemonad {
 	/**
 	 * Reads a byte range of item `i`, returning plaintext.
 	 *
-	 * On an encrypted vector this fetches only the frames covering the requested range and
+	 * On an encrypted stream this fetches only the frames covering the requested range and
 	 * decrypts those — so reading the first kilobyte of a 4 MB item costs one frame, not
-	 * the whole item. Random access works the same whether the vector is encrypted or not,
+	 * the whole item. Random access works the same whether the stream is encrypted or not,
 	 * which is the point of the framed format.
 	 *
 	 * @param {number} i
@@ -722,7 +722,7 @@ export default class Mnemonad {
 	 *
 	 * Never holds more than one frame (encrypted) or one page (plaintext) in memory beyond
 	 * what the caller keeps, so an item far larger than available memory can be consumed
-	 * end to end. On an encrypted vector only the frames overlapping the requested range
+	 * end to end. On an encrypted stream only the frames overlapping the requested range
 	 * are fetched and authenticated.
 	 *
 	 * @param {number} i
@@ -883,7 +883,7 @@ export default class Mnemonad {
 	 *
 	 * EXTERNAL items still cost one extra `pointerAt` call each — there is no batched
 	 * pointer read on-chain (yet), only a batched refs read. Worth reaching for regardless
-	 * on a listing made mostly of SLOT/CODE items, which is the common case; a vector that's
+	 * on a listing made mostly of SLOT/CODE items, which is the common case; a stream that's
 	 * mostly EXTERNAL items gets less benefit here.
 	 *
 	 * @param {number[]} indices
@@ -1106,7 +1106,7 @@ export default class Mnemonad {
 		return results;
 	}
 
-	/** @returns {Promise<string>} The vector's owner address. */
+	/** @returns {Promise<string>} The stream's owner address. */
 	async owner() {
 		return await this._read('ownerOf', [this.id]);
 	}
@@ -1115,7 +1115,7 @@ export default class Mnemonad {
 	 * Address of the paid-upload gateway this registry settles prepaid EXTERNAL pushes
 	 * against, or the zero address when none is wired.
 	 *
-	 * Registry-level, not per-vector, and read rather than configured client-side: the
+	 * Registry-level, not per-stream, and read rather than configured client-side: the
 	 * registry is the only authority on which gateway it will actually honour, so
 	 * discovering it here can never drift from what `pushExternal` does.
 	 * See `MnemonadUploadGateway.fromMnemonad`.
@@ -1132,7 +1132,7 @@ export default class Mnemonad {
 	 *
 	 * @param {Uint8Array} data
 	 * @returns {Promise<{hash: string, size: number}>} `hash` 0x-prefixed.
-	 * @throws {Error} On an encrypted vector. Not a missing feature — a real impossibility:
+	 * @throws {Error} On an encrypted stream. Not a missing feature — a real impossibility:
 	 *   every encryption draws a fresh nonce, so `push` would produce different ciphertext
 	 *   than any hash computed beforehand, and the registry would find no matching escrow.
 	 *   Committing the plaintext hash instead would look fine and then silently fail to
@@ -1146,7 +1146,7 @@ export default class Mnemonad {
 		// be a truthy function reference, i.e. "always encrypted".
 		if (await this.isEncrypted()) {
 			throw new Error(
-				'offloadCommitment: cannot pre-commit to an encrypted vector\'s payload — ' +
+				'offloadCommitment: cannot pre-commit to an encrypted stream\'s payload — ' +
 				'encryption uses a fresh nonce each time, so the ciphertext push() uploads ' +
 				'would not match any hash computed in advance.'
 			);
@@ -1155,10 +1155,10 @@ export default class Mnemonad {
 	}
 
 	/**
-	 * Whether `address` can append to this vector right now — the owner, an ERC-721
+	 * Whether `address` can append to this stream right now — the owner, an ERC-721
 	 * approved operator, or an address granted via `setWriterApproval`. Distinct from
 	 * `this.offloadingProvider.canWrite`, which is about IPFS pinning capability, not write access to the
-	 * vector itself.
+	 * stream itself.
 	 *
 	 * Never throws for "nothing to check": with no address and no configured sender (no
 	 * wallet connected yet), resolves `false` rather than rejecting — checking write access
@@ -1340,13 +1340,13 @@ export default class Mnemonad {
 	}
 
 	/**
-	 * Appends every item of another vector into this one, consuming the source.
+	 * Appends every item of another stream into this one, consuming the source.
 	 *
 	 * Cost tracks the source's ITEM COUNT, not its byte length — payload bytes are
 	 * re-linked, never copied. Measured on-chain, merging four 5,000-byte items costs
 	 * exactly the same as four 100-byte items.
 	 *
-	 * Restrictions: neither vector may be encrypted, and the source may not have been
+	 * Restrictions: neither stream may be encrypted, and the source may not have been
 	 * truncated.
 	 *
 	 * @param {bigint|string|Mnemonad} other
@@ -1384,7 +1384,7 @@ export default class Mnemonad {
 	}
 
 	/**
-	 * Destroys the vector and its ERC-721 token. Deployed chunks survive on-chain.
+	 * Destroys the stream and its ERC-721 token. Deployed chunks survive on-chain.
 	 * @param {Object} [params={}]
 	 * @returns {Promise<boolean>}
 	 */
@@ -1399,8 +1399,8 @@ export default class Mnemonad {
 	 * Sets or replaces the wrapped encryption key.
 	 *
 	 * The owner may re-wrap rather than set the key once and never again. That is what
-	 * makes handing an encrypted vector to a new owner possible at all — though the
-	 * propose/accept transfer flow that would use it is not in v1, so an encrypted vector
+	 * makes handing an encrypted stream to a new owner possible at all — though the
+	 * propose/accept transfer flow that would use it is not in v1, so an encrypted stream
 	 * is currently non-transferable.
 	 *
 	 * @param {Uint8Array} wrapped
@@ -1418,7 +1418,7 @@ export default class Mnemonad {
 	 * Grants or revokes append rights, independently of ERC-721 transfer approval.
 	 *
 	 * Deliberately separate from `approve`: reusing transfer approval would mean letting a
-	 * marketplace that may sell your vector also append to it.
+	 * marketplace that may sell your stream also append to it.
 	 *
 	 * @param {string} writer
 	 * @param {boolean} approved
@@ -1771,11 +1771,11 @@ export default class Mnemonad {
 	}
 
 	/**
-	 * Encrypts payloads if the vector is encrypted and they aren't ciphertext already.
+	 * Encrypts payloads if the stream is encrypted and they aren't ciphertext already.
 	 *
 	 * Every write path routes through this, not just `push()`. Keeping encryption in
 	 * `push()` alone meant `pushMany()` and `pushExternal()`, called directly, wrote
-	 * PLAINTEXT to an encrypted vector — silently, since nothing downstream can tell the
+	 * PLAINTEXT to an encrypted stream — silently, since nothing downstream can tell the
 	 * difference between a ciphertext blob and a plaintext one.
 	 *
 	 * @param {Uint8Array[]} items

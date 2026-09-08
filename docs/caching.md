@@ -12,10 +12,10 @@ Implemented in [`js/MnemonadChunkCache.js`](../js/MnemonadChunkCache.js); wired 
 ## The one rule that decides the whole design
 
 **It stores bytes exactly as fetched from chain or IPFS, before any decryption.** Both call
-sites hand it pre-decryption bytes — ciphertext for an encrypted vector, plaintext for an
+sites hand it pre-decryption bytes — ciphertext for an encrypted stream, plaintext for an
 unencrypted one — and `Mnemonad.at()` decrypts one layer above either. Caching post-decryption
 plaintext would mean decrypted content sitting in local storage (IndexedDB, specifically)
-indefinitely, which is exactly the exposure encrypting a vector is meant to avoid. Caching the
+indefinitely, which is exactly the exposure encrypting a stream is meant to avoid. Caching the
 as-stored bytes changes nothing security-wise: that data is already public on-chain or on
 IPFS regardless of who caches a copy of it locally.
 
@@ -23,10 +23,10 @@ IPFS regardless of who caches a copy of it locally.
 
 | What | Where it's cached | Key scheme | Why that scheme |
 |---|---|---|---|
-| On-chain payload | `Mnemonad._readItemBytes` | `onchain:{chainId}:{contractAddress}:{vectorId}:{index}` | Location-addressed — nothing on-chain gives a content hash cheaply *before* fetching, unlike an EXTERNAL item's pointer. |
+| On-chain payload | `Mnemonad._readItemBytes` | `onchain:{chainId}:{contractAddress}:{streamId}:{index}` | Location-addressed — nothing on-chain gives a content hash cheaply *before* fetching, unlike an EXTERNAL item's pointer. |
 | Off-chain (IPFS) payload | `MnemonadIpfs.readPointerBytes` | `ipfs:{pointerHash}` | Content-addressed — the pointer's sha256 is already known from the on-chain `Pointer` before ever touching IPFS. |
-| Item refs (tier/size/chunk addresses) | `Mnemonad.getItemRefs` / `getItemRefsBatch` | `refs:{chainId}:{contractAddress}:{vectorId}:{index}` | Location-addressed, immutable once committed — append-only; `concat`/`truncateFrom` never mutate an existing item's own record. |
-| EXTERNAL pointer (the CID) | `Mnemonad.pointerAt` | `pointer:{chainId}:{contractAddress}:{vectorId}:{index}` | Separate from the payload's own content-addressed key — this is what a caller needs *before* it can even look the payload up. |
+| Item refs (tier/size/chunk addresses) | `Mnemonad.getItemRefs` / `getItemRefsBatch` | `refs:{chainId}:{contractAddress}:{streamId}:{index}` | Location-addressed, immutable once committed — append-only; `concat`/`truncateFrom` never mutate an existing item's own record. |
+| EXTERNAL pointer (the CID) | `Mnemonad.pointerAt` | `pointer:{chainId}:{contractAddress}:{streamId}:{index}` | Separate from the payload's own content-addressed key — this is what a caller needs *before* it can even look the payload up. |
 
 All four share one cache instance and one key namespace, just with different prefixes, so
 they can never collide with each other.

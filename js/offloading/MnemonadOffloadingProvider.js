@@ -5,7 +5,7 @@ import { sha256 } from '@noble/hashes/sha2.js';
  */
 
 /**
- * Base class for an off-chain storage backend a Mnemonad vector can point at — IPFS
+ * Base class for an off-chain storage backend a Mnemonad stream can point at — IPFS
  * (`MnemonadIpfs`/`MnemonadPinataProvider`), and anything else with the same shape (a
  * Filecoin deal, Arweave, Walrus, a private bucket). The contract only ever stores a
  * `Pointer {hash, size, codec, locator}` — it has no idea which backend produced it, which
@@ -39,7 +39,7 @@ export default class MnemonadOffloadingProvider {
 
 	/**
 	 * Called once by `Mnemonad`'s constructor. Not meant to be called a second time with a
-	 * different instance — a provider is scoped to one vector's lifetime.
+	 * different instance — a provider is scoped to one stream's lifetime.
 	 * @param {Mnemonad} mnemonad
 	 * @returns {this}
 	 */
@@ -92,7 +92,7 @@ export default class MnemonadOffloadingProvider {
 	}
 
 	/**
-	 * Probes retrievability of every external item in the attached vector. Necessarily
+	 * Probes retrievability of every external item in the attached stream. Necessarily
 	 * weak — most off-chain backends have no on-chain expiry, so this observes rather than
 	 * guarantees.
 	 * @param {Object} [params={}]

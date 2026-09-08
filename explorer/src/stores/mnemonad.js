@@ -13,16 +13,16 @@ const ENTRY = Object.values(mnemonadIds).find((e) => e.chainId === ACTIVE_CHAIN.
 const MNEMONAD_ADDRESS = ENTRY ? ENTRY.contractAddress : null;
 
 // Monad testnet's public RPC 429s under a burst of individual eth_calls, and this app's own
-// pattern (hydrate N owned vectors, each several reads, all via Promise.all) produces
+// pattern (hydrate N owned streams, each several reads, all via Promise.all) produces
 // exactly that burst on a single page load. Passed to every Mnemonad call site in this file
-// and in pages/Vector.vue — the SDK shares one budget across all of them for the same rate
+// and in pages/Stream.vue — the SDK shares one budget across all of them for the same rate
 // + chain, so the cap holds across the whole fan-out, not per call site. Not a tuned
 // number; raise it if this still 429s, or once the RPC's real limit is known.
 export const MAX_RPC_REQUESTS_PER_SECOND = 8;
 
 // More generous than MnemonadRateLimiter's own defaults (4 attempts, ~1.75s total backoff).
 // Monad's public testnet RPC can stay rate-limited longer than that under a real burst —
-// several vectors' worth of concurrent reads all sharing the one 8/sec budget above — and a
+// several streams' worth of concurrent reads all sharing the one 8/sec budget above — and a
 // visible "RPC Request failed" toast for what's really just transient congestion is worse
 // than waiting a bit longer. Still bounded, not infinite: worst case here is ~24s
 // (250+500+1000+2000+4000+8000+8000ms across the 7 backoffs before the 8th/final attempt)
@@ -32,14 +32,14 @@ export const RPC_RETRY = { attempts: 8, maxDelayMs: 8000 };
 
 export const useMnemonadStore = defineStore('mnemonad', {
 	state: () => ({
-		vectors: [],
+		streams: [],
 		loading: false,
 		creating: false,
 		error: null,
 		/**
 		 * The paid-upload gateway this registry honours, or null when none is wired.
-		 * Registry-level rather than per-vector, which is why it lives here and not on
-		 * pages/Vector.vue — and read from the contract rather than configured client-side,
+		 * Registry-level rather than per-stream, which is why it lives here and not on
+		 * pages/Stream.vue — and read from the contract rather than configured client-side,
 		 * so it can never name a gateway `pushExternal` would ignore.
 		 */
 		gateway: null,
@@ -52,13 +52,13 @@ export const useMnemonadStore = defineStore('mnemonad', {
 	},
 	actions: {
 		/**
-		 * Lists the given owner's vectors and hydrates just enough per vector to render a
+		 * Lists the given owner's streams and hydrates just enough per stream to render a
 		 * row (item count, encrypted flag) — cheap for a personal list, which is what this
-		 * is; a global "browse all vectors" view would need to page instead.
+		 * is; a global "browse all streams" view would need to page instead.
 		 */
-		async fetchOwnedVectors(owner) {
+		async fetchOwnedStreams(owner) {
 			if (!MNEMONAD_ADDRESS || !owner) {
-				this.vectors = [];
+				this.streams = [];
 				return;
 			}
 			this.loading = true;
@@ -72,7 +72,7 @@ export const useMnemonadStore = defineStore('mnemonad', {
 					MAX_RPC_REQUESTS_PER_SECOND,
 					RPC_RETRY
 				);
-				this.vectors = await Promise.all(
+				this.streams = await Promise.all(
 					ids.map(async (id) => {
 						const v = new Mnemonad({
 							publicClient,
@@ -83,7 +83,7 @@ export const useMnemonadStore = defineStore('mnemonad', {
 							// A Pinia store, not a component — no `this.debugStore`/`mapStores`
 							// here, so the debug store is pulled directly (Pinia stores can call
 							// other stores this way). Same false/undefined resolution as
-							// Vector.vue's `cacheParam`.
+							// Stream.vue's `cacheParam`.
 							cache: useDebugStore().cachingDisabled ? false : undefined,
 							debug: true,
 						});
@@ -96,8 +96,8 @@ export const useMnemonadStore = defineStore('mnemonad', {
 					})
 				);
 			} catch (e) {
-				this.error = e?.shortMessage || e?.message || 'Failed to load vectors';
-				this.vectors = [];
+				this.error = e?.shortMessage || e?.message || 'Failed to load streams';
+				this.streams = [];
 			} finally {
 				this.loading = false;
 			}
@@ -154,17 +154,17 @@ export const useMnemonadStore = defineStore('mnemonad', {
 		},
 		/**
 		 * @param {Object} [params={}]
-		 * @param {string} [params.name] - optional label, stored as UTF-8 vector metadata
+		 * @param {string} [params.name] - optional label, stored as UTF-8 stream metadata
 		 * @returns {Promise<Mnemonad>}
 		 */
-		async createVector(params = {}) {
+		async createStream(params = {}) {
 			if (!MNEMONAD_ADDRESS) throw new Error('Mnemonad is not deployed on this network');
 			this.creating = true;
 			try {
 				const publicClient = getPublicClient(config);
 				const walletClient = await getWalletClient(config);
 				const meta = params.name ? new TextEncoder().encode(params.name) : undefined;
-				const vector = await Mnemonad.create({
+				const stream = await Mnemonad.create({
 					publicClient,
 					walletClient,
 					contractAddress: MNEMONAD_ADDRESS,
@@ -172,10 +172,10 @@ export const useMnemonadStore = defineStore('mnemonad', {
 					maxRPCRequestsPerSecond: MAX_RPC_REQUESTS_PER_SECOND,
 					rpcRetry: RPC_RETRY,
 				});
-				// Append locally rather than re-running the whole list — this vector is
+				// Append locally rather than re-running the whole list — this stream is
 				// known-fresh (just minted), no need to re-fetch it.
-				this.vectors.push({ id: vector.id, length: 0, encrypted: false });
-				return vector;
+				this.streams.push({ id: stream.id, length: 0, encrypted: false });
+				return stream;
 			} finally {
 				this.creating = false;
 			}

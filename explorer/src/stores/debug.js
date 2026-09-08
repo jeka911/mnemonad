@@ -32,17 +32,17 @@ export const useDebugStore = defineStore('debug', {
 	state: () => ({
 		/**
 		 * When true, every `Mnemonad` instance constructed anywhere in the app is built with
-		 * `cache: false` (see stores/mnemonad.js and pages/Vector.vue) — every read hits the
+		 * `cache: false` (see stores/mnemonad.js and pages/Stream.vue) — every read hits the
 		 * chain/IPFS directly, no IndexedDB or in-memory cache involved at any layer. See
 		 * docs/caching.md.
 		 */
 		cachingDisabled: readInitial(),
 		/**
 		 * When true, non-essential chrome around the actual demo content — the app header,
-		 * footer, and the "Add" panel on a vector page — dims to a low opacity. For screen
+		 * footer, and the "Add" panel on a stream page — dims to a low opacity. For screen
 		 * recordings/live demos: nothing to disable or hide outright (a stray click still
 		 * works exactly as before), just visually de-emphasized so the audience's eye goes
-		 * to the vector/items instead of the surrounding nav chrome.
+		 * to the stream/items instead of the surrounding nav chrome.
 		 */
 		presentationMode: readInitialPresentationMode(),
 	}),

@@ -64,7 +64,7 @@ export default {
 
 /* Presentation mode: dims non-essential chrome for a recording/demo, without disabling it —
    a stray click on the header/footer still works exactly as before, this is purely visual.
-   Same class name (and rule) also appears in Vector.vue's "Add" panel — not shared via a
+   Same class name (and rule) also appears in Stream.vue's "Add" panel — not shared via a
    global stylesheet since every other style in this app stays scoped per-component; small
    enough to duplicate rather than break that convention for. */
 .presentation-dim {

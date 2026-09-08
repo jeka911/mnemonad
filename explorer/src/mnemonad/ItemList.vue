@@ -65,7 +65,7 @@ export default {
 			type: Number,
 			default: 0,
 		},
-		// (index: number) => Promise<Uint8Array> — Vector.vue owns the SDK instance, so
+		// (index: number) => Promise<Uint8Array> — Stream.vue owns the SDK instance, so
 		// fetching a specific item's payload is delegated up rather than reached for here.
 		// Passed straight through to each ItemListItem. Left null on pages that only ever
 		// pass tier/size rows without real backing data.

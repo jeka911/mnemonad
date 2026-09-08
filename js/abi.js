@@ -244,7 +244,7 @@ export const mnemonadAbi = [
 				"type": "uint256"
 			}
 		],
-		"name": "EncryptedVectorNotTransferable",
+		"name": "EncryptedStreamNotTransferable",
 		"type": "error"
 	},
 	{
@@ -340,7 +340,7 @@ export const mnemonadAbi = [
 				"type": "uint256"
 			}
 		],
-		"name": "NoSuchVector",
+		"name": "NoSuchStream",
 		"type": "error"
 	},
 	{
@@ -468,7 +468,7 @@ export const mnemonadAbi = [
 				"type": "uint256"
 			}
 		],
-		"name": "VectorExists",
+		"name": "StreamExists",
 		"type": "error"
 	},
 	{
@@ -744,6 +744,31 @@ export const mnemonadAbi = [
 		"inputs": [
 			{
 				"indexed": true,
+				"internalType": "uint256",
+				"name": "id",
+				"type": "uint256"
+			},
+			{
+				"indexed": true,
+				"internalType": "address",
+				"name": "owner",
+				"type": "address"
+			},
+			{
+				"indexed": false,
+				"internalType": "uint32",
+				"name": "version",
+				"type": "uint32"
+			}
+		],
+		"name": "StreamCreated",
+		"type": "event"
+	},
+	{
+		"anonymous": false,
+		"inputs": [
+			{
+				"indexed": true,
 				"internalType": "address",
 				"name": "from",
 				"type": "address"
@@ -794,31 +819,6 @@ export const mnemonadAbi = [
 			}
 		],
 		"name": "UploadGatewaySet",
-		"type": "event"
-	},
-	{
-		"anonymous": false,
-		"inputs": [
-			{
-				"indexed": true,
-				"internalType": "uint256",
-				"name": "id",
-				"type": "uint256"
-			},
-			{
-				"indexed": true,
-				"internalType": "address",
-				"name": "owner",
-				"type": "address"
-			},
-			{
-				"indexed": false,
-				"internalType": "uint32",
-				"name": "version",
-				"type": "uint32"
-			}
-		],
-		"name": "VectorCreated",
 		"type": "event"
 	},
 	{
@@ -1119,7 +1119,7 @@ export const mnemonadAbi = [
 			},
 			{
 				"internalType": "bytes",
-				"name": "vectorMeta_",
+				"name": "streamMeta_",
 				"type": "bytes"
 			},
 			{
@@ -1318,7 +1318,7 @@ export const mnemonadAbi = [
 				"type": "uint256"
 			}
 		],
-		"name": "getVectorInfo",
+		"name": "getStreamInfo",
 		"outputs": [
 			{
 				"internalType": "uint64",
@@ -1917,6 +1917,30 @@ export const mnemonadAbi = [
 	{
 		"inputs": [
 			{
+				"internalType": "address",
+				"name": "creator",
+				"type": "address"
+			},
+			{
+				"internalType": "bytes32",
+				"name": "salt",
+				"type": "bytes32"
+			}
+		],
+		"name": "streamIdFor",
+		"outputs": [
+			{
+				"internalType": "uint256",
+				"name": "",
+				"type": "uint256"
+			}
+		],
+		"stateMutability": "pure",
+		"type": "function"
+	},
+	{
+		"inputs": [
+			{
 				"internalType": "bytes4",
 				"name": "interfaceId",
 				"type": "bytes4"
@@ -2086,30 +2110,6 @@ export const mnemonadAbi = [
 			}
 		],
 		"stateMutability": "view",
-		"type": "function"
-	},
-	{
-		"inputs": [
-			{
-				"internalType": "address",
-				"name": "creator",
-				"type": "address"
-			},
-			{
-				"internalType": "bytes32",
-				"name": "salt",
-				"type": "bytes32"
-			}
-		],
-		"name": "vectorIdFor",
-		"outputs": [
-			{
-				"internalType": "uint256",
-				"name": "",
-				"type": "uint256"
-			}
-		],
-		"stateMutability": "pure",
 		"type": "function"
 	},
 	{

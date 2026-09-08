@@ -62,10 +62,10 @@ describe('shared contract constants', () => {
 
 		expect(seenFunctions).not.toContain('CONTRACT_VERSION');
 		expect(seenFunctions).not.toContain('maxChunkBytes');
-		// The genuinely per-vector fields are still read — this only skips the 2 constants.
-		// One call, not five: `length`/`binaryLength`/`firstAvailableIndex`/`vectorMeta`/
-		// `encKeyWrapped` were folded into `getVectorInfo` (see its comment in Mnemonad.sol).
-		expect(seenFunctions).toContain('getVectorInfo');
+		// The genuinely per-stream fields are still read — this only skips the 2 constants.
+		// One call, not five: `length`/`binaryLength`/`firstAvailableIndex`/`streamMeta`/
+		// `encKeyWrapped` were folded into `getStreamInfo` (see its comment in Mnemonad.sol).
+		expect(seenFunctions).toContain('getStreamInfo');
 		expect(second.madeWithVersion).toBe(first.madeWithVersion);
 		expect(second.maxChunkBytes).toBe(first.maxChunkBytes);
 	});
@@ -107,7 +107,7 @@ describe('shared contract constants', () => {
 		const calls = await countReadContractCalls(async () => {
 			await freshB.initialize();
 		});
-		expect(calls).toBeGreaterThan(0); // still has to read B's per-vector fields at least
+		expect(calls).toBeGreaterThan(0); // still has to read B's per-stream fields at least
 		expect(freshB.maxChunkBytes).toBe(8_000);
 	});
 
@@ -120,6 +120,6 @@ describe('shared contract constants', () => {
 		await second.initialize();
 		expect(second.maxChunkBytes).toBe(12_345);
 		expect(second.madeWithVersion).toBe(first.madeWithVersion);
-		expect(second.length).toBe(1); // per-vector fields are still read fresh, and correct
+		expect(second.length).toBe(1); // per-stream fields are still read fresh, and correct
 	});
 });

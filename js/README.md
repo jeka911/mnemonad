@@ -29,15 +29,15 @@ A few methods worth knowing about, beyond `push()` / `at()` / `length`:
   need a `stagingId` that only exists once a prior transaction has landed), or an
   IPFS-backed estimate when a transport is configured. Its result carries
   `transactionCount`, which is `1` except on the staged path
-- `Mnemonad.listOwned(publicClient, contractAddress, owner)` — static; every vector `owner`
+- `Mnemonad.listOwned(publicClient, contractAddress, owner)` — static; every stream `owner`
   currently holds, via the registry's `ERC721Enumerable` index rather than an off-chain scan
 - `maxRPCRequestsPerSecond` — caps outbound RPC calls, queuing the rest instead of firing
   them all at once. Public RPC endpoints commonly 429 an unthrottled fan-out (several fields
-  per vector, times several vectors, all via `Promise.all`); every instance configured with
+  per stream, times several streams, all via `Promise.all`); every instance configured with
   the same rate on the same chain shares one budget, so the cap holds across a whole
   fan-out rather than per instance. Omit for unlimited (the default)
 
-This vector is strictly append-only — there is no update-in-place operation — and deletion
+This stream is strictly append-only — there is no update-in-place operation — and deletion
 is logical only, via `truncateFrom()`, not a way to reclaim gas.
 
 ## Quick start
@@ -106,7 +106,7 @@ await ev.push(secret);       // encrypted before it leaves the process
 await ev.at(0);              // decrypted transparently
 ```
 
-Because vector ids are deterministic, the id is known *before* creation — so create + key +
+Because stream ids are deterministic, the id is known *before* creation — so create + key +
 first push happen in **one transaction**, with no round trip needed first to learn what id
 a create call would produce.
 
@@ -141,7 +141,7 @@ Two limitations to know:
 
 - **Owner-bound.** Only the wallet that wrapped the key can unwrap it. No delegation, and
   losing the signing key loses the data.
-- **Encrypted vectors cannot be transferred.** The contract blocks it, because a new owner
+- **Encrypted streams cannot be transferred.** The contract blocks it, because a new owner
   could never decrypt. Lifting this needs the propose/accept rewrap flow, which is **not in
   v1**.
 
@@ -345,11 +345,11 @@ items", "a lot of bytes" and "more bytes than one call can return" break in unre
 | `base.test.js` | 2 KB (small, so the staged path is cheap to reach) | Tiers, packing, staged append, concat, truncate, burn, fees, access control |
 | `large_data.test.js` | 24 KB (realistic) | 1 MB staged on-chain across 44 chunks, 16 MB via IPFS, 60-item packed batch, 128-slot page boundary |
 | `huge_data.test.js` | 24 KB | 4 MB on-chain — past what one-shot reads can serve; paged reads and `readRange` slicing |
-| `encrypted_small.test.js` | 2 KB | Key wrap/unwrap, per-vector derivation, wrong-signer rejection, nonce uniqueness, GCM tamper detection, tier crossings caused by the 26-byte framing overhead, every write path encrypting |
+| `encrypted_small.test.js` | 2 KB | Key wrap/unwrap, per-stream derivation, wrong-signer rejection, nonce uniqueness, GCM tamper detection, tier crossings caused by the 26-byte framing overhead, every write path encrypting |
 | `encrypted_large.test.js` | 24 KB | 256 KB staged encrypted, 1 MB encrypted via IPFS, chunk boundaries crossed by overhead alone |
 | `encrypted_huge.test.js` | 24 KB | 4 MB encrypted — partial decryption, streaming, frame-integrity (reorder/truncation), ranged off-chain reads, 8 MB via IPFS |
-| `mixed_tiers.test.js` | 2 KB | SLOT + CODE + multi-chunk + EXTERNAL interleaved in one vector: per-tier dispatch of `at`/`readRange`/`getItemRefs`, `binaryLength` across tiers, concat preserving tiers, and the same encrypted |
-| `list_owned.test.js` | 2 KB | `Mnemonad.listOwned()` — empty case, multiple vectors, cross-owner isolation, reflecting a transfer |
+| `mixed_tiers.test.js` | 2 KB | SLOT + CODE + multi-chunk + EXTERNAL interleaved in one stream: per-tier dispatch of `at`/`readRange`/`getItemRefs`, `binaryLength` across tiers, concat preserving tiers, and the same encrypted |
+| `list_owned.test.js` | 2 KB | `Mnemonad.listOwned()` — empty case, multiple streams, cross-owner isolation, reflecting a transfer |
 | `rate_limiter.test.js` | n/a | `MnemonadRateLimiter` — no-op default, throttling and FIFO ordering, `wrapClient`, and the constructor's `maxRPCRequestsPerSecond` sharing one budget across instances |
 | `custom_offloading_provider.test.js` | 2 KB | A from-scratch `MnemonadOffloadingProvider` subclass, unrelated to `MnemonadIpfs` — proves `offloadingProvider` wiring, a non-standard `codec`, oversized-push routing, and the inherited `_verify` hash check all work for a genuinely third-party provider, not just the SDK's own |
 

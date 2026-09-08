@@ -43,7 +43,7 @@ export default {
 	components: { GradientButton },
 	props: {
 		// True when the connected wallet can't push right now (disconnected, wrong
-		// network, or not authorized) — see Vector.vue's canWrite/wrongNetwork check.
+		// network, or not authorized) — see Stream.vue's canWrite/wrongNetwork check.
 		disable: {
 			type: Boolean,
 			default: false,
@@ -56,7 +56,7 @@ export default {
 			type: Boolean,
 			default: false,
 		},
-		// The vector's maxChunkBytes — a single push() above this throws rather than
+		// The stream's maxChunkBytes — a single push() above this throws rather than
 		// offloading itself (that needs `{ onChain: true }`'s staged multi-transaction
 		// append, which this simple text box doesn't drive), *unless* an off-chain
 		// transport is configured (`canOffload`), in which case push() routes it to IPFS
@@ -72,7 +72,7 @@ export default {
 			type: Boolean,
 			default: false,
 		},
-		// (text: string) => Promise<CostEstimate|null> — Vector.vue owns the actual SDK
+		// (text: string) => Promise<CostEstimate|null> — Stream.vue owns the actual SDK
 		// instance/clients, so estimation is delegated up rather than reached for here.
 		estimate: {
 			type: Function,
@@ -104,7 +104,7 @@ export default {
 			if (this.oversized) {
 				return this.canOffload
 					? `${formatBytes(this.byteLength)} exceeds the on-chain limit (${formatBytes(this.maxBytes)}) — will be stored via IPFS instead.`
-					: `${formatBytes(this.byteLength)} exceeds this vector's ${formatBytes(this.maxBytes)} single-item limit — shorten it.`;
+					: `${formatBytes(this.byteLength)} exceeds this stream's ${formatBytes(this.maxBytes)} single-item limit — shorten it.`;
 			}
 			return `${formatBytes(this.byteLength)} / ${formatBytes(this.maxBytes)}`;
 		},

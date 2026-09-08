@@ -11,11 +11,11 @@ import {IMnemonadUploadGateway} from "./IMnemonadUploadGateway.sol";
 /// @title Mnemonad
 /// @notice A scalable append-only on-chain `bytes[]`.
 ///
-/// Each vector is an ERC-721 token: a unique, transferable, owned id, which is what lets
-/// `ownerOf` stand in for access control. All vectors live in this one registry rather than
-/// in a contract each, because that is what keeps `concat` affordable: merging two vectors
+/// Each stream is an ERC-721 token: a unique, transferable, owned id, which is what lets
+/// `ownerOf` stand in for access control. All streams live in this one registry rather than
+/// in a contract each, because that is what keeps `concat` affordable: merging two streams
 /// re-links item records instead of copying payload bytes, which is only possible when both
-/// vectors share a storage domain.
+/// streams share a storage domain.
 ///
 /// Items are stored in one of three tiers, chosen by cost rather than by size headroom:
 ///   - SLOT     — <=31 bytes, packed into a single storage slot.
@@ -24,11 +24,11 @@ import {IMnemonadUploadGateway} from "./IMnemonadUploadGateway.sol";
 ///   - EXTERNAL — an off-chain pointer (IPFS CID etc.) plus a hash for read-time
 ///                verification. Payload never touches the chain.
 ///
-/// No update-in-place operation: this vector is append-only, full stop.
+/// No update-in-place operation: this stream is append-only, full stop.
 ///
 /// ERC721Enumerable: adds `tokenOfOwnerByIndex`/`totalSupply`/`tokenByIndex` so "list this
-/// owner's vectors" is a direct on-chain read instead of an off-chain event-log scan —
-/// deterministic ids (see `vectorIdFor`) mean the ordinary path of walking `0..totalSupply`
+/// owner's streams" is a direct on-chain read instead of an off-chain event-log scan —
+/// deterministic ids (see `streamIdFor`) mean the ordinary path of walking `0..totalSupply`
 /// isn't available, so the SDK still needs the per-owner index rather than a bare loop.
 /// Costs real gas on every mint and transfer (~90K / ~24K gas respectively, measured — three
 /// extra storage slots on mint, none of them contiguous with anything else this contract
@@ -120,7 +120,7 @@ contract Mnemonad is ERC721Enumerable, Ownable2Step, ReentrancyGuardTransient {
 
     /// @dev 64 + 64 + 32 + 32 = 192 bits: one slot. `length` is deliberately not stored —
     ///      it is `_items[id].length`, so pushes don't pay to maintain a duplicate counter.
-    struct Vector {
+    struct Stream {
         uint64 binaryLength;
         uint64 firstAvailableIndex;
         uint32 flags;
@@ -128,7 +128,7 @@ contract Mnemonad is ERC721Enumerable, Ownable2Step, ReentrancyGuardTransient {
     }
 
     struct Staging {
-        uint256 vectorId;
+        uint256 streamId;
         address opener;
         uint32 totalSize;
         uint32 received;
@@ -151,15 +151,15 @@ contract Mnemonad is ERC721Enumerable, Ownable2Step, ReentrancyGuardTransient {
     // Storage
     // ---------------------------------------------------------------------------------
 
-    mapping(uint256 id => Vector) internal _vectors;
+    mapping(uint256 id => Stream) internal _streams;
 
-    /// @dev A dynamic array per vector, not a nested mapping: array elements occupy
+    /// @dev A dynamic array per stream, not a nested mapping: array elements occupy
     ///      consecutive slots, so under Monad's MIP-8 page model (128 slots per 4 KB page)
     ///      128 consecutive items share a single cold page charge. A nested mapping would
     ///      scatter them across keccak-derived slots and pay cold access for every one.
     mapping(uint256 id => Item[]) internal _items;
 
-    mapping(uint256 id => bytes) internal _vectorMeta;
+    mapping(uint256 id => bytes) internal _streamMeta;
     mapping(uint256 id => bytes) internal _encKeyWrapped;
     mapping(uint256 id => mapping(uint256 index => bytes)) internal _itemMeta;
     mapping(uint256 id => mapping(uint256 index => bytes)) internal _slotData;
@@ -169,8 +169,8 @@ contract Mnemonad is ERC721Enumerable, Ownable2Step, ReentrancyGuardTransient {
 
     /// @dev Write permission kept separate from ERC-721 transfer approval on purpose.
     ///      Reusing `approve`/`setApprovalForAll` would mean granting a marketplace the
-    ///      right to sell a vector also grants it the right to append to it — and
-    ///      `setApprovalForAll` would hand that over for every vector the user owns.
+    ///      right to sell a stream also grants it the right to append to it — and
+    ///      `setApprovalForAll` would hand that over for every stream the user owns.
     mapping(uint256 id => mapping(address writer => bool)) internal _writerApproval;
 
     mapping(uint256 stagingId => Staging) internal _staging;
@@ -190,7 +190,7 @@ contract Mnemonad is ERC721Enumerable, Ownable2Step, ReentrancyGuardTransient {
     // Events
     // ---------------------------------------------------------------------------------
 
-    event VectorCreated(uint256 indexed id, address indexed owner, uint32 version);
+    event StreamCreated(uint256 indexed id, address indexed owner, uint32 version);
     event ItemCommitted(uint256 indexed id, uint256 indexed index, Store store, uint32 size);
     event Truncated(uint256 indexed id, uint64 firstAvailableIndex);
     event Concatenated(uint256 indexed dstId, uint256 indexed srcId, uint64 itemsMoved);
@@ -207,8 +207,8 @@ contract Mnemonad is ERC721Enumerable, Ownable2Step, ReentrancyGuardTransient {
     // Errors
     // ---------------------------------------------------------------------------------
 
-    error VectorExists(uint256 id);
-    error NoSuchVector(uint256 id);
+    error StreamExists(uint256 id);
+    error NoSuchStream(uint256 id);
     error NotAuthorized(uint256 id, address caller);
     error LengthMismatch(uint64 expected, uint64 actual);
     error IndexOutOfBounds(uint256 id, uint256 index);
@@ -220,7 +220,7 @@ contract Mnemonad is ERC721Enumerable, Ownable2Step, ReentrancyGuardTransient {
     error RefundFailed();
     error FeeAboveMax(uint256 requested, uint256 max);
     error EncKeyNotSet(uint256 id);
-    error EncryptedVectorNotTransferable(uint256 id);
+    error EncryptedStreamNotTransferable(uint256 id);
     error CannotConcatSelf();
     error CannotConcatTruncated(uint256 id);
     error CannotConcatEncrypted(uint256 id);
@@ -252,7 +252,7 @@ contract Mnemonad is ERC721Enumerable, Ownable2Step, ReentrancyGuardTransient {
     // ---------------------------------------------------------------------------------
 
     function _requireExists(uint256 id) internal view {
-        if (_ownerOf(id) == address(0)) revert NoSuchVector(id);
+        if (_ownerOf(id) == address(0)) revert NoSuchStream(id);
     }
 
     function canWrite(uint256 id, address who) public view returns (bool) {
@@ -282,42 +282,42 @@ contract Mnemonad is ERC721Enumerable, Ownable2Step, ReentrancyGuardTransient {
 
     /// @notice The id a given creator/salt pair will produce.
     /// @dev Deterministic and computable off-chain with no RPC round-trip. That is what
-    ///      lets an encrypted vector be created in ONE transaction: the SDK derives the id,
+    ///      lets an encrypted stream be created in ONE transaction: the SDK derives the id,
     ///      wraps the AES key scoped to it, and creates + keys + pushes together — no
     ///      round trip needed first to learn what id a create call would produce.
-    function vectorIdFor(address creator, bytes32 salt) public pure returns (uint256) {
+    function streamIdFor(address creator, bytes32 salt) public pure returns (uint256) {
         return uint256(keccak256(abi.encode(creator, salt)));
     }
 
-    /// @notice Creates a vector, optionally keyed for encryption and pre-loaded with items.
+    /// @notice Creates a stream, optionally keyed for encryption and pre-loaded with items.
     /// @param items Initial items. More than one is packed into a single shared chunk.
     function create(
         bytes32 salt,
-        bytes calldata vectorMeta_,
+        bytes calldata streamMeta_,
         bytes calldata encKeyWrapped_,
         bytes[] calldata items
     ) external payable nonReentrant returns (uint256 id) {
-        id = vectorIdFor(msg.sender, salt);
+        id = streamIdFor(msg.sender, salt);
         // `madeWithVersion` outlives a burn, so this also rejects re-creating a burned id.
-        if (_ownerOf(id) != address(0) || _vectors[id].madeWithVersion != 0) {
-            revert VectorExists(id);
+        if (_ownerOf(id) != address(0) || _streams[id].madeWithVersion != 0) {
+            revert StreamExists(id);
         }
 
         _mint(msg.sender, id);
-        _vectors[id] = Vector({
+        _streams[id] = Stream({
             binaryLength: 0,
             firstAvailableIndex: 0,
             flags: 0,
             madeWithVersion: CONTRACT_VERSION
         });
 
-        if (vectorMeta_.length != 0) _vectorMeta[id] = vectorMeta_;
+        if (streamMeta_.length != 0) _streamMeta[id] = streamMeta_;
         if (encKeyWrapped_.length != 0) {
             _encKeyWrapped[id] = encKeyWrapped_;
             emit EncKeySet(id);
         }
 
-        emit VectorCreated(id, msg.sender, CONTRACT_VERSION);
+        emit StreamCreated(id, msg.sender, CONTRACT_VERSION);
 
         uint256 fee = _appendItems(id, items);
         _settleFee(fee);
@@ -328,7 +328,7 @@ contract Mnemonad is ERC721Enumerable, Ownable2Step, ReentrancyGuardTransient {
     // ---------------------------------------------------------------------------------
 
     /// @notice Appends one item.
-    /// @param expectedLength Current length the caller believes the vector has; pass
+    /// @param expectedLength Current length the caller believes the stream has; pass
     ///        `type(uint64).max` to skip the check. This matters more on Monad than on most
     ///        chains: Monad charges the gas *limit*, so a push duplicated by a timeout-retry
     ///        costs full price rather than a wasted round trip.
@@ -395,7 +395,7 @@ contract Mnemonad is ERC721Enumerable, Ownable2Step, ReentrancyGuardTransient {
         _pointers[id][index] = pointer;
         if (itemMeta_.length != 0) _itemMeta[id][index] = itemMeta_;
 
-        _vectors[id].binaryLength += pointer.size;
+        _streams[id].binaryLength += pointer.size;
         emit ItemCommitted(id, index, Store.EXTERNAL, uint32(pointer.size));
 
         // Flat fee: an EXTERNAL item costs the protocol ~36 bytes of state whether the
@@ -442,7 +442,7 @@ contract Mnemonad is ERC721Enumerable, Ownable2Step, ReentrancyGuardTransient {
 
         stagingId = _nextStagingId++;
         _staging[stagingId] =
-            Staging({vectorId: id, opener: msg.sender, totalSize: totalSize, received: 0});
+            Staging({streamId: id, opener: msg.sender, totalSize: totalSize, received: 0});
         if (itemMeta_.length != 0) _stagingMeta[stagingId] = itemMeta_;
 
         emit ItemStaged(stagingId, id, totalSize);
@@ -458,7 +458,7 @@ contract Mnemonad is ERC721Enumerable, Ownable2Step, ReentrancyGuardTransient {
         nonReentrant
     {
         Staging storage st = _staging[stagingId];
-        if (st.vectorId == 0 || st.opener != msg.sender) revert BadStaging(stagingId);
+        if (st.streamId == 0 || st.opener != msg.sender) revert BadStaging(stagingId);
         if (offset != st.received) revert StagingSizeMismatch(st.received, offset);
         if (data.length == 0) revert EmptyPayload();
         if (data.length > maxChunkBytes) revert ChunkTooLarge(data.length, maxChunkBytes);
@@ -472,13 +472,13 @@ contract Mnemonad is ERC721Enumerable, Ownable2Step, ReentrancyGuardTransient {
         _settleFee(_feeForOnchain(data.length));
     }
 
-    /// @notice Finalises a staged item, making it visible at the vector's next index.
+    /// @notice Finalises a staged item, making it visible at the stream's next index.
     function commitItem(uint256 stagingId) external returns (uint256 index) {
         Staging storage st = _staging[stagingId];
-        if (st.vectorId == 0 || st.opener != msg.sender) revert BadStaging(stagingId);
+        if (st.streamId == 0 || st.opener != msg.sender) revert BadStaging(stagingId);
         if (st.received != st.totalSize) revert StagingSizeMismatch(st.totalSize, st.received);
 
-        uint256 id = st.vectorId;
+        uint256 id = st.streamId;
         address[] storage chunks = _stagingChunks[stagingId];
         uint256 n = chunks.length;
 
@@ -499,7 +499,7 @@ contract Mnemonad is ERC721Enumerable, Ownable2Step, ReentrancyGuardTransient {
         bytes memory meta = _stagingMeta[stagingId];
         if (meta.length != 0) _itemMeta[id][index] = meta;
 
-        _vectors[id].binaryLength += st.totalSize;
+        _streams[id].binaryLength += st.totalSize;
         emit ItemCommitted(id, index, Store.CODE, st.totalSize);
 
         delete _staging[stagingId];
@@ -511,7 +511,7 @@ contract Mnemonad is ERC721Enumerable, Ownable2Step, ReentrancyGuardTransient {
     ///         contract code, cannot be reclaimed — no refund is possible.
     function abortItem(uint256 stagingId) external {
         Staging storage st = _staging[stagingId];
-        if (st.vectorId == 0 || st.opener != msg.sender) revert BadStaging(stagingId);
+        if (st.streamId == 0 || st.opener != msg.sender) revert BadStaging(stagingId);
         delete _staging[stagingId];
         delete _stagingChunks[stagingId];
         delete _stagingMeta[stagingId];
@@ -526,27 +526,27 @@ contract Mnemonad is ERC721Enumerable, Ownable2Step, ReentrancyGuardTransient {
         return _itemMeta[id][index];
     }
 
-    /// @notice The 5 fields a client needs to open a vector: item count, total payload bytes,
-    ///         first readable index, vector-level metadata, and the wrapped encryption key (if
+    /// @notice The 5 fields a client needs to open a stream: item count, total payload bytes,
+    ///         first readable index, stream-level metadata, and the wrapped encryption key (if
     ///         any) — in one call instead of five.
     /// @dev These previously existed as five separate getters (`length`, `binaryLength`,
-    ///      `firstAvailableIndex`, `vectorMeta`, `encKeyWrapped`). Removed rather than kept
+    ///      `firstAvailableIndex`, `streamMeta`, `encKeyWrapped`). Removed rather than kept
     ///      alongside this one (contrast `getItemRefs`/`getItemRefsBatch`, where both stay):
     ///      nothing else in this codebase called them individually, unlike `getItemRefs`,
     ///      which migration tooling still needs standalone — and the contract is already
     ///      within a few hundred bytes of the 24,576-byte size cap, so five rarely-useful
     ///      single-field getters were the cheapest thing to give up for this. Tuple return,
     ///      not a struct — measured smaller in bytecode for the same fields.
-    function getVectorInfo(uint256 id)
+    function getStreamInfo(uint256 id)
         external
         view
         returns (uint64 len, uint64 binLen, uint64 firstIdx, bytes memory meta, bytes memory encKey)
     {
         _requireExists(id);
         len = uint64(_items[id].length);
-        binLen = _vectors[id].binaryLength;
-        firstIdx = _vectors[id].firstAvailableIndex;
-        meta = _vectorMeta[id];
+        binLen = _streams[id].binaryLength;
+        firstIdx = _streams[id].firstAvailableIndex;
+        meta = _streamMeta[id];
         encKey = _encKeyWrapped[id];
     }
 
@@ -601,7 +601,7 @@ contract Mnemonad is ERC721Enumerable, Ownable2Step, ReentrancyGuardTransient {
     /// 3–4 MB. Without a ranged read, an item larger than that would be writable but
     /// permanently unreadable. This lets a caller page through any size.
     ///
-    /// @dev On an encrypted vector the returned slice is ciphertext and cannot be decrypted
+    /// @dev On an encrypted stream the returned slice is ciphertext and cannot be decrypted
     ///      on its own: AES-GCM needs the complete ciphertext to verify its tag. Callers
     ///      must reassemble every page before decrypting, which is what the SDK does.
     function readRange(uint256 id, uint256 index, uint256 start, uint256 len)
@@ -742,9 +742,9 @@ contract Mnemonad is ERC721Enumerable, Ownable2Step, ReentrancyGuardTransient {
         _requireOwner(srcId);
         _checkLength(dstId, expectedLength);
 
-        // Truncated sources would need index remapping; encrypted vectors are keyed
+        // Truncated sources would need index remapping; encrypted streams are keyed
         // independently, so their items cannot be merged under one key.
-        if (_vectors[srcId].firstAvailableIndex != 0) revert CannotConcatTruncated(srcId);
+        if (_streams[srcId].firstAvailableIndex != 0) revert CannotConcatTruncated(srcId);
         if (isEncrypted(dstId)) revert CannotConcatEncrypted(dstId);
         if (isEncrypted(srcId)) revert CannotConcatEncrypted(srcId);
 
@@ -773,10 +773,10 @@ contract Mnemonad is ERC721Enumerable, Ownable2Step, ReentrancyGuardTransient {
             if (m.length != 0) _itemMeta[dstId][newIndex] = m;
         }
 
-        _vectors[dstId].binaryLength += _vectors[srcId].binaryLength;
+        _streams[dstId].binaryLength += _streams[srcId].binaryLength;
         emit Concatenated(dstId, srcId, uint64(n));
 
-        _burnVector(srcId);
+        _burnStream(srcId);
     }
 
     /// @notice Logically drops every item below `uptoIndex`.
@@ -789,7 +789,7 @@ contract Mnemonad is ERC721Enumerable, Ownable2Step, ReentrancyGuardTransient {
         uint64 len = uint64(_items[id].length);
         if (uptoIndex > len) revert IndexOutOfBounds(id, uptoIndex);
 
-        Vector storage v = _vectors[id];
+        Stream storage v = _streams[id];
         uint64 from = v.firstAvailableIndex;
         if (uptoIndex <= from) return;
 
@@ -801,14 +801,14 @@ contract Mnemonad is ERC721Enumerable, Ownable2Step, ReentrancyGuardTransient {
         emit Truncated(id, uptoIndex);
     }
 
-    /// @notice Destroys a vector's record and the ERC-721 token. CODE chunks survive.
+    /// @notice Destroys a stream's record and the ERC-721 token. CODE chunks survive.
     function burn(uint256 id) external {
         _requireOwner(id);
-        _burnVector(id);
+        _burnStream(id);
     }
 
-    function _burnVector(uint256 id) internal {
-        Vector storage v = _vectors[id];
+    function _burnStream(uint256 id) internal {
+        Stream storage v = _streams[id];
         v.binaryLength = 0;
         v.firstAvailableIndex = 0;
         v.flags = 0;
@@ -818,10 +818,10 @@ contract Mnemonad is ERC721Enumerable, Ownable2Step, ReentrancyGuardTransient {
         //      burn followed by a re-create with the same salt would inherit the old item
         //      records — silent data resurrection.
         //   2. `delete` on a storage array clears every element, so clearing a large
-        //      vector's items would be an unbounded gas cost and could simply run out.
+        //      stream's items would be an unbounded gas cost and could simply run out.
         // The orphaned item records stay unreachable: every read goes through
         // `_requireExists`, which fails once the token is burned.
-        delete _vectorMeta[id];
+        delete _streamMeta[id];
         delete _encKeyWrapped[id];
         _burn(id);
     }
@@ -833,7 +833,7 @@ contract Mnemonad is ERC721Enumerable, Ownable2Step, ReentrancyGuardTransient {
     /// @notice Sets or replaces the wrapped encryption key.
     /// @dev Owner-may-rewrap rather than write-once: strictly more useful and no less safe
     ///      — only the owner can call it, and a bad value harms only them. It is also the
-    ///      prerequisite for ever handing an encrypted vector to a new owner, since a
+    ///      prerequisite for ever handing an encrypted stream to a new owner, since a
     ///      self-wrapped key is bound to whoever wrapped it.
     function setEncKeyWrapped(uint256 id, bytes calldata wrapped) external {
         _requireOwner(id);
@@ -841,7 +841,7 @@ contract Mnemonad is ERC721Enumerable, Ownable2Step, ReentrancyGuardTransient {
         emit EncKeySet(id);
     }
 
-    /// @dev Blocks transfer of encrypted vectors. A self-wrapped key is derived from the
+    /// @dev Blocks transfer of encrypted streams. A self-wrapped key is derived from the
     ///      owner's own signature, so transferring would hand the recipient bytes they can
     ///      never decrypt. Mint and burn stay permitted. The propose/accept rewrap-and-
     ///      transfer flow is the intended way to lift this, and must exist before mainnet.
@@ -852,7 +852,7 @@ contract Mnemonad is ERC721Enumerable, Ownable2Step, ReentrancyGuardTransient {
     {
         address from = _ownerOf(tokenId);
         if (from != address(0) && to != address(0) && isEncrypted(tokenId)) {
-            revert EncryptedVectorNotTransferable(tokenId);
+            revert EncryptedStreamNotTransferable(tokenId);
         }
         return super._update(to, tokenId, auth);
     }
@@ -932,7 +932,7 @@ contract Mnemonad is ERC721Enumerable, Ownable2Step, ReentrancyGuardTransient {
     function _requireItem(uint256 id, uint256 index) internal view {
         _requireExists(id);
         if (index >= _items[id].length) revert IndexOutOfBounds(id, index);
-        if (index < _vectors[id].firstAvailableIndex) revert IndexTruncated(id, index);
+        if (index < _streams[id].firstAvailableIndex) revert IndexTruncated(id, index);
     }
 
     /// @dev Routes one item to its tier and appends it. Returns nothing; callers handle fees.
@@ -966,7 +966,7 @@ contract Mnemonad is ERC721Enumerable, Ownable2Step, ReentrancyGuardTransient {
             emit ItemCommitted(id, index, Store.CODE, uint32(data.length));
         }
 
-        _vectors[id].binaryLength += uint64(data.length);
+        _streams[id].binaryLength += uint64(data.length);
     }
 
     /// @dev Appends a batch. A batch of two or more that fits in one chunk is PACKED: the
@@ -1030,6 +1030,6 @@ contract Mnemonad is ERC721Enumerable, Ownable2Step, ReentrancyGuardTransient {
             offset += sz;
         }
 
-        _vectors[id].binaryLength += uint64(total);
+        _streams[id].binaryLength += uint64(total);
     }
 }

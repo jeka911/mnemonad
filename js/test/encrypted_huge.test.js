@@ -62,35 +62,35 @@ function expectSameBytes(actual, expected) {
 }
 
 /** One huge encrypted item, written once and shared — each write is ~175 transactions. */
-let hugeVector;
+let hugeStream;
 let hugeData;
 
 beforeAll(async () => {
 	hugeData = makeBytes(HUGE, 77);
-	hugeVector = await createEncrypted();
-	await hugeVector.push(hugeData, { onChain: true });
+	hugeStream = await createEncrypted();
+	await hugeStream.push(hugeData, { onChain: true });
 }, 900_000);
 
 describe('paged encrypted reads', () => {
 	it('writes 4 MB encrypted across many chunks', async () => {
-		await hugeVector.initialize();
-		expect(await hugeVector.isEncrypted()).toBe(true);
-		expect(hugeVector.binaryLength).toBe(cipherLen(HUGE));
+		await hugeStream.initialize();
+		expect(await hugeStream.isEncrypted()).toBe(true);
+		expect(hugeStream.binaryLength).toBe(cipherLen(HUGE));
 
-		const refs = await hugeVector.getItemRefs(0);
+		const refs = await hugeStream.getItemRefs(0);
 		expect(refs.chunks.length).toBe(Math.ceil(cipherLen(HUGE) / MAX_CHUNK));
 		expect(refs.size).toBe(cipherLen(HUGE));
 	}, 120_000);
 
 	it('pages the ciphertext and decrypts once, byte-exactly', async () => {
 		// The whole point of the file: at() must reassemble every page BEFORE decrypting.
-		expectSameBytes(new Uint8Array(await hugeVector.at(0)), hugeData);
+		expectSameBytes(new Uint8Array(await hugeStream.at(0)), hugeData);
 	}, 600_000);
 
 	it('produces the same plaintext at a smaller page size', async () => {
 		const paged = new Mnemonad(
 			baseParams({
-				id: hugeVector.id,
+				id: hugeStream.id,
 				signer: clients.walletClient,
 				readPageBytes: 128 * KB,
 			})
@@ -103,17 +103,17 @@ describe('paged encrypted reads', () => {
 	it('cannot serve the whole ciphertext in one call, but can serve a page', async () => {
 		const { mnemonadAbi } = await import('../abi.js');
 
-		const page = await hugeVector.readRange(0, 0, 512 * KB);
+		const page = await hugeStream.readRange(0, 0, 512 * KB);
 		expect(page.length).toBe(512 * KB);
 
-		// Same vector, same item, same ABI — only the byte count differs, so the failure
+		// Same stream, same item, same ABI — only the byte count differs, so the failure
 		// is attributable to size alone.
 		await expect(
 			clients.publicClient.readContract({
 				address: contractAddress,
 				abi: mnemonadAbi,
 				functionName: 'at',
-				args: [hugeVector.id, 0n],
+				args: [hugeStream.id, 0n],
 			})
 		).rejects.toThrow();
 	}, 120_000);
@@ -121,7 +121,7 @@ describe('paged encrypted reads', () => {
 
 describe('partial decryption', () => {
 	it('returns plaintext from a range of an encrypted item', async () => {
-		const slice = await hugeVector.readRange(0, 0, 4 * KB);
+		const slice = await hugeStream.readRange(0, 0, 4 * KB);
 		expectSameBytes(slice, hugeData.subarray(0, 4 * KB));
 	}, 120_000);
 
@@ -129,7 +129,7 @@ describe('partial decryption', () => {
 		const start = 3 * MB + 12_345;
 		const len = 8 * KB;
 		expectSameBytes(
-			await hugeVector.readRange(0, start, len),
+			await hugeStream.readRange(0, start, len),
 			hugeData.subarray(start, start + len)
 		);
 	}, 120_000);
@@ -140,21 +140,21 @@ describe('partial decryption', () => {
 		const start = 64 * KB - 100;
 		const len = 200;
 		expectSameBytes(
-			await hugeVector.readRange(0, start, len),
+			await hugeStream.readRange(0, start, len),
 			hugeData.subarray(start, start + len)
 		);
 	}, 120_000);
 
 	it('reads the final partial frame', async () => {
 		const start = HUGE - 1_000;
-		expectSameBytes(await hugeVector.readRange(0, start, 1_000), hugeData.subarray(start));
+		expectSameBytes(await hugeStream.readRange(0, start, 1_000), hugeData.subarray(start));
 	}, 120_000);
 
 	it('fetches only the frames a small range overlaps', async () => {
 		// The reason framing exists. Count the ranged contract calls a 1 KB read makes:
 		// one for the 10-byte header, one for the single covering frame. Not 4 MB worth.
 		const ev = new Mnemonad(
-			baseParams({ id: hugeVector.id, signer: clients.walletClient })
+			baseParams({ id: hugeStream.id, signer: clients.walletClient })
 		);
 		const original = ev._read.bind(ev);
 		const rangeReads = [];
@@ -173,12 +173,12 @@ describe('partial decryption', () => {
 	}, 120_000);
 
 	it('rejects a range outside the item', async () => {
-		await expect(hugeVector.readRange(0, HUGE - 10, 100)).rejects.toThrow();
-		await expect(hugeVector.readRange(0, HUGE + 1, 1)).rejects.toThrow();
+		await expect(hugeStream.readRange(0, HUGE - 10, 100)).rejects.toThrow();
+		await expect(hugeStream.readRange(0, HUGE + 1, 1)).rejects.toThrow();
 	}, 60_000);
 
 	it('reports the plaintext length, not the ciphertext length', async () => {
-		expect(await hugeVector.plaintextLengthAt(0)).toBe(HUGE);
+		expect(await hugeStream.plaintextLengthAt(0)).toBe(HUGE);
 	}, 60_000);
 });
 
@@ -186,7 +186,7 @@ describe('streaming', () => {
 	it('streams a whole item frame by frame', async () => {
 		let bytes = 0;
 		let pieces = 0;
-		for await (const piece of hugeVector.stream(0)) {
+		for await (const piece of hugeStream.stream(0)) {
 			bytes += piece.length;
 			pieces += 1;
 		}
@@ -199,7 +199,7 @@ describe('streaming', () => {
 		const start = 1 * MB;
 		const len = 100 * KB;
 		const parts = [];
-		for await (const piece of hugeVector.stream(0, { start, len })) parts.push(piece);
+		for await (const piece of hugeStream.stream(0, { start, len })) parts.push(piece);
 
 		const joined = Buffer.concat(parts.map((p) => Buffer.from(p)));
 		expect(joined.length).toBe(len);
@@ -213,7 +213,7 @@ describe('streaming', () => {
 		// larger than the plaintext buffer at() would allocate.
 		let largest = 0;
 		let total = 0;
-		for await (const piece of hugeVector.stream(0)) {
+		for await (const piece of hugeStream.stream(0)) {
 			largest = Math.max(largest, piece.length);
 			total += piece.length;
 		}
@@ -221,7 +221,7 @@ describe('streaming', () => {
 		expect(largest).toBeLessThanOrEqual(64 * KB);
 	}, 600_000);
 
-	it('streams a plaintext vector too', async () => {
+	it('streams a plaintext stream too', async () => {
 		const ev = await Mnemonad.create(baseParams({ readPageBytes: 64 * KB }));
 		const data = makeBytes(200 * KB, 5);
 		await ev.push(data, { onChain: true });
@@ -237,30 +237,30 @@ describe('frame integrity', () => {
 	it('rejects a frame moved to another position', async () => {
 		// Frame index is bound into the AAD, so a frame is only valid where it was written.
 		// Without that, frames could be reordered undetectably.
-		const layout = await hugeVector._cipherLayout(0);
-		const frame0 = await hugeVector._readRangeRaw(
+		const layout = await hugeStream._cipherLayout(0);
+		const frame0 = await hugeStream._readRangeRaw(
 			0,
 			layout.frameOffset(0),
 			layout.frameCipherLength(0)
 		);
 
 		// At its own index and finality, it decrypts.
-		const plain = await hugeVector.crypto.decryptFrame(frame0, 0, false, layout);
+		const plain = await hugeStream.crypto.decryptFrame(frame0, 0, false, layout);
 		expectSameBytes(plain, hugeData.subarray(0, layout.frameSize));
 
 		// Claimed at another index, or as the final frame, it does not.
-		await expect(hugeVector.crypto.decryptFrame(frame0, 1, false, layout)).rejects.toThrow();
-		await expect(hugeVector.crypto.decryptFrame(frame0, 0, true, layout)).rejects.toThrow();
+		await expect(hugeStream.crypto.decryptFrame(frame0, 1, false, layout)).rejects.toThrow();
+		await expect(hugeStream.crypto.decryptFrame(frame0, 0, true, layout)).rejects.toThrow();
 	}, 120_000);
 
 	it('rejects a truncated item', async () => {
 		// The final-frame flag is authenticated, so dropping trailing frames leaves a
 		// reader expecting a final frame it never sees.
-		const whole = await hugeVector._atRaw(0);
-		const layout = await hugeVector._cipherLayout(0);
+		const whole = await hugeStream._atRaw(0);
+		const layout = await hugeStream._cipherLayout(0);
 		const truncated = whole.subarray(0, layout.frameOffset(layout.frameCount - 1));
 
-		await expect(hugeVector.crypto.decryptItem(truncated)).rejects.toThrow();
+		await expect(hugeStream.crypto.decryptItem(truncated)).rejects.toThrow();
 	}, 300_000);
 });
 
@@ -299,15 +299,15 @@ describe('huge encrypted items offloaded to IPFS', () => {
 
 describe('ranged reads of encrypted off-chain items', () => {
 	/** One 8 MB encrypted external item, shared across the cases below. */
-	let extVector;
+	let extStream;
 	let extData;
 	let ipfsClient;
 
 	beforeAll(async () => {
 		ipfsClient = makeMockIpfs();
-		extVector = await createEncrypted({ ipfsClient });
+		extStream = await createEncrypted({ ipfsClient });
 		extData = makeBytes(8 * MB, 91);
-		await extVector.push(extData);
+		await extStream.push(extData);
 	}, 600_000);
 
 	it('fetches only the covering frames for a small range', async () => {
@@ -316,7 +316,7 @@ describe('ranged reads of encrypted off-chain items', () => {
 		const len = 2 * KB;
 
 		expectSameBytes(
-			await extVector.readRange(0, start, len),
+			await extStream.readRange(0, start, len),
 			extData.subarray(start, start + len)
 		);
 
@@ -328,7 +328,7 @@ describe('ranged reads of encrypted off-chain items', () => {
 
 	it('reads the layout header without downloading the payload', async () => {
 		const fresh = new Mnemonad(
-			baseParams({ id: extVector.id, signer: clients.walletClient, ipfsClient })
+			baseParams({ id: extStream.id, signer: clients.walletClient, ipfsClient })
 		);
 		ipfsClient.reset();
 
@@ -342,7 +342,7 @@ describe('ranged reads of encrypted off-chain items', () => {
 
 	it('streams a window without pulling the whole payload', async () => {
 		const fresh = new Mnemonad(
-			baseParams({ id: extVector.id, signer: clients.walletClient, ipfsClient })
+			baseParams({ id: extStream.id, signer: clients.walletClient, ipfsClient })
 		);
 		ipfsClient.reset();
 
@@ -359,7 +359,7 @@ describe('ranged reads of encrypted off-chain items', () => {
 
 	it('still verifies the blob hash on a full read', async () => {
 		const fresh = new Mnemonad(
-			baseParams({ id: extVector.id, signer: clients.walletClient, ipfsClient })
+			baseParams({ id: extStream.id, signer: clients.walletClient, ipfsClient })
 		);
 		ipfsClient.reset();
 

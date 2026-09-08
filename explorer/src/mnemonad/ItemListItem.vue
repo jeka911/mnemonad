@@ -81,13 +81,13 @@ const PREVIEW_HEX_BYTES = 16;
 export default {
 	name: 'ItemListItem',
 	props: {
-		// { index, tier, size, locator, hash } — see Vector.vue's loadOneItem. Never
+		// { index, tier, size, locator, hash } — see Stream.vue's loadOneItem. Never
 		// carries the payload itself; that's fetched on demand via loadBytes below.
 		item: {
 			type: Object,
 			required: true,
 		},
-		// (index: number) => Promise<Uint8Array> — Vector.vue owns the SDK instance, so
+		// (index: number) => Promise<Uint8Array> — Stream.vue owns the SDK instance, so
 		// fetching this item's payload is delegated up rather than reached for here.
 		// Left null on pages that only ever pass tier/size rows without real backing data.
 		loadBytes: {
@@ -127,7 +127,7 @@ export default {
 		// isItemLoaded below.
 		// External items show pointer metadata instead (see the template's dedicated
 		// branch) — content isn't the point there, the locator/hash is. Pending items
-		// have no metadata yet at all — see Vector.vue's loadItems(). No size cap: text
+		// have no metadata yet at all — see Stream.vue's loadItems(). No size cap: text
 		// and HexViewer both scroll within a bounded popup height regardless of length.
 		canView() {
 			return this.loadBytes && !NO_CONTENT_TIERS.has(this.item.tier) && this.item.tier !== 'external';
@@ -139,7 +139,7 @@ export default {
 	methods: {
 		formatBytes,
 		// Deliberately a method, not a computed: it reads the SDK's own mutable cache
-		// (isLoaded), which lives outside Vue's reactivity system entirely (see Vector.vue
+		// (isLoaded), which lives outside Vue's reactivity system entirely (see Stream.vue
 		// on why an SDK instance never gets wrapped in a reactive proxy). A computed would
 		// cache its first result and never invalidate, since nothing reactive it depends on
 		// ever changes — this needs to actually re-run on every render instead, which a

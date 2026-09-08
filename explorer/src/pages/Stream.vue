@@ -2,18 +2,18 @@
 	<div>
 		<router-link to="/" class="back-link">
 			<q-icon name="arrow_back" size="16px" />
-			My vectors
+			My streams
 		</router-link>
 
-		<div class="vector-layout">
-			<div class="vector-layout__sidebar">
-				<GradientPanel always-expanded dense variant="fill" title="Vector">
+		<div class="stream-layout">
+			<div class="stream-layout__sidebar">
+				<GradientPanel always-expanded dense variant="fill" title="Stream">
 					<template #body>
 						<div v-if="!mnemonadStore.isDeployed" class="state">
 							<p>Mnemonad isn't deployed on {{ activeNetwork.label }}.</p>
 						</div>
 						<div v-else-if="!validId" class="state">
-							<p>Not a valid vector id.</p>
+							<p>Not a valid stream id.</p>
 						</div>
 						<div v-else-if="loading" class="state">
 							<q-spinner color="primary" size="28px" />
@@ -22,9 +22,9 @@
 							<p>{{ error }}</p>
 							<GradientButton label="Retry" size="sm" @click="load" />
 						</div>
-						<VectorSummary
-							v-else-if="vector"
-							:vector="vector"
+						<StreamSummary
+							v-else-if="stream"
+							:stream="stream"
 							:contract-address="mnemonadStore.contractAddress"
 							:chain="activeNetwork.chain"
 							:loaded-items="loadedItemsCount"
@@ -35,8 +35,8 @@
 				<DebugPanel />
 			</div>
 
-			<div v-if="vector" class="vector-layout__main">
-				<GradientPanel always-expanded dense variant="corner" title="Chunks">
+			<div v-if="stream" class="stream-layout__main">
+				<GradientPanel always-expanded dense variant="corner" title="Items">
 					<template #actions>
 						<span v-if="loadStrategyLabel" class="items-panel__strategy">{{ loadStrategyLabel }}</span>
 					</template>
@@ -88,7 +88,7 @@
 								v-show="addTab === 'random'"
 								:disable="!canWrite"
 								:loading="pushingRandom"
-								:max-bytes="vector.maxChunkBytes"
+								:max-bytes="stream.maxChunkBytes"
 								@submit="onAddRandomBytes"
 							/>
 							<AddTextChunk
@@ -96,7 +96,7 @@
 								:disable="!canWrite"
 								:hint="writeHint"
 								:loading="pushing"
-								:max-bytes="vector.maxChunkBytes"
+								:max-bytes="stream.maxChunkBytes"
 								:can-offload="presignConfigured"
 								:estimate="estimateCost"
 								@submit="onAddText"
@@ -107,7 +107,7 @@
 								:disable="!canWrite || !presignConfigured"
 								:hint="offloadHint"
 								:loading="offloading"
-								:max-chunk-bytes="vector.maxChunkBytes"
+								:max-chunk-bytes="stream.maxChunkBytes"
 								:gateway="mnemonadStore.gateway"
 								:quote-for="quoteOffload"
 								@submit="onOffloadUpload"
@@ -118,7 +118,7 @@
 						     this has to sit outside `.add-panel__panel` to stay readable. -->
 						<div v-if="!canWrite" class="add-panel__overlay">
 							<q-icon name="lock" size="20px" class="add-panel__overlay-icon" />
-							<p class="add-panel__overlay-title">Connect as the owner to manage this vector</p>
+							<p class="add-panel__overlay-title">Connect as the owner to manage this stream</p>
 							<p class="add-panel__overlay-hint">{{ writeHint }}</p>
 						</div>
 					</div>
@@ -141,7 +141,7 @@ import { createPresignProvider, presignConfigured, presignServerUrl } from '../m
 import { JPanel } from 'themed_varmory';
 import GradientPanel from '../components/GradientPanel.vue';
 import GradientButton from '../components/GradientButton.vue';
-import VectorSummary from '../mnemonad/VectorSummary.vue';
+import StreamSummary from '../mnemonad/StreamSummary.vue';
 import ItemList from '../mnemonad/ItemList.vue';
 import AddTextChunk from '../mnemonad/AddTextChunk.vue';
 import AddRandomBytes from '../mnemonad/AddRandomBytes.vue';
@@ -210,12 +210,12 @@ function buildLoadOrder(count, strategy) {
 }
 
 export default {
-	name: 'Vector',
+	name: 'Stream',
 	// Static route metadata read by pages/index.js to self-register this page.
-	path: '/vector/:id',
-	title: 'Vector',
+	path: '/stream/:id',
+	title: 'Stream',
 	components: {
-		JPanel, GradientPanel, GradientButton, VectorSummary,
+		JPanel, GradientPanel, GradientButton, StreamSummary,
 		ItemList, AddTextChunk, AddRandomBytes, OffloadUpload, DebugPanel,
 	},
 	data() {
@@ -223,15 +223,15 @@ export default {
 			activeNetwork: getActiveNetwork(),
 			presignConfigured,
 			presignServerUrl,
-			vector: null,
+			stream: null,
 			items: [],
 			omitted: 0,
 			loading: false,
-			// Separate from `loading`: that one covers the initial vector fetch, gating the
+			// Separate from `loading`: that one covers the initial stream fetch, gating the
 			// whole sidebar+items column. This one covers the narrower gap right after —
-			// vector metadata is in hand (so the column has mounted) but `loadItems()`
+			// stream metadata is in hand (so the column has mounted) but `loadItems()`
 			// hasn't populated `this.items` yet. Without it, ItemList briefly sees an empty
-			// array and shows "No items yet." for a vector that's still finding out how many
+			// array and shows "No items yet." for a stream that's still finding out how many
 			// items it actually has. True until loadItems() has synchronously built its
 			// placeholders (or established there really are none).
 			itemsLoading: true,
@@ -245,7 +245,7 @@ export default {
 			canWrite: false,
 			// How many of the loaded rows already have their payload resident in memory,
 			// and how many bytes that adds up to — see recomputeLoaded(). Both start at 0
-			// on every fresh vector load, since a brand new Mnemonad instance's cache is
+			// on every fresh stream load, since a brand new Mnemonad instance's cache is
 			// always empty (nothing pre-fetches payloads anymore; see loadOneItem below).
 			loadedItemsCount: 0,
 			loadedBinaryLength: 0,
@@ -291,7 +291,7 @@ export default {
 		writeHint: function() {
 			if (!this.walletStore.isConnected) return 'Connect a wallet to add items.';
 			if (this.walletStore.wrongNetwork) return `Switch to ${this.activeNetwork.label} to add items.`;
-			if (!this.canWrite) return "Only the vector's owner or an approved writer can add items.";
+			if (!this.canWrite) return "Only the stream's owner or an approved writer can add items.";
 			return '';
 		},
 	},
@@ -304,14 +304,14 @@ export default {
 		// Kept off `data()` deliberately: a live SDK instance holding viem clients has no
 		// business being wrapped in a Vue reactivity proxy (same reasoning as
 		// stores/wallet.js keeping its estimator/timer handles outside Pinia state).
-		this._vector = null;
+		this._stream = null;
 		// Timer handle for the "loaded items/size" poll — same reasoning, a plain interval
 		// id has no business in reactive state either.
 		this._loadedPollTimer = null;
 	},
 	mounted() {
 		this.load();
-		// Registry-level, so it does not depend on the vector resolving.
+		// Registry-level, so it does not depend on the stream resolving.
 		this.mnemonadStore.fetchGateway();
 	},
 	beforeUnmount() {
@@ -341,9 +341,9 @@ export default {
 				// batching (see wagmi.js) fold owner() into the same HTTP request as
 				// initialize()'s own reads instead of a separate round trip for it alone.
 				const [, owner] = await Promise.all([v.initialize(), v.owner()]);
-				this._vector = v;
+				this._stream = v;
 
-				this.vector = {
+				this.stream = {
 					id: v.id,
 					owner,
 					length: v.length,
@@ -358,26 +358,26 @@ export default {
 				// to do with item listing) and deliberately not awaited — see loadItems()'s
 				// own comment on why it streams items in one at a time instead of loading
 				// them all before returning. Both together mean this.items gets its
-				// placeholders in the same tick `this.vector` is set, with no gap where the
+				// placeholders in the same tick `this.stream` is set, with no gap where the
 				// Items panel has mounted but doesn't yet know whether there's anything to
 				// show — see `itemsLoading`.
 				this.loadItems();
 				await this.checkCanWrite();
 				this.startLoadedPoll();
 			} catch (e) {
-				this.error = e?.shortMessage || e?.message || 'Failed to load vector';
-				this.vector = null;
+				this.error = e?.shortMessage || e?.message || 'Failed to load stream';
+				this.stream = null;
 			} finally {
 				this.loading = false;
 			}
 		},
 		async loadItems() {
-			if (!this._vector || !this.vector) return;
-			const total = this.vector.length;
+			if (!this._stream || !this.stream) return;
+			const total = this.stream.length;
 			const cap = Math.min(total, ITEM_DISPLAY_CAP);
 			this.omitted = total - cap;
 
-			// The vector's total item count is already known (`total`, above) the instant
+			// The stream's total item count is already known (`total`, above) the instant
 			// initialize() resolves, well before any individual item's tier/size/pointer
 			// is — so every slot's final shape can be shown right away as a 'pending'
 			// placeholder (see ItemListItem), instead of growing the grid one row at a
@@ -450,13 +450,13 @@ export default {
 			}
 		},
 		async loadOneItem(index) {
-			if (index < this.vector.firstAvailableIndex) {
+			if (index < this.stream.firstAvailableIndex) {
 				return { index, tier: 'truncated', size: 0, locator: null, hash: null };
 			}
 			// Tier/size/pointer only — no payload fetch here. Content is hidden by default
 			// and loaded on demand (see loadItemBytes below), so listing N items never pulls
 			// N payloads just to render a row.
-			const item = await this._vector.itemAt(index);
+			const item = await this._stream.itemAt(index);
 			const pointer = item.isExternal ? item.pointerData() : null;
 			return {
 				index,
@@ -480,14 +480,14 @@ export default {
 			const rows = {};
 			const toFetch = [];
 			for (const index of indices) {
-				if (index < this.vector.firstAvailableIndex) {
+				if (index < this.stream.firstAvailableIndex) {
 					rows[index] = { index, tier: 'truncated', size: 0, locator: null, hash: null };
 				} else {
 					toFetch.push(index);
 				}
 			}
 			if (toFetch.length) {
-				const items = await this._vector.itemsAt(toFetch);
+				const items = await this._stream.itemsAt(toFetch);
 				toFetch.forEach((index, k) => {
 					const item = items[k];
 					const pointer = item.isExternal ? item.pointerData() : null;
@@ -510,7 +510,7 @@ export default {
 		 * @returns {Promise<Uint8Array>}
 		 */
 		async loadItemBytes(index) {
-			const item = await this._vector.itemAt(index);
+			const item = await this._stream.itemAt(index);
 			return await item.bytes();
 		},
 		/**
@@ -521,14 +521,14 @@ export default {
 		 * @returns {boolean}
 		 */
 		isItemLoaded(index) {
-			return this._vector?.isItemLoaded(index) ?? false;
+			return this._stream?.isItemLoaded(index) ?? false;
 		},
 		/**
 		 * Starts (restarting if one's already running) a light poll recomputing how many
 		 * displayed items are loaded — polled rather than pushed, since an item can become
 		 * "loaded" from deep inside ItemList/ItemListItem (a preview click, View, or
 		 * Download) with no event wired all the way back up to this component; this is the
-		 * SDK's own cache, never a flag Vector.vue tracks on its own behalf.
+		 * SDK's own cache, never a flag Stream.vue tracks on its own behalf.
 		 */
 		startLoadedPoll() {
 			clearInterval(this._loadedPollTimer);
@@ -551,14 +551,14 @@ export default {
 		},
 		async checkCanWrite() {
 			// Needs the loaded instance (its id, its already-rate-limited publicClient) —
-			// load() calls this again once `this._vector` is set, so there is nothing else
+			// load() calls this again once `this._stream` is set, so there is nothing else
 			// to do here if it isn't yet.
-			if (!this.walletStore.isConnected || !this._vector) {
+			if (!this.walletStore.isConnected || !this._stream) {
 				this.canWrite = false;
 				return;
 			}
 			try {
-				this.canWrite = await this._vector.canWrite(this.walletStore.address);
+				this.canWrite = await this._stream.canWrite(this.walletStore.address);
 			} catch {
 				this.canWrite = false;
 			}
@@ -569,13 +569,13 @@ export default {
 		 *   loaded yet to estimate against — AddTextChunk treats that as "show nothing".
 		 */
 		async estimateCost(text) {
-			if (!this._vector || !this.walletStore.isConnected) return null;
+			if (!this._stream || !this.walletStore.isConnected) return null;
 			const estimator = new Mnemonad({
 				// Reuses the already-rate-limited client from load() rather than asking the
 				// constructor to wrap it a second time.
-				publicClient: this._vector.publicClient,
+				publicClient: this._stream.publicClient,
 				contractAddress: this.mnemonadStore.contractAddress,
-				id: this._vector.id,
+				id: this._stream.id,
 				senderAddress: this.walletStore.address,
 				// Only its `canWrite` matters here: estimatePushCost uses it to decide
 				// whether an oversized item routes off-chain, and never uploads anything.
@@ -586,7 +586,7 @@ export default {
 			return await estimator.estimatePushCost(new TextEncoder().encode(text));
 		},
 		async onAddText(text) {
-			if (!this._vector) return;
+			if (!this._stream) return;
 			this.pushing = true;
 			try {
 				const publicClient = getPublicClient(config);
@@ -595,7 +595,7 @@ export default {
 					publicClient,
 					walletClient,
 					contractAddress: this.mnemonadStore.contractAddress,
-					id: this._vector.id,
+					id: this._stream.id,
 					maxRPCRequestsPerSecond: MAX_RPC_REQUESTS_PER_SECOND,
 					rpcRetry: RPC_RETRY,
 					offloadingProvider: createPresignProvider({ account: this.walletStore.address }),
@@ -620,7 +620,7 @@ export default {
 		 * @param {number} params.chunkSize
 		 */
 		async onAddRandomBytes({ count, chunkSize }) {
-			if (!this._vector) return;
+			if (!this._stream) return;
 			this.pushingRandom = true;
 			try {
 				const publicClient = getPublicClient(config);
@@ -629,7 +629,7 @@ export default {
 					publicClient,
 					walletClient,
 					contractAddress: this.mnemonadStore.contractAddress,
-					id: this._vector.id,
+					id: this._stream.id,
 					maxRPCRequestsPerSecond: MAX_RPC_REQUESTS_PER_SECOND,
 					rpcRetry: RPC_RETRY,
 					offloadingProvider: createPresignProvider({ account: this.walletStore.address }),
@@ -656,8 +656,8 @@ export default {
 		 *   currently refuses to quote (stale/uncertain oracle), which the tab renders.
 		 */
 		async quoteOffload(size) {
-			if (!this._vector) return null;
-			const gw = await MnemonadUploadGateway.fromMnemonad(this._vector);
+			if (!this._stream) return null;
+			const gw = await MnemonadUploadGateway.fromMnemonad(this._stream);
 			if (!gw) return null;
 			return await gw.quote(size);
 		},
@@ -671,7 +671,7 @@ export default {
 		 * @param {{size: number}} param0
 		 */
 		async onOffloadUpload({ size }) {
-			if (!this._vector) return;
+			if (!this._stream) return;
 			this.offloading = true;
 			try {
 				const publicClient = getPublicClient(config);
@@ -680,7 +680,7 @@ export default {
 					publicClient,
 					walletClient,
 					contractAddress: this.mnemonadStore.contractAddress,
-					id: this._vector.id,
+					id: this._stream.id,
 					maxRPCRequestsPerSecond: MAX_RPC_REQUESTS_PER_SECOND,
 					rpcRetry: RPC_RETRY,
 					offloadingProvider: createPresignProvider({ account: this.walletStore.address }),
@@ -690,7 +690,7 @@ export default {
 
 				const data = randomBytes(size);
 				// Commit to the exact bytes that will be uploaded. Throws on an encrypted
-				// vector rather than committing a hash push() could never reproduce.
+				// stream rather than committing a hash push() could never reproduce.
 				const { hash, size: commitSize } = await writable.offloadCommitment(data);
 
 				const gw = await MnemonadUploadGateway.fromMnemonad(writable, { walletClient });
@@ -725,7 +725,7 @@ export default {
 
 /**
  * `crypto.getRandomValues` rejects requests over 65536 bytes (a real Web Crypto spec
- * limit) — chunkSize can run up to the vector's maxChunkBytes, which is often well past
+ * limit) — chunkSize can run up to the stream's maxChunkBytes, which is often well past
  * that, so this fills in 64 KB slices rather than one call on the whole buffer.
  * @param {number} length
  * @returns {Uint8Array}
@@ -821,24 +821,24 @@ body.body--light .add-panel__overlay-title {
 	color: #2a2440;
 }
 
-.vector-layout {
+.stream-layout {
 	display: grid;
 	grid-template-columns: minmax(260px, 0.85fr) minmax(0, 2fr);
 	align-items: start;
 	gap: 16px;
 }
 
-.vector-layout__sidebar {
+.stream-layout__sidebar {
 	position: sticky;
 	top: 16px;
 }
 
 @media (max-width: 900px) {
-	.vector-layout {
+	.stream-layout {
 		grid-template-columns: 1fr;
 	}
 
-	.vector-layout__sidebar {
+	.stream-layout__sidebar {
 		position: static;
 	}
 }

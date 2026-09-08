@@ -1,6 +1,6 @@
 <template>
 	<q-dialog :model-value="modelValue" @update:model-value="$emit('update:modelValue', $event)" position="standard">
-		<JPanel accent="header" icon="add" iconColor="var(--q-primary)" title="New vector" style="min-width: 420px;">
+		<JPanel accent="header" icon="add" iconColor="var(--q-primary)" title="New stream" style="min-width: 420px;">
 			<div class="dialog-content q-pa-md">
 				<q-input
 					v-model="name"
@@ -11,11 +11,11 @@
 					@keyup.enter="submit"
 				/>
 				<p class="hint">
-					Stored as vector metadata, in the clear — good enough to tell vectors apart
+					Stored as stream metadata, in the clear — good enough to tell streams apart
 					before per-item browsing exists. Not encrypted.
 				</p>
 				<p v-if="walletStore.wrongNetwork" class="hint hint--warning">
-					Switch to {{ activeNetwork.label }} to create a vector.
+					Switch to {{ activeNetwork.label }} to create a stream.
 				</p>
 				<GradientButton
 					label="Create"
@@ -42,7 +42,7 @@ import { useMnemonadStore } from '../stores/mnemonad.js';
 import { getActiveNetwork } from '../settings.js';
 
 export default {
-	name: 'CreateVectorDialog',
+	name: 'CreateStreamDialog',
 	components: {
 		JPanel,
 		GradientButton,
@@ -67,13 +67,13 @@ export default {
 		async submit() {
 			if (this.walletStore.wrongNetwork || this.mnemonadStore.creating) return;
 			try {
-				await this.mnemonadStore.createVector({ name: this.name });
+				await this.mnemonadStore.createStream({ name: this.name });
 				this.name = '';
 				this.$emit('update:modelValue', false);
 			} catch (error) {
 				this.$q.notify({
 					type: 'negative',
-					message: error?.shortMessage || error?.message || 'Failed to create vector',
+					message: error?.shortMessage || error?.message || 'Failed to create stream',
 					position: 'top',
 				});
 			}

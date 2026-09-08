@@ -27,7 +27,7 @@ function baseParams(extra = {}) {
 }
 
 /** Direct ERC-721 transfer — the SDK deliberately doesn't wrap this, it's standard tooling
- *  territory, not vector-specific — so tests reach for the raw ABI call. */
+ *  territory, not stream-specific — so tests reach for the raw ABI call. */
 async function transfer(from, to, id) {
 	const hash = await clients.walletClient.writeContract({
 		address: contractAddress,
@@ -45,7 +45,7 @@ describe('listOwned', () => {
 		expect(owned).toEqual([]);
 	});
 
-	it('lists every vector a single owner created', async () => {
+	it('lists every stream a single owner created', async () => {
 		const a = await Mnemonad.create(baseParams());
 		const b = await Mnemonad.create(baseParams());
 

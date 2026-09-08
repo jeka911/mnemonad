@@ -1,15 +1,15 @@
 /**
- * Caches item payload bytes — on-chain or off-chain, whichever a vector fetched — so
+ * Caches item payload bytes — on-chain or off-chain, whichever a stream fetched — so
  * re-reading the same item doesn't re-fetch it. See `Mnemonad._readItemBytes` and
  * `MnemonadIpfs.readPointerBytes` for where this actually gets consulted; this file only
  * implements the store itself.
  *
  * **The one rule this cache exists under, and never violates: it stores bytes exactly as
  * fetched from chain or IPFS, before any decryption.** Both call sites above hand it
- * pre-decryption bytes — ciphertext for an encrypted vector, plaintext for an unencrypted
+ * pre-decryption bytes — ciphertext for an encrypted stream, plaintext for an unencrypted
  * one — and `Mnemonad.at()` decrypts one layer above either. Caching post-decryption
  * plaintext would mean decrypted content sitting in local storage indefinitely, which is
- * exactly the exposure encrypting a vector is meant to avoid; caching the as-stored bytes
+ * exactly the exposure encrypting a stream is meant to avoid; caching the as-stored bytes
  * changes nothing, since those are already public on-chain or on IPFS regardless of who
  * caches them.
  *

@@ -32,7 +32,7 @@ import {IPyth} from "./IPyth.sol";
 ///   - Pyth is a moving dependency: MON/USD already migrated off the beta contract, which
 ///     stopped serving the feed. `pyth` and `priceFeedId` are settable here. Hard-wiring
 ///     them into an immutable data registry is the one mistake that cannot be walked back.
-///   - A bug in this contract cannot corrupt vector state or touch the registry's own fees.
+///   - A bug in this contract cannot corrupt stream state or touch the registry's own fees.
 contract MnemonadUploadGateway is Ownable2Step, ReentrancyGuardTransient {
     // ---------------------------------------------------------------------------------
     // Constants and immutables

@@ -2,9 +2,9 @@
 
 ##### TLDR:
 
-On the base protocol layer, Mnemonad is an infinite bytes[] that lives entirely on-chain on Monad — append-only and unbounded in length, growing past what any single transaction could hold via chunked/staged writes — exposed as an ERC-721 NFT, so each "vector" is a token you own, can grant others write access to, and can optionally encrypt client-side. Storage auto-tiers by cost: packed slots → contract code → off-chain offload with just a hash+locator kept on-chain, paid for without ever putting a pinning-service credential in the browser. IPFS is the offload backend implemented today — the pointer format (codec + locator) is deliberately generic, so other backends (Arweave, HTTPS, Filecoin, Walrus, whatever comes next) can be added without a redeploy.
+On the base protocol layer, Mnemonad is an infinite bytes[] that lives entirely on-chain on Monad — append-only and unbounded in length, growing past what any single transaction could hold via chunked/staged writes — exposed as an ERC-721 NFT, so each "stream" is a token you own, can grant others write access to, and can optionally encrypt client-side. Storage auto-tiers by cost: packed slots → contract code → off-chain offload with just a hash+locator kept on-chain, paid for without ever putting a pinning-service credential in the browser. IPFS is the offload backend implemented today — the pointer format (codec + locator) is deliberately generic, so other backends (Arweave, HTTPS, Filecoin, Walrus, whatever comes next) can be added without a redeploy.
 
-As we extend it — sets of vectors, version control, sync, richer per-item structure, more offload backends — that base layer is what stays fixed underneath.
+As we extend it — sets of streams, version control, sync, richer per-item structure, more offload backends — that base layer is what stays fixed underneath.
 
 It ships as smart contracts, an SDK, a dApp, and a set of supporting tools — not just a protocol spec.
 
@@ -82,5 +82,5 @@ passing. Current deployment is recorded in [`js/ids.js`](js/ids.js) — the depl
 write it there, and the gateway address is read from the registry rather than recorded, so
 the two cannot disagree.
 
-Not yet audited, and encrypted vectors still cannot be transferred (key rewrapping is
+Not yet audited, and encrypted streams still cannot be transferred (key rewrapping is
 unimplemented), so treat mainnet as out of scope for now.

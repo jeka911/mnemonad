@@ -39,24 +39,24 @@ function harness({ estimatedGas, estimateError } = {}) {
 			return '0xhash';
 		},
 	};
-	const vector = new Mnemonad({ publicClient, walletClient, contractAddress: ADDRESS, id: 1n });
-	return { vector, captured, estimateContractGas };
+	const stream = new Mnemonad({ publicClient, walletClient, contractAddress: ADDRESS, id: 1n });
+	return { stream, captured, estimateContractGas };
 }
 
 describe('Mnemonad._write gas estimate', () => {
 	it('passes a buffered gas limit computed from its own simulation', async () => {
-		const { vector, captured } = harness({ estimatedGas: 21_471_629n });
+		const { stream, captured } = harness({ estimatedGas: 21_471_629n });
 
-		await vector._write('push', [1n, 0n, '0xdata', '0x'], { value: 0n });
+		await stream._write('push', [1n, 0n, '0xdata', '0x'], { value: 0n });
 
 		// The buffer matches estimatePushCost's own 10% convention, not an arbitrary figure.
 		expect(captured.gas).toBe((21_471_629n * 110n) / 100n);
 	});
 
 	it('simulates the exact call being sent, address/functionName/args/account/value', async () => {
-		const { vector, estimateContractGas } = harness({ estimatedGas: 100_000n });
+		const { stream, estimateContractGas } = harness({ estimatedGas: 100_000n });
 
-		await vector._write('push', [1n, 0n, '0xdata', '0x'], { value: 42n });
+		await stream._write('push', [1n, 0n, '0xdata', '0x'], { value: 42n });
 
 		expect(estimateContractGas).toHaveBeenCalledWith(
 			expect.objectContaining({
@@ -70,9 +70,9 @@ describe('Mnemonad._write gas estimate', () => {
 	});
 
 	it('respects an explicit options.gas and skips estimation entirely', async () => {
-		const { vector, captured, estimateContractGas } = harness({ estimatedGas: 999_999_999n });
+		const { stream, captured, estimateContractGas } = harness({ estimatedGas: 999_999_999n });
 
-		await vector._write('push', [1n, 0n, '0xdata', '0x'], { value: 0n, gas: 250_000n });
+		await stream._write('push', [1n, 0n, '0xdata', '0x'], { value: 0n, gas: 250_000n });
 
 		expect(captured.gas).toBe(250_000n);
 		expect(estimateContractGas).not.toHaveBeenCalled();
@@ -83,9 +83,9 @@ describe('Mnemonad._write gas estimate', () => {
 		// to fail anyway; this must not swallow that into a confusing "no gas" state, and
 		// must not throw here either. It should just proceed unbuffered, exactly like
 		// before this fix existed.
-		const { vector, captured } = harness({ estimateError: new Error('IndexOutOfBounds') });
+		const { stream, captured } = harness({ estimateError: new Error('IndexOutOfBounds') });
 
-		await vector._write('push', [1n, 0n, '0xdata', '0x'], { value: 0n });
+		await stream._write('push', [1n, 0n, '0xdata', '0x'], { value: 0n });
 
 		expect(captured.gas).toBeUndefined();
 	});
@@ -95,9 +95,9 @@ describe('Mnemonad._write gas estimate', () => {
 		// failure, not only deterministic ones), since _write has no business deciding
 		// which estimation failures are worth retrying; that judgment belongs to the rate
 		// limiter's own wrapClient, one layer below this.
-		const { vector, captured } = harness({ estimateError: Object.assign(new Error('timeout'), { name: 'TimeoutError' }) });
+		const { stream, captured } = harness({ estimateError: Object.assign(new Error('timeout'), { name: 'TimeoutError' }) });
 
-		await expect(vector._write('push', [1n, 0n, '0xdata', '0x'], { value: 0n })).resolves.toBeTruthy();
+		await expect(stream._write('push', [1n, 0n, '0xdata', '0x'], { value: 0n })).resolves.toBeTruthy();
 		expect(captured.gas).toBeUndefined();
 	});
 });

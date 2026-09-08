@@ -215,7 +215,7 @@ export default class MnemonadIpfs extends MnemonadOffloadingProvider {
 	// hash/size/length checks don't depend on IPFS specifically.
 
 	/**
-	 * Checks whether every external item in the vector is currently retrievable.
+	 * Checks whether every external item in the stream is currently retrievable.
 	 *
 	 * Fundamentally weak, by necessity: there is no on-chain expiry to read, so this
 	 * probes a network and reports what it observed a moment ago. A `true` here is not a

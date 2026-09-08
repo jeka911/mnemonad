@@ -5,7 +5,7 @@ text as chunks, browse the resulting on-chain structure, with every on-chain ent
 out to the Monad block explorer.
 
 Status: **plan only, nothing built.** The immediate next slice — home page: list the
-connected wallet's vectors, button to create one — is scoped in §1.6 below; everything else
+connected wallet's streams, button to create one — is scoped in §1.6 below; everything else
 (upload, browse, per-item detail) is unchanged future work.
 
 Related: the root [`README.md`](../README.md) (contract + SDK overview).
@@ -104,22 +104,22 @@ speculative — everything in §1.6 below builds on it.
 
 ### 1.5 (superseded — see §1.6.1)
 
-Originally: add a `deployedAtBlock` field to `js/ids.js` to bound a `VectorCreated`
+Originally: add a `deployedAtBlock` field to `js/ids.js` to bound a `StreamCreated`
 `getLogs` scan. **No longer needed** — §1.6.1 below now uses `ERC721Enumerable`'s on-chain
 index instead of an event-log scan, so there is no log range to bound.
 
 ---
 
-### 1.6 Home page: owned vectors + create button
+### 1.6 Home page: owned streams + create button
 
 This is the concrete next slice: replace `Home.vue`'s `todo` body with a list of the
-connected wallet's vectors and a button to create a new one. Everything else in this document
+connected wallet's streams and a button to create a new one. Everything else in this document
 (upload, browse, per-item detail, `/mnemonad` page) is unchanged, later work — this section
 answers §10's open question 5 (yes, home page, not a separate route) for this slice only.
 
 ### 1.6.1 Enumeration: `ERC721Enumerable` — decided and shipped
 
-Originally scoped as an off-chain `VectorCreated` event scan (deterministic ids mean plain
+Originally scoped as an off-chain `StreamCreated` event scan (deterministic ids mean plain
 `ERC721` has no `0..totalSupply` walk that finds them). **Superseded:**
 after measuring the real cost (`create()` +89,563 gas/+169%, `transferFrom()` +24,009
 gas/+76%, +928 bytes code, `push`/`pushMany`/`pushExternal` unaffected
@@ -130,7 +130,7 @@ reconciliation logic) — already live in `contracts/src/Mnemonad.sol` and wrapp
 
 ```js
 const ids = await Mnemonad.listOwned(publicClient, contractAddress, owner);
-// bigint[] — every vector `owner` currently holds, read straight from
+// bigint[] — every stream `owner` currently holds, read straight from
 // balanceOf/tokenOfOwnerByIndex, pinned to one block (see the method's own doc comment for
 // why: viem caches getBlockNumber() for ~4s by default, so a naive pin can be stale without
 // any sign of it — listOwned passes `cacheTime: 0` to avoid that).
@@ -146,13 +146,13 @@ needs:
 
 ```
 explorer/src/mnemonad/
-  MyVectors.vue           # the list: disconnected / loading / empty / row states
-  CreateVectorDialog.vue  # q-dialog, mirrors WalletConnect.vue's modal pattern
+  MyStreams.vue           # the list: disconnected / loading / empty / row states
+  CreateStreamDialog.vue  # q-dialog, mirrors WalletConnect.vue's modal pattern
 stores/
-  mnemonad.js              # pinia store: SDK client wiring + vector list, mirrors stores/wallet.js
+  mnemonad.js              # pinia store: SDK client wiring + stream list, mirrors stores/wallet.js
 ```
 
-`Home.vue` changes from its current `todo` body to rendering `<MyVectors />` inside the
+`Home.vue` changes from its current `todo` body to rendering `<MyStreams />` inside the
 existing `GradientPanel`.
 
 ### 1.6.3 `stores/mnemonad.js`
@@ -162,31 +162,31 @@ usable outside component setup:
 
 - `mnemonadAddress` read once from `js/ids.js` at module load (same pattern `wagmi.js` uses
   for `getActiveNetwork()`)
-- `vectors: []`, `loading`, `error` state
-- `fetchOwnedVectors()` — calls `Mnemonad.listOwned()` (§1.6.1), keyed off the wallet store's
+- `streams: []`, `loading`, `error` state
+- `fetchOwnedStreams()` — calls `Mnemonad.listOwned()` (§1.6.1), keyed off the wallet store's
   `address`; re-run on `walletStore.connectionId` change (wallet or network switch)
-- `createVector({ name, items })` — builds a random `salt`, calls
+- `createStream({ name, items })` — builds a random `salt`, calls
   `Mnemonad.create({ publicClient, walletClient, salt, meta, array: items })` (see
   `js/index.d.ts`'s `CreateParams`), awaits the receipt, appends the new id locally rather
   than re-running the whole log scan
 
-### 1.6.4 Create-vector flow, v0 scope
+### 1.6.4 Create-stream flow, v0 scope
 
-- Button opens `CreateVectorDialog` (same `q-dialog` + `JPanel` shape as `WalletConnect.vue`)
-- One optional text field ("name"), UTF-8 encoded into `vectorMeta` — good enough to tell
-  vectors apart in the list before per-item browsing exists
+- Button opens `CreateStreamDialog` (same `q-dialog` + `JPanel` shape as `WalletConnect.vue`)
+- One optional text field ("name"), UTF-8 encoded into `streamMeta` — good enough to tell
+  streams apart in the list before per-item browsing exists
 - **No encryption toggle yet.** Encryption needs a `signer` adapting wagmi's `signMessage`
   (`js/index.d.ts`'s `MnemonadParams.signer`) plus copy explaining the signature prompt and
-  that an encrypted vector can never be transferred — real scope, belongs with §8's
+  that an encrypted stream can never be transferred — real scope, belongs with §8's
   encryption work, not this slice
 - Disabled + tooltip when `walletStore.wrongNetwork` is true, same guard the rest of the app
   already uses
-- On success: close dialog, append the new vector to the list, no navigation (no detail page
+- On success: close dialog, append the new stream to the list, no navigation (no detail page
   exists yet — see 1.6.5)
 
 ### 1.6.5 What a list row does when clicked
 
-No per-vector detail page exists yet (that's §6's future work). For this slice, a row shows
+No per-stream detail page exists yet (that's §6's future work). For this slice, a row shows
 id (truncated) + item count + an encrypted badge if `encKeyWrapped` is set, and links out to
 the connected chain's block explorer token page rather than anywhere in-app — reusing §7's
 already-flagged open question (Monadscan vs `testnet.monadexplorer.com` token URL shapes
@@ -196,9 +196,9 @@ differ and need verifying). Building `ExplorerLink.vue` now, minimal (`address` 
 ### 1.6.6 States
 
 - **Disconnected** — reuse the `Home.vue` not-deployed-state visual language, but for
-  "connect a wallet to see your vectors," with a `WalletConnect` button inline
+  "connect a wallet to see your streams," with a `WalletConnect` button inline
 - **Loading** — skeleton rows, not a spinner (design skill §4.5)
-- **Empty** (connected, zero vectors) — friendly empty state, create button front and center
+- **Empty** (connected, zero streams) — friendly empty state, create button front and center
 - **List** — rows per §1.6.5, create button stays visible (not just in the empty state)
 - **Error** (RPC failure) — inline retry, not a toast (toasts are for transient events, not
   a failed initial load)
@@ -250,8 +250,8 @@ explorer/src/
   pages/
     Mnemonad.vue                  # page, path: '/mnemonad', title: 'Mnemonad'
   mnemonad/
-    VectorPicker.vue             # load by id, or create a new vector
-    VectorSummary.vue            # length, binaryLength, owner, version, encrypted, firstAvailableIndex
+    StreamPicker.vue             # load by id, or create a new stream
+    StreamSummary.vue            # length, binaryLength, owner, version, encrypted, firstAvailableIndex
     ItemUploader.vue             # file drop + text mode, split control, pre-flight, push
     PushProgress.vue             # per-transaction progress for staged appends
     ItemList.vue                 # paginated item rows
@@ -406,7 +406,7 @@ opened page gets a `window.opener` handle back into the app.
 | CODE chunk | `/address/{chunk}` | universal, and the payoff link |
 | Transaction | `/tx/{hash}` | universal |
 | Owner | `/address/{owner}` | universal |
-| Vector id (ERC-721 token) | varies | **needs verifying per explorer** |
+| Stream id (ERC-721 token) | varies | **needs verifying per explorer** |
 | EXTERNAL pointer | IPFS gateway, not Monad | n/a |
 
 The token/NFT URL shape is the one real unknown: Monadscan is Etherscan-flavoured
@@ -426,7 +426,7 @@ const signer = { signMessage: ({ message }) => signMessage(config, { message }) 
 ```
 
 Two things to surface in the UI: it triggers a wallet signature prompt (cache the unwrapped
-key in the store so it happens once per session), and an encrypted vector **cannot be
+key in the store so it happens once per session), and an encrypted stream **cannot be
 transferred**, because the key is bound to the owner.
 
 **IPFS writes are the awkward one.** `pinningUrl` + `pinningJwt` in a browser exposes the
@@ -447,7 +447,7 @@ who bring a key. Worth being upfront about in the UI copy.
 | # | Phase | Content |
 |---|---|---|
 | 0 | Unblock | Deploy to testnet (or add a localhost network entry), add `mnemonadAddress` to `settings.js`, vite alias, two deps |
-| 1 | Store + page shell | `stores/mnemonad.js`, `pages/Mnemonad.vue`, `VectorSummary`, not-deployed state, nav entry |
+| 1 | Store + page shell | `stores/mnemonad.js`, `pages/Mnemonad.vue`, `StreamSummary`, not-deployed state, nav entry |
 | 2 | Links | `explorerUrl.js`, `ExplorerLink.vue`, `TierBadge.vue`. Verify token URL shapes against both explorers |
 | 3 | Browse | `ItemList` paginated, `ItemDetail`, `PayloadPreview`, `ChunkTable`. Read-only, no wallet |
 | 4 | Upload | `ItemUploader` with file + text modes, split control, pre-flight panel |
@@ -455,7 +455,7 @@ who bring a key. Worth being upfront about in the UI copy.
 | 6 | Encryption + IPFS | encrypt toggle with wagmi signer, gateway reads, optional user JWT |
 | 7 | Polish | loading skeletons, empty and error states, reduced-motion, mobile collapse, contrast audit |
 
-Phases 1 to 3 are useful on their own: a working read-only browser for any deployed vector.
+Phases 1 to 3 are useful on their own: a working read-only browser for any deployed stream.
 
 ---
 
@@ -469,11 +469,11 @@ Phases 1 to 3 are useful on their own: a working read-only browser for any deplo
    editability.
 3. **Nav.** There is no nav menu to add a link to. Add one to the header, link from
    `Home.vue`, or leave the page URL-only like `/docs` and `/showcase`? Partly settled by
-   #5 below for the owned-vectors slice; still open for a future full browse/upload page if
+   #5 below for the owned-streams slice; still open for a future full browse/upload page if
    that ends up living at its own route.
 4. **Demo size cap.** 1 MB proposed. Higher means more wallet prompts and heavier browser
    memory, not a different code path.
-5. **Should this replace `Home.vue`?** **Decided for the owned-vectors slice:** yes — see
-   §1.6, `Home.vue` gets the vector list and create button directly, no separate route. Still
+5. **Should this replace `Home.vue`?** **Decided for the owned-streams slice:** yes — see
+   §1.6, `Home.vue` gets the stream list and create button directly, no separate route. Still
    open for the larger upload/browse surface (§3-§8): same home page, once it exists, or its
    own `/mnemonad` route as originally sketched in §4.

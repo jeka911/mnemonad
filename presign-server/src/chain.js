@@ -15,7 +15,7 @@ export function createChain(config) {
 	const publicClient = createPublicClient({ chain, transport: http(config.rpcUrl) });
 
 	// `id` is irrelevant for the registry-level reads this uses (`uploadGateway`), which is
-	// why no vector is required — but the SDK wants one, so it gets a placeholder.
+	// why no stream is required — but the SDK wants one, so it gets a placeholder.
 	const registry = new Mnemonad({
 		publicClient,
 		contractAddress: config.registryAddress,

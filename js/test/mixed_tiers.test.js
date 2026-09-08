@@ -5,7 +5,7 @@ import { Store } from '../MnemonadItem.js';
 import { startNode, makeClients, deployRegistry, makeMockIpfs, makeBytes } from './fixture.js';
 
 /**
- * Items of every storage tier coexisting in one vector.
+ * Items of every storage tier coexisting in one stream.
  *
  * Three tiers: SLOT (one packed storage slot), CODE (bytes deployed as contract code,
  * possibly spanning chunks or packed alongside other items) and EXTERNAL (an off-chain
@@ -13,7 +13,7 @@ import { startNode, makeClients, deployRegistry, makeMockIpfs, makeBytes } from 
  *
  * Worth its own file because almost every code path branches on tier — `at`, `readRange`,
  * `getItemRefs`, `concat`, `binaryLength` accounting — and a dispatch mistake would only
- * show up when tiers are interleaved, not when a vector holds one kind of item.
+ * show up when tiers are interleaved, not when a stream holds one kind of item.
  */
 
 let node;
@@ -52,7 +52,7 @@ const SLOT_SIZE = 20; // <= 31
 const CODE_SIZE = 500; // 32..MAX_CHUNK
 const BIG_SIZE = MAX_CHUNK * 2 + 300; // > MAX_CHUNK: staged on-chain, or external
 
-describe('all three tiers in one vector', () => {
+describe('all three tiers in one stream', () => {
 	let ev;
 	let ipfsClient;
 	let expected;
@@ -210,7 +210,7 @@ describe('packing alongside other tiers', () => {
 });
 
 describe('concat preserves tiers', () => {
-	it('merges two mixed-tier vectors and keeps every item readable', async () => {
+	it('merges two mixed-tier streams and keeps every item readable', async () => {
 		const ipfsClient = makeMockIpfs();
 		const dst = await Mnemonad.create(baseParams({ ipfsClient }));
 		const src = await Mnemonad.create(baseParams({ ipfsClient }));
@@ -294,7 +294,7 @@ describe('mixed tiers under encryption', () => {
 		expect(ev.binaryLength).toBe(total);
 	}, 300_000);
 
-	it('serves ranges from every tier of an encrypted vector', async () => {
+	it('serves ranges from every tier of an encrypted stream', async () => {
 		const ipfsClient = makeMockIpfs();
 		const ev = await Mnemonad.create(
 			baseParams({ ipfsClient, encrypt: true, signer: clients.walletClient })

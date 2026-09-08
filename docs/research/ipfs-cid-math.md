@@ -99,7 +99,7 @@ this exact 120–256 KB boundary — the size range where the answer is least ce
 ## Reducing the prompt count
 
 Context for why this was worth investigating: today, offloading one item to IPFS and
-adding it to a vector takes three separate wallet prompts, strictly serialized:
+adding it to a stream takes three separate wallet prompts, strictly serialized:
 
 ```
 1. offloadCommitment(data)        → local, sha256(data)                    no prompt
@@ -150,7 +150,7 @@ Two things worth being honest about before either level looks like a clean win:
 - **This is riskier specifically because Mnemonad is append-only.** Today, if the
   upload fails, nothing gets committed — retry, or the escrow becomes refundable
   after expiry. Once `pushExternal` fires *before* the upload is confirmed, a
-  failed background upload leaves a **permanent** item in the vector pointing at a
+  failed background upload leaves a **permanent** item in the stream pointing at a
   CID that was never actually pinned — and there's no fixing that item afterward,
   only `truncateFrom`, which destroys everything pushed after it too. That's a
   materially worse failure mode than what exists now, and it's the reason neither
@@ -168,7 +168,7 @@ directly. The net win is one fewer wallet prompt with no change to the correctne
 guarantee.
 
 Level 2 is a genuine architecture change — a new contract, no on-chain migration
-path (see the root README's status on why redeploys can't carry existing vectors
+path (see the root README's status on why redeploys can't carry existing streams
 forward), and it inherits the append-only risk above unless paired with a
 reliable-upload guarantee or an "unconfirmed until verified" read-side convention.
 Worth a separate design pass if it gets prioritized; this document only establishes

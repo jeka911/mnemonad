@@ -42,7 +42,7 @@ function baseParams(extra = {}) {
 	};
 }
 
-/** A writable, encrypted vector owned by account 0. */
+/** A writable, encrypted stream owned by account 0. */
 function createEncrypted(extra = {}) {
 	return Mnemonad.create(
 		baseParams({ encrypt: true, signer: clients.walletClient, ...extra })
@@ -50,7 +50,7 @@ function createEncrypted(extra = {}) {
 }
 
 describe('creation and key material', () => {
-	it('creates an encrypted vector in a single transaction', async () => {
+	it('creates an encrypted stream in a single transaction', async () => {
 		const ev = await createEncrypted();
 
 		expect(await ev.isEncrypted()).toBe(true);
@@ -88,13 +88,13 @@ describe('creation and key material', () => {
 		expect(new Uint8Array(await crypto.unwrapAesKey(wrapped, ev.id))).toEqual(key);
 	});
 
-	it('derives a distinct key per vector for the same signer', async () => {
+	it('derives a distinct key per stream for the same signer', async () => {
 		const a = await createEncrypted();
 		const b = await createEncrypted();
 		await a.initialize();
 		await b.initialize();
 
-		// The KEK binds the vector id, so one wallet's vectors are not cross-readable
+		// The KEK binds the stream id, so one wallet's streams are not cross-readable
 		// even though they share a signing key.
 		expect(Buffer.from(a.encKeyWrapped)).not.toEqual(Buffer.from(b.encKeyWrapped));
 	});
@@ -318,7 +318,7 @@ describe('reading without the key', () => {
 	});
 });
 
-describe('encrypted vectors and ownership', () => {
+describe('encrypted streams and ownership', () => {
 	it('blocks transfer while a key is set', async () => {
 		const { mnemonadAbi } = await import('../abi.js');
 		const ev = await createEncrypted();
@@ -350,18 +350,18 @@ describe('encrypted vectors and ownership', () => {
 		expect(await ev.owner()).toBe(clients.accounts[1].address);
 	});
 
-	it('allows burning an encrypted vector', async () => {
+	it('allows burning an encrypted stream', async () => {
 		const ev = await createEncrypted();
 		await ev.push(makeBytes(100, 1));
 		await ev.burn();
 		await expect(ev.initialize()).rejects.toThrow();
 	});
 
-	it('refuses to concat an encrypted vector', async () => {
+	it('refuses to concat an encrypted stream', async () => {
 		const dst = await Mnemonad.create(baseParams());
 		const src = await createEncrypted();
 
-		// Each vector is keyed independently, so their items cannot be merged under one key.
+		// Each stream is keyed independently, so their items cannot be merged under one key.
 		await expect(dst.concat(src)).rejects.toThrow();
 	});
 });
@@ -386,7 +386,7 @@ describe('offloadCommitment', () => {
 		expect(Number(pointer.size)).toBe(commitment.size);
 	});
 
-	it('refuses on an encrypted vector rather than committing an unmatchable hash', async () => {
+	it('refuses on an encrypted stream rather than committing an unmatchable hash', async () => {
 		const ev = await createEncrypted();
 		// Encryption draws a fresh nonce per call, so no hash computed in advance can match
 		// the ciphertext push() will upload. Failing loudly beats escrowing MON against a
@@ -394,7 +394,7 @@ describe('offloadCommitment', () => {
 		await expect(ev.offloadCommitment(makeBytes(100, 8))).rejects.toThrow(/encrypted/i);
 	});
 
-	it('reports the plaintext size and hash on an unencrypted vector', async () => {
+	it('reports the plaintext size and hash on an unencrypted stream', async () => {
 		const { sha256 } = await import('@noble/hashes/sha2.js');
 		const ev = await Mnemonad.create(baseParams());
 		const data = makeBytes(500, 9);

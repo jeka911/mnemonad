@@ -40,7 +40,7 @@ contract GasTest is EvTest {
         id = ev.create(salt, "", "", new bytes[](0));
     }
 
-    /// @dev Measures a single push of `size` bytes into a fresh vector.
+    /// @dev Measures a single push of `size` bytes into a fresh stream.
     function _gasForPush(bytes32 salt, uint256 size) internal returns (uint256 used) {
         uint256 id = _createEmpty(salt);
         bytes memory data = _bytes(size, 1);
@@ -61,7 +61,7 @@ contract GasTest is EvTest {
     function test_slotWinsAtOrBelow31Bytes() public {
         uint256 slotGas = _gasForPush("g31", 31);
         console.log("push 31B (SLOT tier):", slotGas);
-        assertEq(uint8(ev.itemStore(ev.vectorIdFor(owner, "g31"), 0)), 1); // Store.SLOT
+        assertEq(uint8(ev.itemStore(ev.streamIdFor(owner, "g31"), 0)), 1); // Store.SLOT
     }
 
     function test_codeTierIsCompetitiveAtTheBoundary() public {

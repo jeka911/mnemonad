@@ -43,30 +43,30 @@ contract MnemonadTest is EvTest {
         id = ev.create(salt, "", "", new bytes[](0));
     }
 
-    // `length`/`binaryLength`/`firstAvailableIndex`/`vectorMeta`/`encKeyWrapped` no longer
-    // exist as separate getters — folded into `getVectorInfo` to reclaim bytecode size (see
+    // `length`/`binaryLength`/`firstAvailableIndex`/`streamMeta`/`encKeyWrapped` no longer
+    // exist as separate getters — folded into `getStreamInfo` to reclaim bytecode size (see
     // its own comment in Mnemonad.sol). These wrappers keep every assertion below reading the
     // same as before rather than tuple-destructuring at each call site; each still reverts
-    // exactly like its removed counterpart did, since `getVectorInfo` runs the same
+    // exactly like its removed counterpart did, since `getStreamInfo` runs the same
     // `_requireExists` check.
     function _length(Mnemonad ev_, uint256 id) internal view returns (uint64 len) {
-        (len,,,,) = ev_.getVectorInfo(id);
+        (len,,,,) = ev_.getStreamInfo(id);
     }
 
     function _binaryLength(Mnemonad ev_, uint256 id) internal view returns (uint64 binLen) {
-        (, binLen,,,) = ev_.getVectorInfo(id);
+        (, binLen,,,) = ev_.getStreamInfo(id);
     }
 
     function _firstAvailableIndex(Mnemonad ev_, uint256 id) internal view returns (uint64 firstIdx) {
-        (,, firstIdx,,) = ev_.getVectorInfo(id);
+        (,, firstIdx,,) = ev_.getStreamInfo(id);
     }
 
-    function _vectorMeta(Mnemonad ev_, uint256 id) internal view returns (bytes memory meta) {
-        (,,, meta,) = ev_.getVectorInfo(id);
+    function _streamMeta(Mnemonad ev_, uint256 id) internal view returns (bytes memory meta) {
+        (,,, meta,) = ev_.getStreamInfo(id);
     }
 
     function _encKeyWrapped(Mnemonad ev_, uint256 id) internal view returns (bytes memory encKey) {
-        (,,,, encKey) = ev_.getVectorInfo(id);
+        (,,,, encKey) = ev_.getStreamInfo(id);
     }
 
     // -----------------------------------------------------------------------------
@@ -96,14 +96,14 @@ contract MnemonadTest is EvTest {
     // Deterministic ids
     // -----------------------------------------------------------------------------
 
-    function test_vectorIdIsDeterministicAndPredictable() public {
+    function test_streamIdIsDeterministicAndPredictable() public {
         bytes32 salt = keccak256("salt-1");
-        uint256 predicted = ev.vectorIdFor(owner, salt);
+        uint256 predicted = ev.streamIdFor(owner, salt);
 
         uint256 id = _createEmpty(owner, salt);
 
         // The whole point: the id was knowable before the transaction, which is what lets
-        // an encrypted vector be created + keyed + populated in a single transaction.
+        // an encrypted stream be created + keyed + populated in a single transaction.
         assertEq(id, predicted);
         assertEq(ev.ownerOf(id), owner);
     }
@@ -120,7 +120,7 @@ contract MnemonadTest is EvTest {
         uint256 id = _createEmpty(owner, salt);
 
         vm.prank(owner);
-        vm.expectRevert(abi.encodeWithSelector(Mnemonad.VectorExists.selector, id));
+        vm.expectRevert(abi.encodeWithSelector(Mnemonad.StreamExists.selector, id));
         ev.create(salt, "", "", new bytes[](0));
     }
 
@@ -139,7 +139,7 @@ contract MnemonadTest is EvTest {
         // Ids are deterministic, so re-creating a burned id must be refused: the old item
         // records are still in storage and would otherwise be silently resurrected.
         vm.prank(owner);
-        vm.expectRevert(abi.encodeWithSelector(Mnemonad.VectorExists.selector, id));
+        vm.expectRevert(abi.encodeWithSelector(Mnemonad.StreamExists.selector, id));
         ev.create(salt, "", "", new bytes[](0));
     }
 
@@ -286,7 +286,7 @@ contract MnemonadTest is EvTest {
 
         assertEq(_length(ev, id), 3);
         assertEq(ev.at(id, 2), items[2]);
-        assertEq(_vectorMeta(ev, id), hex"DEAD");
+        assertEq(_streamMeta(ev, id), hex"DEAD");
         assertEq(_encKeyWrapped(ev, id), hex"BEEF");
         assertTrue(ev.isEncrypted(id));
     }
@@ -511,7 +511,7 @@ contract MnemonadTest is EvTest {
         vm.prank(owner);
         ev.setApprovalForAll(stranger, true);
 
-        // The point of a separate writer mapping: approving a marketplace to SELL a vector
+        // The point of a separate writer mapping: approving a marketplace to SELL a stream
         // must not also let it APPEND to it.
         vm.prank(stranger);
         vm.expectRevert(
@@ -556,7 +556,7 @@ contract MnemonadTest is EvTest {
         assertEq(_binaryLength(ev, dst), 320);
 
         // Source is consumed.
-        vm.expectRevert(abi.encodeWithSelector(Mnemonad.NoSuchVector.selector, src));
+        vm.expectRevert(abi.encodeWithSelector(Mnemonad.NoSuchStream.selector, src));
         _length(ev, src);
     }
 
@@ -677,14 +677,14 @@ contract MnemonadTest is EvTest {
         assertEq(ev.at(id, 1), _bytes(100, 2));
     }
 
-    function test_burnDestroysVector() public {
+    function test_burnDestroysStream() public {
         uint256 id = _createEmpty(owner, "b");
         vm.prank(owner);
         ev.push(id, 0, _bytes(100, 1), "");
         vm.prank(owner);
         ev.burn(id);
 
-        vm.expectRevert(abi.encodeWithSelector(Mnemonad.NoSuchVector.selector, id));
+        vm.expectRevert(abi.encodeWithSelector(Mnemonad.NoSuchStream.selector, id));
         _length(ev, id);
     }
 
@@ -702,20 +702,20 @@ contract MnemonadTest is EvTest {
         assertEq(_encKeyWrapped(ev, id), hex"AABB");
 
         // Owner-may-rewrap rather than write-once: the prerequisite for ever handing an
-        // encrypted vector to a new owner.
+        // encrypted stream to a new owner.
         vm.prank(owner);
         ev.setEncKeyWrapped(id, hex"CCDD");
         assertEq(_encKeyWrapped(ev, id), hex"CCDD");
     }
 
-    function test_unencryptedVectorTransfersFreely() public {
+    function test_unencryptedStreamTransfersFreely() public {
         uint256 id = _createEmpty(owner, "t1");
         vm.prank(owner);
         ev.transferFrom(owner, stranger, id);
         assertEq(ev.ownerOf(id), stranger);
     }
 
-    function test_encryptedVectorCannotBeTransferred() public {
+    function test_encryptedStreamCannotBeTransferred() public {
         uint256 id = _createEmpty(owner, "t2");
         vm.prank(owner);
         ev.setEncKeyWrapped(id, hex"AABB");
@@ -724,19 +724,19 @@ contract MnemonadTest is EvTest {
         // never decrypt. Blocking is the honest behaviour until rewrap-on-transfer exists.
         vm.prank(owner);
         vm.expectRevert(
-            abi.encodeWithSelector(Mnemonad.EncryptedVectorNotTransferable.selector, id)
+            abi.encodeWithSelector(Mnemonad.EncryptedStreamNotTransferable.selector, id)
         );
         ev.transferFrom(owner, stranger, id);
     }
 
-    function test_encryptedVectorCanStillBeBurned() public {
+    function test_encryptedStreamCanStillBeBurned() public {
         uint256 id = _createEmpty(owner, "t3");
         vm.prank(owner);
         ev.setEncKeyWrapped(id, hex"AABB");
         vm.prank(owner);
         ev.burn(id);
 
-        vm.expectRevert(abi.encodeWithSelector(Mnemonad.NoSuchVector.selector, id));
+        vm.expectRevert(abi.encodeWithSelector(Mnemonad.NoSuchStream.selector, id));
         _length(ev, id);
     }
 
@@ -861,9 +861,9 @@ contract MnemonadTest is EvTest {
     // Bounds and existence
     // -----------------------------------------------------------------------------
 
-    function test_readingMissingVectorReverts() public {
-        uint256 ghost = ev.vectorIdFor(owner, "nope");
-        vm.expectRevert(abi.encodeWithSelector(Mnemonad.NoSuchVector.selector, ghost));
+    function test_readingMissingStreamReverts() public {
+        uint256 ghost = ev.streamIdFor(owner, "nope");
+        vm.expectRevert(abi.encodeWithSelector(Mnemonad.NoSuchStream.selector, ghost));
         _length(ev, ghost);
     }
 

@@ -1,7 +1,7 @@
 # Mnemonad Explorer
 
-Vue 3 + Quasar app for browsing and creating Mnemonad vectors: connect a wallet,
-create a vector, push items across the SLOT/CODE/EXTERNAL tiers, and pay for
+Vue 3 + Quasar app for browsing and creating Mnemonad streams: connect a wallet,
+create a stream, push items across the SLOT/CODE/EXTERNAL tiers, and pay for
 off-chain IPFS storage through the upload gateway. See the root
 [`README.md`](../README.md) for what Mnemonad itself is.
 

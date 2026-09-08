@@ -1,5 +1,5 @@
 /**
- * Represents a single item stored in a Mnemonad vector.
+ * Represents a single item stored in a Mnemonad stream.
  *
  * The contract has three storage tiers. Two of them — SLOT and CODE — are both on-chain
  * payloads and are indistinguishable to a reader, so they collapse into one item type

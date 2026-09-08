@@ -76,7 +76,7 @@ export type CustomSendTransactionFunction = (request: unknown) => Promise<string
 export interface MnemonadParams {
 	/** viem PublicClient, for reads. */
 	publicClient?: unknown;
-	/** Vector id (ERC-721 token id). */
+	/** Stream id (ERC-721 token id). */
 	id?: bigint | string | null;
 	/** Registry address, or a key from `ids` such as 'monadTestnet'. */
 	contractAddress?: string | null;
@@ -121,9 +121,9 @@ export interface MnemonadParams {
 	/**
 	 * Caps outbound RPC calls to at most this many per second, queuing the rest instead of
 	 * firing them all at once — public RPC endpoints commonly 429 an unthrottled fan-out
-	 * (several fields per vector, times several vectors, all via `Promise.all`). Shared
+	 * (several fields per stream, times several streams, all via `Promise.all`). Shared
 	 * across every instance configured with the same rate on the same chain, so a fan-out
-	 * over many vectors is throttled as one budget rather than one per vector. Omit for
+	 * over many streams is throttled as one budget rather than one per stream. Omit for
 	 * unlimited (the default).
 	 */
 	maxRPCRequestsPerSecond?: number | null;
@@ -138,7 +138,7 @@ export interface MnemonadParams {
 	 * Item-payload cache. `false`/`null` disables caching entirely; a custom object with
 	 * `get`/`set` is used verbatim (not shared); omit for the shared default — IndexedDB in
 	 * a browser, an in-memory Map elsewhere. Always stores pre-decryption bytes (ciphertext
-	 * for an encrypted vector), never plaintext. See `MnemonadChunkCache`.
+	 * for an encrypted stream), never plaintext. See `MnemonadChunkCache`.
 	 */
 	cache?: boolean | { get(key: string): Promise<Uint8Array | undefined>; set(key: string, bytes: Uint8Array): Promise<void> } | null;
 	/** Tunes the shared default cache; ignored if `cache` is set. See `ChunkCacheOptions`. */
@@ -155,9 +155,9 @@ export interface CreateParams extends MnemonadParams {
 	array?: Uint8Array | Uint8Array[] | null;
 	/** 0x-prefixed 32-byte hex. Random if omitted. */
 	salt?: string | null;
-	/** Vector-level metadata. */
+	/** Stream-level metadata. */
 	meta?: Uint8Array | null;
-	/** Create an encrypted vector. Requires `signer`. */
+	/** Create an encrypted stream. Requires `signer`. */
 	encrypt?: boolean;
 	options?: TxOptions;
 }
@@ -367,8 +367,8 @@ export declare class MnemonadCrypto {
 	static generateAesKey(): Uint8Array;
 	setAesKey(key: Uint8Array): void;
 	getAesKey(): Uint8Array | null;
-	wrapAesKey(aesKey: Uint8Array, vectorId?: bigint | null): Promise<Uint8Array>;
-	unwrapAesKey(wrapped: Uint8Array, vectorId?: bigint | null): Promise<Uint8Array>;
+	wrapAesKey(aesKey: Uint8Array, streamId?: bigint | null): Promise<Uint8Array>;
+	unwrapAesKey(wrapped: Uint8Array, streamId?: bigint | null): Promise<Uint8Array>;
 	/** Encrypts into independently-decryptable frames (STREAM construction). */
 	encryptItem(plaintext: Uint8Array, params?: { log2FrameSize?: number }): Promise<Uint8Array>;
 	decryptItem(payload: Uint8Array): Promise<Uint8Array>;
@@ -437,8 +437,8 @@ export declare class Mnemonad {
 
 	static create(params: CreateParams): Promise<Mnemonad>;
 	static getContractAddress(network: string): string | null;
-	/** Computes a vector id without creating it — enables one-transaction encrypted create. */
-	static computeVectorId(
+	/** Computes a stream id without creating it — enables one-transaction encrypted create. */
+	static computeStreamId(
 		publicClient: unknown,
 		contractAddress: string,
 		creator: string,
@@ -447,7 +447,7 @@ export declare class Mnemonad {
 		rpcRetry?: MnemonadParams['rpcRetry']
 	): Promise<bigint>;
 	/**
-	 * Lists vector ids currently owned by `owner`, via `ERC721Enumerable`'s per-owner index.
+	 * Lists stream ids currently owned by `owner`, via `ERC721Enumerable`'s per-owner index.
 	 * All reads are pinned to one block number for a consistent snapshot.
 	 */
 	static listOwned(
@@ -464,14 +464,14 @@ export declare class Mnemonad {
 	owner(): Promise<string>;
 	/**
 	 * Whether `address` (default: this instance's configured sender) can append to this
-	 * vector right now. Resolves `false`, never rejects, when there's nothing to check.
+	 * stream right now. Resolves `false`, never rejects, when there's nothing to check.
 	 */
 	canWrite(address?: string): Promise<boolean>;
 
 	/** Reads a whole item, paging automatically above `readPageBytes`. */
 	at(i: number): Promise<Uint8Array>;
 	/**
-	 * Reads a byte range as plaintext. On an encrypted vector only the frames overlapping
+	 * Reads a byte range as plaintext. On an encrypted stream only the frames overlapping
 	 * the range are fetched and decrypted, so random access costs one frame, not the item.
 	 */
 	readRange(i: number, start: number, len: number): Promise<Uint8Array>;
@@ -496,7 +496,7 @@ export declare class Mnemonad {
 	pushMany(items: Uint8Array[], params?: PushParams): Promise<boolean>;
 	pushExternal(data: Uint8Array, params?: PushParams): Promise<boolean>;
 
-	/** Appends another vector's items by re-linking, not copying. Consumes the source. */
+	/** Appends another stream's items by re-linking, not copying. Consumes the source. */
 	concat(other: bigint | string | Mnemonad, params?: TxOptions): Promise<boolean>;
 	/** Logical delete. Reclaims almost no gas — see PLAN.md §3.5. */
 	truncateFrom(uptoIndex: number, params?: TxOptions): Promise<boolean>;

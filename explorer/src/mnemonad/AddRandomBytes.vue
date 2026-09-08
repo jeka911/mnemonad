@@ -64,7 +64,7 @@ export default {
 	components: { GradientButton },
 	props: {
 		// True when the connected wallet can't push right now (disconnected, wrong
-		// network, or not authorized) — see Vector.vue's canWrite/wrongNetwork check.
+		// network, or not authorized) — see Stream.vue's canWrite/wrongNetwork check.
 		disable: {
 			type: Boolean,
 			default: false,
@@ -73,7 +73,7 @@ export default {
 			type: Boolean,
 			default: false,
 		},
-		// The vector's maxChunkBytes — caps the "bytes per chunk" slider so every
+		// The stream's maxChunkBytes — caps the "bytes per chunk" slider so every
 		// generated chunk fits in a single on-chain push() with no staging/IPFS routing
 		// needed. This tool is for exercising the plain packed-multi-chunk path, not the
 		// oversized-item routes AddTextChunk already covers.
@@ -106,9 +106,9 @@ export default {
 		},
 	},
 	watch: {
-		// The vector's real limit is only known once Vector.vue's load() resolves — this
+		// The stream's real limit is only known once Stream.vue's load() resolves — this
 		// prop starts at a placeholder default, so clamp once the real one arrives instead
-		// of leaving a slider value that's invalid for this vector.
+		// of leaving a slider value that's invalid for this stream.
 		maxBytesCapped: function(newMax) {
 			if (this.chunkSize > newMax) this.chunkSize = newMax;
 		},
