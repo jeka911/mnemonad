@@ -17,6 +17,60 @@ Stream                      ← one ERC-721 token; an append-only bytes[]
 Frame                       ← independent of the above: a slice of *encrypted* ciphertext
 ```
 
+### Visual overview
+
+The same hierarchy, with concrete examples of the two relationships that make `chunk` and
+`item` genuinely different concepts — one item spanning several chunks (#5, staged across
+multiple `appendChunk` calls) and several items sharing one chunk (#2 and #3, packed
+together by one `pushMany` call):
+
+```mermaid
+flowchart TD
+    S["<b>Stream</b><br/>ERC-721 token · append-only bytes[]"]
+
+    S --> I0["Item #0<br/>≤ 31 bytes"]
+    S --> I1["Item #1"]
+    S --> I2["Item #2"]
+    S --> I3["Item #3"]
+    S --> I4["Item #4<br/>&gt; maxChunkBytes"]
+    S --> I5["Item #5<br/>&gt; maxChunkBytes"]
+
+    I0 -->|"routed by size"| SLOT["<b>SLOT tier</b><br/>packed into one storage slot"]
+
+    I1 -->|"single push()"| CA["Chunk A<br/>(CODE tier: a deployed<br/>data contract)"]
+
+    I2 -->|"pushMany() batch"| CB["Chunk B<br/>shared by items #2 and #3"]
+    I3 -->|"pushMany() batch"| CB
+
+    I4 -->|"pushExternal()"| P4["Pointer<br/>{hash, size, codec, locator}"]
+    P4 -.->|"locator = CID"| IPFS[("off-chain store<br/>(IPFS today)")]
+
+    I5 -->|"staged across several<br/>appendChunk() calls"| CC1["Chunk C1"]
+    I5 --> CC2["Chunk C2"]
+    I5 --> CC3["Chunk C3"]
+
+    classDef tier fill:#2fd6c0,stroke:#1a8f7f,color:#04211d
+    classDef chunk fill:#6d6cf0,stroke:#3f3ecf,color:#f3f2ff
+    classDef pointer fill:#f4587a,stroke:#c22d51,color:#fff3f5
+    classDef store fill:#8a94a6,stroke:#5b6472,color:#f4f6f9,stroke-dasharray: 4 3
+
+    class SLOT tier
+    class CA,CB,CC1,CC2,CC3 chunk
+    class P4 pointer
+    class IPFS store
+```
+
+Framing sits at a different layer entirely — it slices an item's *ciphertext*, on an
+encrypted stream, regardless of which tier above ends up holding that ciphertext:
+
+```mermaid
+flowchart LR
+    subgraph CT["One item's ciphertext, encrypted stream only"]
+        direction LR
+        H["header<br/>version · log2FrameSize · baseNonce"] --> F0["Frame 0<br/>+ GCM tag"] --> F1["Frame 1<br/>+ GCM tag"] --> F2["Frame N<br/>final · + GCM tag"]
+    end
+```
+
 ### Stream
 
 One append-only `bytes[]`, exposed as an ERC-721 NFT — owning the token *is* owning (and
