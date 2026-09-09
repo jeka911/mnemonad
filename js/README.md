@@ -91,8 +91,11 @@ never be folded into an existing chunk afterwards. Measured on-chain, 10 × 200 
 
 ## Encryption
 
-v1 is **self-wrapped**: a random AES-256-GCM data key, wrapped under a KEK derived from
-the owner's own signature, stored on-chain in `encKeyWrapped`.
+A random AES-256-GCM data key is always generated at `create()` time and stored, wrapped,
+on-chain in `encKeyWrapped`. What differs is only *how it gets wrapped* — the
+key-encryption key (KEK). Two methods exist:
+
+**Signer-based** — self-wrapped under a KEK derived from the owner's own signature:
 
 ```javascript
 const ev = await Mnemonad.create({
@@ -106,9 +109,39 @@ await ev.push(secret);       // encrypted before it leaves the process
 await ev.at(0);              // decrypted transparently
 ```
 
+**Password-based** — the KEK is derived via PBKDF2-HMAC-SHA256 from a plaintext password
+plus a per-stream salt, instead of a signature:
+
+```javascript
+const ev = await Mnemonad.create({
+    publicClient,
+    walletClient,
+    contractAddress,
+    encrypt: true,
+    password: 'a strong passphrase',
+    // Omit passwordSalt to have one generated for you — read it back via
+    // ev.crypto.getPasswordSalt() (or MnemonadCrypto.saltToHex(...) for storage) and
+    // persist it: unwrapping later needs the SAME salt supplied back in.
+});
+await ev.push(secret);
+await ev.at(0);
+```
+
+`passwordIterations` overrides the iteration count (default
+`MnemonadCrypto.DEFAULT_PBKDF2_ITERATIONS`, 600,000 — OWASP's 2023 floor for
+PBKDF2-HMAC-SHA256). Persist whatever value was actually used alongside the salt: raising
+the default later must not change what an existing stream needs to unwrap. A password is
+rejected outright if empty — `crypto: password must not be empty` — rather than silently
+treated as "no password."
+
 Because stream ids are deterministic, the id is known *before* creation — so create + key +
-first push happen in **one transaction**, with no round trip needed first to learn what id
-a create call would produce.
+first push happen in **one transaction** either way, with no round trip needed first to
+learn what id a create call would produce.
+
+A third option, `aesKey`, hands over an already-unwrapped plaintext data key directly —
+skipping unwrapping entirely. It's how a second party reads without either credential (there
+is no delegation otherwise in v1) and how a UI caches an already-unlocked key for the rest of
+a session without re-deriving it on every read.
 
 ### Framed ciphertext
 
@@ -137,13 +170,30 @@ This is the STREAM construction, as used by age and libsodium's secretstream. A 
 only the 10-byte header plus the on-chain item size to locate any frame, so no scan or trial
 decryption is involved.
 
-Two limitations to know:
+Limitations to know:
 
-- **Owner-bound.** Only the wallet that wrapped the key can unwrap it. No delegation, and
-  losing the signing key loses the data.
-- **Encrypted streams cannot be transferred.** The contract blocks it, because a new owner
-  could never decrypt. Lifting this needs the propose/accept rewrap flow, which is **not in
-  v1**.
+- **Signer-based is owner-bound.** Only the wallet that wrapped the key can unwrap it. No
+  delegation, and losing the signing key loses the data. Password-based is *not*
+  owner-bound — anyone with the password can unwrap, regardless of wallet — but the salt
+  and iteration count are necessarily public (a reader has to find them somewhere before
+  ever entering a password), so the password's own strength plus the iteration count are
+  the only defenses against an offline brute force of a stolen wrapped key.
+- **Encrypted streams cannot be transferred**, regardless of KEK method. The contract
+  blocks it unconditionally — `isEncrypted()` only checks whether a wrapped key exists at
+  all, not which method produced it. Lifting this needs the propose/accept rewrap flow,
+  which is **not in v1**.
+- **Prepaying an off-chain upload needs one extra step.** `offloadCommitment(data)` throws
+  on an encrypted stream by default — every encryption draws a fresh nonce, so a hash
+  computed over plaintext in advance would never match the ciphertext `push()` actually
+  uploads, and the registry would find no matching escrow. Encrypt once yourself and commit
+  to *that* ciphertext instead:
+
+  ```javascript
+  const ciphertext = await ev.crypto.encryptItem(plaintext);
+  const { hash, size } = await ev.offloadCommitment(ciphertext, { alreadyEncrypted: true });
+  await gateway.payForUpload(hash, size);
+  await ev.pushExternal(ciphertext, { alreadyEncrypted: true }); // same bytes, not re-encrypted
+  ```
 
 ## IPFS offloading
 

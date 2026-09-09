@@ -14,6 +14,7 @@ import { Notify } from 'quasar';
 import { config } from '../wagmi';
 import BlockNumberEstimator from '../includes/BlockNumberEstimator';
 import { getActiveNetwork } from '../settings.js';
+import { useStreamKeysStore } from './streamKeys.js';
 
 // The chain this whole session is pinned to (see settings.js). The wallet's
 // actual chain is the user's to control; we only compare against this to detect
@@ -216,6 +217,10 @@ export const useWalletStore = defineStore('wallet', {
 			// would drag the wallet back onto the wrong network.
 			clearWagmiStorage();
 			this.sync(getAccount(config));
+			// Password-unlocked stream keys are unrelated to wallet auth, but forgetting
+			// them on disconnect is the least surprising behavior — a shared/public
+			// machine disconnecting a wallet shouldn't leave decrypted keys resident.
+			useStreamKeysStore().clearAll();
 		},
 		fetchBlockNumber() {
 			return estimator ? estimator.fetchNow() : null;

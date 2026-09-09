@@ -114,6 +114,19 @@ export interface MnemonadParams {
 	/** Pre-known plaintext data key, skips unwrapping. */
 	aesKey?: Uint8Array | null;
 	/**
+	 * Plaintext password; an alternative to `signer` for wrapping/unwrapping the encryption
+	 * key via PBKDF2-HMAC-SHA256. Must not be empty. See `MnemonadCrypto`.
+	 */
+	password?: string | null;
+	/**
+	 * Salt for the password KDF, as a 0x-prefixed hex string or raw bytes. Required to
+	 * unwrap; generated fresh if omitted when wrapping — read it back via
+	 * `MnemonadCrypto.getPasswordSalt()` and persist it.
+	 */
+	passwordSalt?: string | Uint8Array | null;
+	/** PBKDF2 iteration count. Defaults to `MnemonadCrypto.DEFAULT_PBKDF2_ITERATIONS`. */
+	passwordIterations?: number;
+	/**
 	 * Largest slice fetched per read call. Default 512 KB — inside Monad's 8 MB
 	 * per-transaction memory cap, which is what bounds a one-shot read rather than gas.
 	 */
@@ -157,7 +170,7 @@ export interface CreateParams extends MnemonadParams {
 	salt?: string | null;
 	/** Stream-level metadata. */
 	meta?: Uint8Array | null;
-	/** Create an encrypted stream. Requires `signer`. */
+	/** Create an encrypted stream. Requires `signer` or `password`. */
 	encrypt?: boolean;
 	options?: TxOptions;
 }
@@ -174,6 +187,12 @@ export interface PushParams extends TxOptions {
 	onChain?: boolean;
 	/** Per-item metadata. Single items only. */
 	itemMeta?: Uint8Array | null;
+	/**
+	 * The payload is already ciphertext; skip re-encrypting it. Needed for `pushExternal`
+	 * when prepaying through `MnemonadUploadGateway` on an encrypted stream — see
+	 * `offloadCommitment`'s own doc for the full sequence.
+	 */
+	alreadyEncrypted?: boolean;
 }
 
 export declare class MnemonadItem {
@@ -364,9 +383,17 @@ export declare function resetRpcCalls(): void;
 export declare class MnemonadCrypto {
 	readonly isEnabled: boolean;
 	readonly isEncryptRequested: boolean;
+	/** Default PBKDF2 iteration count new password streams get. */
+	static readonly DEFAULT_PBKDF2_ITERATIONS: number;
 	static generateAesKey(): Uint8Array;
+	/** Generates a fresh salt for password-based key derivation. */
+	static generatePasswordSalt(): Uint8Array;
+	/** 0x-prefixed hex encoding of raw salt bytes. */
+	static saltToHex(bytes: Uint8Array): string;
 	setAesKey(key: Uint8Array): void;
 	getAesKey(): Uint8Array | null;
+	/** The salt in use for password-based key derivation, if any. */
+	getPasswordSalt(): Uint8Array | null;
 	wrapAesKey(aesKey: Uint8Array, streamId?: bigint | null): Promise<Uint8Array>;
 	unwrapAesKey(wrapped: Uint8Array, streamId?: bigint | null): Promise<Uint8Array>;
 	/** Encrypts into independently-decryptable frames (STREAM construction). */
@@ -490,6 +517,18 @@ export declare class Mnemonad {
 	isItemLoaded(i: number): boolean;
 	pointerAt(i: number): Promise<Pointer>;
 	getItemRefs(i: number): Promise<ItemRefs>;
+
+	/**
+	 * The sha256 an offloaded push of `data` would record in its `Pointer.hash` — the value
+	 * to commit to when prepaying through `MnemonadUploadGateway`. On an encrypted stream,
+	 * `data` must already be the exact ciphertext that will be uploaded (pass
+	 * `{ alreadyEncrypted: true }` and hand this `crypto.encryptItem(plaintext)`'s own
+	 * output) — see this method's own doc comment in `Mnemonad.js` for the full sequence.
+	 */
+	offloadCommitment(
+		data: Uint8Array,
+		params?: { alreadyEncrypted?: boolean }
+	): Promise<{ hash: string; size: number }>;
 
 	push(arr: Uint8Array | Uint8Array[], params?: PushParams): Promise<boolean>;
 	/** Packs a batch into one shared chunk, saving the per-chunk CREATE overhead. */

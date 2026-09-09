@@ -1,6 +1,7 @@
 import { gcm } from '@noble/ciphers/aes.js';
-import { randomBytes } from '@noble/ciphers/utils.js';
+import { randomBytes, bytesToHex as toHex } from '@noble/ciphers/utils.js';
 import { hkdf } from '@noble/hashes/hkdf.js';
+import { pbkdf2Async } from '@noble/hashes/pbkdf2.js';
 import { sha256 } from '@noble/hashes/sha2.js';
 
 /**
@@ -33,28 +34,53 @@ const BASE_NONCE_BYTES = 8;
 /** 64 KiB frames: ~1 KB of tags per 4 MB item, and a small enough unit to fetch alone. */
 const DEFAULT_LOG2_FRAME_SIZE = 16;
 
+/** Salt length for password-based key derivation — 128 bits, the standard recommendation. */
+const PBKDF2_SALT_BYTES = 16;
+
+/**
+ * Default PBKDF2-HMAC-SHA256 iteration count for password-based key derivation.
+ *
+ * Deliberately high. Unlike the signature-based KEK — whose only "key" is possession of a
+ * wallet, never exposed to anything this SDK stores — a password KEK's salt and iteration
+ * count have to be public: a reader needs both to reproduce the KEK, so they end up in the
+ * stream's (already-cleartext) metadata. Iteration cost is therefore the *only* thing
+ * standing between a stolen wrapped key and an offline brute force of the password. 600,000
+ * is OWASP's 2023 floor for PBKDF2-HMAC-SHA256; raise it per-stream via `passwordIterations`
+ * if a slower, costlier derivation is worth the wait.
+ */
+const PBKDF2_ITERATIONS = 600_000;
+
 /**
  * Client-side encryption companion for Mnemonad. Attached as `mnemonad.crypto` on every
- * instance; only "enabled" when a signer (or an explicit AES key) is supplied.
+ * instance; only "enabled" when a signer, a password, or an explicit AES key is supplied.
  *
- * v1 is **self-wrapped**: a random AES-256-GCM data key is wrapped under a KEK derived
- * from the owner's own signature. No third-party key-server network, no delegation, and
- * losing the signing key loses the data.
+ * A random AES-256-GCM data key is always generated at `create()` time; what differs is
+ * only *how it gets wrapped* — the key-encryption key (KEK). Two methods exist today:
  *
- * The wrapped key is stored on-chain in `encKeyWrapped`. That field is what a future
- * provider (e.g. Lit Protocol) would populate instead, with no contract change.
+ *   - **Signature-based** (`signer`): the KEK is derived from the owner's own signature.
+ *     No third-party key-server network, no delegation, and losing the signing key loses
+ *     the data. Because this KEK is intrinsically bound to one wallet, the contract refuses
+ *     to transfer an encrypted stream wrapped this way — lifting that needs the
+ *     propose/accept rewrap flow, which is not in v1 (see PLAN.md §3.9).
+ *   - **Password-based** (`password`): the KEK is derived via PBKDF2-HMAC-SHA256 from a
+ *     plaintext password plus a per-stream salt. Not owner-bound — anyone with the password
+ *     can unwrap, regardless of wallet — but the salt and iteration count are necessarily
+ *     public (they have to live somewhere a reader can find them before ever entering a
+ *     password, typically the stream's own cleartext metadata), so the password's strength
+ *     and the iteration count are the *only* defenses against offline brute force.
  *
- * Two consequences worth knowing:
- *   - The data key is random and merely *wrapped* by the signature-derived KEK, not
- *     derived from it. That indirection is what makes re-wrapping for a new owner possible
- *     at all — deriving the data key straight from a signature would bind the ciphertext to
- *     one signer forever.
- *   - Because a wrapped key is bound to its owner, the contract refuses to transfer an
- *     encrypted stream. Lifting that needs the propose/accept rewrap flow, which is not in
- *     v1 (see PLAN.md §3.9).
+ * The wrapped key is stored on-chain in `encKeyWrapped`, opaque to the contract either way.
+ * That field is also what a future provider (e.g. Lit Protocol, WebAuthn PRF) would
+ * populate instead, with no contract change — `wrapAesKey`/`unwrapAesKey` only need *some*
+ * 32-byte KEK, not a specific way of getting one.
+ *
+ * The data key is always random and merely *wrapped* by whichever KEK, never derived
+ * straight from it — that indirection is what makes re-wrapping for a new owner (or a
+ * changed password) possible at all.
  *
  * The wrapped key itself (as opposed to item payloads, which use the framed layout below)
- * has a fixed layout: `nonce(12B) || ciphertext || tag(16B)` — 28 bytes of overhead.
+ * has a fixed layout: `nonce(12B) || ciphertext || tag(16B)` — 28 bytes of overhead,
+ * regardless of KEK method.
  */
 export default class MnemonadCrypto {
 	/**
@@ -62,6 +88,19 @@ export default class MnemonadCrypto {
 	 * @param {Mnemonad} params.mnemonad - parent Mnemonad
 	 * @param {?Object} [params.signer] - viem Account or WalletClient able to signMessage
 	 * @param {?Uint8Array} [params.aesKey] - pre-known plaintext data key, skips unwrapping
+	 * @param {?string} [params.password] - plaintext password; an alternative to `signer`
+	 *   for deriving the key-encryption key. Must not be empty — an empty string is rejected
+	 *   here rather than silently treated as "no password", since that mistake would
+	 *   otherwise wrap the data key under a KEK derived from nothing.
+	 * @param {?(string|Uint8Array)} [params.passwordSalt] - salt for the password KDF, as a
+	 *   0x-prefixed hex string or raw bytes. A fresh one is generated on first use if
+	 *   omitted — read it back via `getPasswordSalt()` and persist it (e.g. in the stream's
+	 *   own metadata) so a later reader can supply the *same* salt to unwrap. Ignored unless
+	 *   `password` is also given.
+	 * @param {?number} [params.passwordIterations] - PBKDF2 iteration count; defaults to
+	 *   `MnemonadCrypto.DEFAULT_PBKDF2_ITERATIONS`. Persist whatever value was actually used
+	 *   alongside the salt — raising the default later must not change what an existing
+	 *   stream needs to unwrap.
 	 * @param {boolean} [params.encrypt=false] - request encryption when creating a stream
 	 */
 	constructor(params = {}) {
@@ -71,6 +110,17 @@ export default class MnemonadCrypto {
 		this._signer = params.signer || null;
 		/** @type {?Uint8Array} - cached plaintext data key */
 		this._aesKey = params.aesKey || null;
+
+		if (params.password !== undefined && params.password !== null && params.password.length === 0) {
+			throw new Error('crypto: password must not be empty');
+		}
+		/** @type {?string} */
+		this._password = params.password || null;
+		/** @type {?Uint8Array} */
+		this._passwordSalt = params.passwordSalt != null ? normalizeSalt(params.passwordSalt) : null;
+		/** @type {number} */
+		this._passwordIterations = params.passwordIterations || PBKDF2_ITERATIONS;
+
 		/** @type {boolean} */
 		this._encryptRequested = !!params.encrypt;
 	}
@@ -80,7 +130,12 @@ export default class MnemonadCrypto {
 	 * @returns {boolean}
 	 */
 	get isEnabled() {
-		return !!(this._signer || this._aesKey);
+		return !!(this._signer || this._aesKey || this._password);
+	}
+
+	/** @returns {number} The default PBKDF2 iteration count new password streams get. */
+	static get DEFAULT_PBKDF2_ITERATIONS() {
+		return PBKDF2_ITERATIONS;
 	}
 
 	/** @returns {boolean} Whether `create()` was asked to produce an encrypted stream. */
@@ -91,6 +146,23 @@ export default class MnemonadCrypto {
 	/** Generates a fresh AES-256 data key — used at `create()` time. */
 	static generateAesKey() {
 		return randomBytes(AES_KEY_BYTES);
+	}
+
+	/**
+	 * Generates a fresh salt for password-based key derivation. Callers that need to embed
+	 * it in stream metadata before `create()` runs (so it exists to read back before ever
+	 * prompting for the password) can generate it up front and pass it in as
+	 * `params.passwordSalt`; otherwise `wrapAesKey`/`_deriveKekFromPassword` generates one
+	 * lazily on first use and it's retrievable afterwards via `getPasswordSalt()`.
+	 * @returns {Uint8Array}
+	 */
+	static generatePasswordSalt() {
+		return randomBytes(PBKDF2_SALT_BYTES);
+	}
+
+	/** @param {Uint8Array} bytes @returns {string} 0x-prefixed hex */
+	static saltToHex(bytes) {
+		return `0x${toHex(bytes)}`;
 	}
 
 	/**
@@ -107,6 +179,16 @@ export default class MnemonadCrypto {
 	/** @returns {?Uint8Array} The cached plaintext data key, if any. */
 	getAesKey() {
 		return this._aesKey;
+	}
+
+	/**
+	 * @returns {?Uint8Array} The salt in use for password-based key derivation, if any —
+	 *   `null` until either supplied via the constructor or generated lazily on first wrap.
+	 *   Persist this (e.g. `MnemonadCrypto.saltToHex(salt)` into stream metadata) so a later
+	 *   reader can supply the same salt back in to unwrap.
+	 */
+	getPasswordSalt() {
+		return this._passwordSalt;
 	}
 
 	/**
@@ -390,12 +472,22 @@ export default class MnemonadCrypto {
 		if (!ev.encKeyWrapped || ev.encKeyWrapped.length === 0) {
 			throw new Error('crypto: stream has no encryption key on-chain');
 		}
-		if (!this._signer) {
-			throw new Error('crypto: a signer is required to unwrap the encryption key');
+		if (!this._signer && !this._password) {
+			throw new Error('crypto: a signer or password is required to unwrap the encryption key');
 		}
 
 		this._aesKey = await this.unwrapAesKey(ev.encKeyWrapped);
 		return this._aesKey;
+	}
+
+	/**
+	 * Derives the key-encryption key, from whichever method this instance was given.
+	 * @param {?bigint} [streamId]
+	 * @returns {Promise<Uint8Array>}
+	 */
+	async _deriveKek(streamId = null) {
+		if (this._password) return await this._deriveKekFromPassword();
+		return await this._deriveKekFromSignature(streamId);
 	}
 
 	/**
@@ -408,9 +500,9 @@ export default class MnemonadCrypto {
 	 * @param {?bigint} [streamId]
 	 * @returns {Promise<Uint8Array>}
 	 */
-	async _deriveKek(streamId = null) {
+	async _deriveKekFromSignature(streamId = null) {
 		if (!this._signer) {
-			throw new Error('crypto: a signer is required to derive the key-encryption key');
+			throw new Error('crypto: a signer or password is required to derive the key-encryption key');
 		}
 		const ev = this._mnemonad;
 		const id = streamId ?? ev?.id;
@@ -428,6 +520,32 @@ export default class MnemonadCrypto {
 		const signature = await this._signMessage(message);
 		const ikm = hexToBytes(signature);
 		return hkdf(sha256, ikm, undefined, new TextEncoder().encode(KEK_DOMAIN), AES_KEY_BYTES);
+	}
+
+	/**
+	 * Derives the key-encryption key from a password via PBKDF2-HMAC-SHA256.
+	 *
+	 * Unlike the signature-based KEK, there is no stream id to bind in — the salt itself
+	 * provides that separation (a fresh one per stream means the same password never
+	 * derives the same KEK twice). A salt is generated on first use if none was supplied;
+	 * this only happens naturally when *wrapping* (creation) — unwrapping always needs the
+	 * *same* salt the stream was created with, which the caller must supply via the
+	 * constructor's `passwordSalt` (there is nowhere else for it to come from: this class
+	 * never reads stream metadata itself).
+	 *
+	 * @returns {Promise<Uint8Array>}
+	 */
+	async _deriveKekFromPassword() {
+		if (!this._password) {
+			throw new Error('crypto: a password is required to derive the key-encryption key');
+		}
+		if (!this._passwordSalt) {
+			this._passwordSalt = MnemonadCrypto.generatePasswordSalt();
+		}
+		return await pbkdf2Async(sha256, this._password, this._passwordSalt, {
+			c: this._passwordIterations,
+			dkLen: AES_KEY_BYTES,
+		});
 	}
 
 	/**
@@ -460,4 +578,16 @@ function hexToBytes(hex) {
 		out[i] = parseInt(clean.substr(i * 2, 2), 16);
 	}
 	return out;
+}
+
+/**
+ * Accepts a password salt as either raw bytes or a 0x-prefixed hex string — the latter is
+ * what round-trips through JSON stream metadata.
+ * @param {string|Uint8Array} value
+ * @returns {Uint8Array}
+ */
+function normalizeSalt(value) {
+	if (value instanceof Uint8Array) return value;
+	if (typeof value === 'string') return hexToBytes(value);
+	throw new Error('crypto: passwordSalt must be a hex string or Uint8Array');
 }

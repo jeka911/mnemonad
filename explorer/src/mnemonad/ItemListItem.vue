@@ -16,9 +16,20 @@
 				</span>
 			</div>
 			<template v-else>
+				<!-- Locked takes priority over every preview state below: nothing has been
+				     fetched (ensurePreview refuses while locked, see its own guard), so there
+				     is no stale preview to worry about reverting once unlocked. -->
+				<span
+					v-if="locked"
+					class="item-card__placeholder item-card__placeholder--icon item-card__placeholder--clickable"
+					title="Click to unlock"
+					@click="$emit('unlock')"
+				>
+					<q-icon name="lock" size="18px" />
+				</span>
 				<!-- Hidden until requested — clicking the icon fetches just this one item's
 				     bytes (see ensurePreview), never eagerly as part of the list load. -->
-				<span v-if="preview.status === 'loading'" class="item-card__placeholder item-card__placeholder--icon">
+				<span v-else-if="preview.status === 'loading'" class="item-card__placeholder item-card__placeholder--icon">
 					<q-spinner size="16px" />
 				</span>
 				<span
@@ -110,8 +121,16 @@ export default {
 			type: Number,
 			default: 0,
 		},
+		// True while this item's stream is password-encrypted with no key unlocked yet
+		// this session (see Stream.vue's `isLocked`). Blocks every read this card could
+		// otherwise trigger (preview/view/download) — see canView/canDownload/ensurePreview
+		// below — since none of them can produce anything but ciphertext without the key.
+		locked: {
+			type: Boolean,
+			default: false,
+		},
 	},
-	emits: ['view'],
+	emits: ['view', 'unlock'],
 	data() {
 		return {
 			// { status: 'loading'|'ready'|'error', type?, snippet? } — one item per
@@ -130,10 +149,10 @@ export default {
 		// have no metadata yet at all — see Stream.vue's loadItems(). No size cap: text
 		// and HexViewer both scroll within a bounded popup height regardless of length.
 		canView() {
-			return this.loadBytes && !NO_CONTENT_TIERS.has(this.item.tier) && this.item.tier !== 'external';
+			return this.loadBytes && !this.locked && !NO_CONTENT_TIERS.has(this.item.tier) && this.item.tier !== 'external';
 		},
 		canDownload() {
-			return this.loadBytes && !NO_CONTENT_TIERS.has(this.item.tier);
+			return this.loadBytes && !this.locked && !NO_CONTENT_TIERS.has(this.item.tier);
 		},
 	},
 	methods: {
@@ -168,14 +187,23 @@ export default {
 		// `truncated` (no data exists) or `external` (that tier shows pointer metadata
 		// instead — locator/hash are the point there, not a content snippet).
 		async ensurePreview() {
-			if (!this.loadBytes || NO_CONTENT_TIERS.has(this.item.tier) || this.item.tier === 'external') return;
+			if (!this.loadBytes || this.locked || NO_CONTENT_TIERS.has(this.item.tier) || this.item.tier === 'external') return;
 			if (this.preview.status && this.preview.status !== 'error') return; // allow a click to retry after a failure
 			this.preview = { status: 'loading' };
 			try {
 				const bytes = await this.loadBytes(this.item.index);
 				this.preview = buildPreview(bytes);
-			} catch {
+			} catch (e) {
+				// Was a bare `catch {}` before — silently reverting to the placeholder icon
+				// with zero visibility into why. Surfaced the same way download()'s own catch
+				// already does, so a real failure (wrong-looking key, RPC error, whatever) is
+				// actually diagnosable instead of just "blinks and shows nothing."
 				this.preview = { status: 'error' };
+				this.$q.notify({
+					type: 'negative',
+					message: e?.shortMessage || e?.message || 'Failed to load item preview',
+					position: 'top',
+				});
 			}
 		},
 		async download() {

@@ -171,6 +171,13 @@ export default class Mnemonad {
 	 *   `gatewayUrl`/`pinningUrl`/`pinningJwt`/`ipfsClient` entirely when given
 	 * @param {?Object} [params.signer] - signer used to wrap/unwrap the encryption key
 	 * @param {?Uint8Array} [params.aesKey] - pre-known data key, skips unwrapping
+	 * @param {?string} [params.password] - plaintext password; an alternative to `signer`
+	 *   for wrapping/unwrapping the encryption key. See `MnemonadCrypto`'s constructor doc
+	 *   for the full behavior, including `passwordSalt`/`passwordIterations`.
+	 * @param {?(string|Uint8Array)} [params.passwordSalt] - salt for the password KDF;
+	 *   required to unwrap, generated fresh if omitted when wrapping (see `MnemonadCrypto`).
+	 * @param {?number} [params.passwordIterations] - PBKDF2 iteration count; see
+	 *   `MnemonadCrypto.DEFAULT_PBKDF2_ITERATIONS`.
 	 * @param {?number} [params.maxRPCRequestsPerSecond] - caps outbound RPC calls, queuing
 	 *   the rest rather than firing them all at once. Shared across every instance
 	 *   configured with the same rate on the same chain (see `_getSharedRateLimiter`) — a
@@ -448,7 +455,9 @@ export default class Mnemonad {
 	 * @param {?Uint8Array|Uint8Array[]} [params.array] - initial item(s) to push
 	 * @param {?string} [params.salt] - 0x-prefixed 32-byte hex; random if omitted
 	 * @param {?Uint8Array} [params.meta] - stream-level metadata
-	 * @param {boolean} [params.encrypt=false] - create an encrypted stream
+	 * @param {boolean} [params.encrypt=false] - create an encrypted stream. Requires either
+	 *   `signer` or `password` (see the constructor's params, and `MnemonadCrypto`'s own doc
+	 *   for what each KEK method means for transferability and recovery).
 	 * @param {?Object} [params.options] - transaction options
 	 * @param {?number} [params.options.timeout] - receipt timeout in ms (default 30000)
 	 * @param {?number} [params.options.pollIntervalMs] - receipt poll interval (default 200)
@@ -1130,25 +1139,45 @@ export default class Mnemonad {
 	 * The sha256 an offloaded push of `data` would record in its `Pointer.hash` — i.e. the
 	 * exact value to commit to when prepaying through `MnemonadUploadGateway`.
 	 *
+	 * On an encrypted stream, `data` must already be the final ciphertext — pass
+	 * `{ alreadyEncrypted: true }` and hand this the output of `crypto.encryptItem(plaintext)`
+	 * yourself, then pass that *same* ciphertext (with the *same* option) to `pushExternal`
+	 * so the bytes committed and the bytes uploaded are identical:
+	 *
+	 * ```js
+	 * const ciphertext = await stream.crypto.encryptItem(plaintext);
+	 * const { hash, size } = await stream.offloadCommitment(ciphertext, { alreadyEncrypted: true });
+	 * await gateway.payForUpload(hash, size);
+	 * await stream.pushExternal(ciphertext, { alreadyEncrypted: true });
+	 * ```
+	 *
+	 * This can't be automated inside `offloadCommitment` itself — encrypting here and again
+	 * inside `pushExternal` would draw two different nonces and produce two different
+	 * ciphertexts, defeating the entire point of committing in advance.
+	 *
 	 * @param {Uint8Array} data
+	 * @param {Object} [params={}]
+	 * @param {boolean} [params.alreadyEncrypted=false] - `data` is already the exact
+	 *   ciphertext that will be uploaded; skips the encrypted-stream guard below.
 	 * @returns {Promise<{hash: string, size: number}>} `hash` 0x-prefixed.
-	 * @throws {Error} On an encrypted stream. Not a missing feature — a real impossibility:
-	 *   every encryption draws a fresh nonce, so `push` would produce different ciphertext
-	 *   than any hash computed beforehand, and the registry would find no matching escrow.
-	 *   Committing the plaintext hash instead would look fine and then silently fail to
-	 *   settle, leaving the payment stuck until it expired. Prepaying an encrypted item
-	 *   requires encrypting once and committing to *that* ciphertext, which this call
-	 *   cannot do on the caller's behalf.
+	 * @throws {Error} On an encrypted stream, unless `alreadyEncrypted` is set. Not a missing
+	 *   feature otherwise — a real impossibility: every encryption draws a fresh nonce, so a
+	 *   plaintext `push` would produce different ciphertext than any hash computed
+	 *   beforehand, and the registry would find no matching escrow. Committing the plaintext
+	 *   hash instead would look fine and then silently fail to settle, leaving the payment
+	 *   stuck until it expired.
 	 */
-	async offloadCommitment(data) {
+	async offloadCommitment(data, params = {}) {
 		await this.initialize();
 		// `isEncrypted` is an async method, not a getter — reading it without calling would
 		// be a truthy function reference, i.e. "always encrypted".
-		if (await this.isEncrypted()) {
+		if (!params.alreadyEncrypted && (await this.isEncrypted())) {
 			throw new Error(
 				'offloadCommitment: cannot pre-commit to an encrypted stream\'s payload — ' +
 				'encryption uses a fresh nonce each time, so the ciphertext push() uploads ' +
-				'would not match any hash computed in advance.'
+				'would not match any hash computed in advance. Pre-encrypt yourself and pass ' +
+				'{ alreadyEncrypted: true } with that ciphertext if you\'ve already worked ' +
+				'around this (see this method\'s own doc comment).'
 			);
 		}
 		return { hash: bytesToHex(sha256(data)), size: data.length };
@@ -1205,7 +1234,7 @@ export default class Mnemonad {
 		// chunk threshold, so routing on plaintext size would occasionally be wrong.
 		const items = await this._maybeEncrypt(normalizeArray(arr), params);
 		// Mark the payloads as already-ciphertext so the delegates below don't re-encrypt.
-		params = { ...params, _encrypted: true };
+		params = { ...params, alreadyEncrypted: true };
 
 		if (items.length === 1) {
 			const data = items[0];
@@ -1273,6 +1302,11 @@ export default class Mnemonad {
 	 * Uploads a payload to IPFS and appends a pointer to it.
 	 * @param {Uint8Array} data
 	 * @param {Object} [params={}]
+	 * @param {boolean} [params.alreadyEncrypted=false] - `data` is already ciphertext;
+	 *   skips re-encrypting it. Needed for the prepaid-upload flow on an encrypted stream —
+	 *   see `offloadCommitment`'s own doc for the full sequence — since the exact bytes
+	 *   committed to the gateway have to be the exact bytes uploaded here, and encrypting
+	 *   twice (once per call) would draw two different nonces and break that.
 	 * @returns {Promise<boolean>}
 	 */
 	async pushExternal(data, params = {}) {
@@ -1779,12 +1813,16 @@ export default class Mnemonad {
 	 * difference between a ciphertext blob and a plaintext one.
 	 *
 	 * @param {Uint8Array[]} items
-	 * @param {Object} [params={}] - `_encrypted: true` marks items as already-ciphertext,
-	 *        which is how `push()` avoids double-encrypting when it delegates to a batch.
+	 * @param {Object} [params={}] - `alreadyEncrypted: true` marks items as already-
+	 *        ciphertext. Two callers rely on this: `push()`, avoiding double-encryption when
+	 *        it delegates to a batch, and a caller pre-encrypting to prepay an off-chain
+	 *        upload through the gateway (see `offloadCommitment`'s own doc) — the exact same
+	 *        bytes given to `offloadCommitment({ alreadyEncrypted: true })` must reach here
+	 *        unchanged, or the committed hash and the uploaded ciphertext would diverge.
 	 * @returns {Promise<Uint8Array[]>}
 	 */
 	async _maybeEncrypt(items, params = {}) {
-		if (params._encrypted) return items;
+		if (params.alreadyEncrypted) return items;
 		if (!(this.encKeyWrapped && this.crypto.isEnabled)) return items;
 		const out = [];
 		for (const item of items) out.push(await this.crypto.encryptItem(item));

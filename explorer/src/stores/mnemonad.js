@@ -1,9 +1,11 @@
 import { defineStore } from 'pinia';
 import { getPublicClient, getWalletClient } from '@wagmi/core';
-import Mnemonad, { MnemonadUploadGateway, mnemonadAbi, ids as mnemonadIds } from '@mnemonad';
+import Mnemonad, { MnemonadCrypto, MnemonadUploadGateway, mnemonadAbi, ids as mnemonadIds } from '@mnemonad';
 import { config } from '../wagmi';
 import { getActiveNetwork } from '../settings.js';
 import { useDebugStore } from './debug.js';
+import { useStreamKeysStore } from './streamKeys.js';
+import { encodeStreamMeta } from '../mnemonad/streamMeta.js';
 
 // ids.js keys by contract-key name ('monadTestnet'/'monadMainnet'), settings.js keys by a
 // different name ('testnet'/'mainnet') — matching on chainId instead of threading one
@@ -154,7 +156,11 @@ export const useMnemonadStore = defineStore('mnemonad', {
 		},
 		/**
 		 * @param {Object} [params={}]
-		 * @param {string} [params.name] - optional label, stored as UTF-8 stream metadata
+		 * @param {string} [params.name] - optional label, stored in stream metadata
+		 * @param {string} [params.password] - if given, the stream is created encrypted,
+		 *   password-protected. A fresh salt is generated and stored (in the clear, alongside
+		 *   `name`) in the stream's own metadata — see `streamMeta.js` — so a later reader only
+		 *   needs the password itself, never anything out of band.
 		 * @returns {Promise<Mnemonad>}
 		 */
 		async createStream(params = {}) {
@@ -163,18 +169,48 @@ export const useMnemonadStore = defineStore('mnemonad', {
 			try {
 				const publicClient = getPublicClient(config);
 				const walletClient = await getWalletClient(config);
-				const meta = params.name ? new TextEncoder().encode(params.name) : undefined;
+
+				const password = params.password || null;
+				let meta;
+				let passwordSalt;
+				let passwordIterations;
+				if (password) {
+					passwordSalt = MnemonadCrypto.generatePasswordSalt();
+					passwordIterations = MnemonadCrypto.DEFAULT_PBKDF2_ITERATIONS;
+					meta = encodeStreamMeta({
+						name: params.name || undefined,
+						kek: {
+							method: 'password',
+							salt: MnemonadCrypto.saltToHex(passwordSalt),
+							iterations: passwordIterations,
+						},
+					});
+				} else if (params.name) {
+					meta = encodeStreamMeta({ name: params.name });
+				}
+
 				const stream = await Mnemonad.create({
 					publicClient,
 					walletClient,
 					contractAddress: MNEMONAD_ADDRESS,
 					meta,
+					encrypt: !!password,
+					password: password || undefined,
+					passwordSalt,
+					passwordIterations,
 					maxRPCRequestsPerSecond: MAX_RPC_REQUESTS_PER_SECOND,
 					rpcRetry: RPC_RETRY,
 				});
+
+				if (password) {
+					// Already unwrapped from just having created it — cache it so the creator
+					// isn't immediately re-prompted for the password they just typed.
+					useStreamKeysStore().setKey(stream.id, stream.crypto.getAesKey());
+				}
+
 				// Append locally rather than re-running the whole list — this stream is
 				// known-fresh (just minted), no need to re-fetch it.
-				this.streams.push({ id: stream.id, length: 0, encrypted: false });
+				this.streams.push({ id: stream.id, length: 0, encrypted: !!password });
 				return stream;
 			} finally {
 				this.creating = false;

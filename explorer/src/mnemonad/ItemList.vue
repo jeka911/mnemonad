@@ -18,7 +18,9 @@
 				:load-bytes="loadBytes"
 				:is-loaded="isLoaded"
 				:refresh-token="loadTick"
+				:locked="locked"
 				@view="openView"
+				@unlock="$emit('unlock-requested')"
 			/>
 		</div>
 
@@ -79,7 +81,15 @@ export default {
 			type: Function,
 			default: null,
 		},
+		// True while this is a password-encrypted stream with no key unlocked yet this
+		// session (see Stream.vue's `isLocked`). Passed straight through to each
+		// ItemListItem, which blocks every read (preview/view/download) behind it.
+		locked: {
+			type: Boolean,
+			default: false,
+		},
 	},
+	emits: ['unlock-requested'],
 	data() {
 		return {
 			// The "View as text" popup is shared across all rows (only one can be open at

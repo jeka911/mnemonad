@@ -179,6 +179,13 @@ usable outside component setup:
   (`js/index.d.ts`'s `MnemonadParams.signer`) plus copy explaining the signature prompt and
   that an encrypted stream can never be transferred — real scope, belongs with §8's
   encryption work, not this slice
+
+  > **Shipped differently:** an encryption toggle now exists in `CreateStreamDialog.vue` —
+  > password-based, not the wagmi-signer approach sketched above (see `MnemonadCrypto.js`'s
+  > `password`/`passwordSalt`/`passwordIterations`). `streamMeta` is no longer a plain
+  > UTF-8 name string either — see `explorer/src/mnemonad/streamMeta.js`, which encodes
+  > `{ name?, kek?: { method, salt, iterations } }` as JSON (falling back to treating
+  > non-JSON content as a legacy plain name, so nothing pushed under the old format breaks).
 - Disabled + tooltip when `walletStore.wrongNetwork` is true, same guard the rest of the app
   already uses
 - On success: close dialog, append the new stream to the list, no navigation (no detail page
@@ -429,6 +436,16 @@ Two things to surface in the UI: it triggers a wallet signature prompt (cache th
 key in the store so it happens once per session), and an encrypted stream **cannot be
 transferred**, because the key is bound to the owner.
 
+> **Shipped differently:** the encryption that actually landed is password-based (PBKDF2,
+> not a wallet signature), so there's no signature prompt and it's *not* owner-bound — see
+> `js/README.md`'s Encryption section for the full method-vs-method comparison. The
+> unwrapped key is cached the same way this section anticipated, just in a dedicated
+> `streamKeys.js` Pinia store (in-memory only, deliberately not persisted — a reload
+> re-prompts for the password), rather than piggybacking on the wagmi-signer flow described
+> above. `Stream.vue`/`ItemListItem.vue`/`ItemList.vue` carry the locked-state UI and the
+> password-unlock dialog. The "cannot be transferred" restriction still holds, but
+> unconditionally for *any* KEK method — the contract has no way to tell them apart.
+
 **IPFS writes are the awkward one.** `pinningUrl` + `pinningJwt` in a browser exposes the
 JWT to anyone who opens devtools. A shared demo key would be abuse-bait. So:
 
@@ -452,7 +469,7 @@ who bring a key. Worth being upfront about in the UI copy.
 | 3 | Browse | `ItemList` paginated, `ItemDetail`, `PayloadPreview`, `ChunkTable`. Read-only, no wallet |
 | 4 | Upload | `ItemUploader` with file + text modes, split control, pre-flight panel |
 | 5 | Staged writes | `PushProgress`, per-tx links, resume from `stagingId` |
-| 6 | Encryption + IPFS | encrypt toggle with wagmi signer, gateway reads, optional user JWT |
+| 6 | Encryption + IPFS | encrypt toggle with wagmi signer, gateway reads, optional user JWT — *shipped as a password-based toggle instead; see §8* |
 | 7 | Polish | loading skeletons, empty and error states, reduced-motion, mobile collapse, contrast audit |
 
 Phases 1 to 3 are useful on their own: a working read-only browser for any deployed stream.

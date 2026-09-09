@@ -101,6 +101,11 @@ larger on-chain than its plaintext size — an 8-byte plaintext item, for instan
 though the logical content is tiny. On an encrypted stream, only plaintexts of 5 bytes or
 less (5 + 26 = 31) still land as SLOT; everything else routes to CODE purely from framing.
 
+Framing is identical regardless of *how* the underlying data key got wrapped — two KEK
+(key-encryption-key) methods exist: signer-based (owner-bound, derived from a wallet
+signature) and password-based (PBKDF2-derived, not owner-bound — anyone with the password
+can unwrap). See `js/README.md`'s Encryption section for the full comparison.
+
 ## Everything else
 
 | Term | Meaning |

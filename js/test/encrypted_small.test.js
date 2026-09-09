@@ -394,6 +394,38 @@ describe('offloadCommitment', () => {
 		await expect(ev.offloadCommitment(makeBytes(100, 8))).rejects.toThrow(/encrypted/i);
 	});
 
+	/**
+	 * The `alreadyEncrypted` escape hatch: encrypt once client-side, commit to *that*
+	 * ciphertext, then push it as-is. Proves the whole point of the mechanism — the
+	 * committed hash and the hash `pushExternal` actually records must be identical, or
+	 * gateway settlement would never find a matching escrow.
+	 */
+	it('matches when the caller pre-encrypts and commits to the ciphertext', async () => {
+		const ipfsClient = makeMockIpfs();
+		const ev = await createEncrypted({ ipfsClient });
+		const plaintext = makeBytes(MAX_CHUNK * 2, 8); // oversized, so it routes off-chain
+
+		const ciphertext = await ev.crypto.encryptItem(plaintext);
+		const commitment = await ev.offloadCommitment(ciphertext, { alreadyEncrypted: true });
+		await ev.pushExternal(ciphertext, { alreadyEncrypted: true });
+
+		const pointer = await ev.pointerAt(0);
+		expect(pointer.hash.toLowerCase()).toBe(commitment.hash.toLowerCase());
+		expect(Number(pointer.size)).toBe(commitment.size);
+		expect(Number(pointer.size)).toBe(ciphertext.length);
+		// And it still reads back correctly — pre-encrypting by hand didn't bypass framing.
+		expect(new Uint8Array(await ev.at(0))).toEqual(plaintext);
+	});
+
+	it('still refuses without alreadyEncrypted even if the caller happens to pass ciphertext', async () => {
+		const ev = await createEncrypted();
+		const ciphertext = await ev.crypto.encryptItem(makeBytes(50, 9));
+		// The guard is about the *option*, not about guessing whether `data` looks like
+		// ciphertext — omitting it should still refuse, so a caller can't get lucky/unlucky
+		// depending on what bytes they happened to pass.
+		await expect(ev.offloadCommitment(ciphertext)).rejects.toThrow(/encrypted/i);
+	});
+
 	it('reports the plaintext size and hash on an unencrypted stream', async () => {
 		const { sha256 } = await import('@noble/hashes/sha2.js');
 		const ev = await Mnemonad.create(baseParams());
