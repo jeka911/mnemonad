@@ -226,6 +226,137 @@ describe('item metadata (refs/pointer caching)', () => {
 	});
 });
 
+describe('encrypted items via at()', () => {
+	/**
+	 * `at()` is the only method that actually decrypts (see Mnemonad.js's own comment on
+	 * `_readItemBytes`) — `itemAt().bytes()` never does. Before this, `at()`'s encrypted
+	 * branch read on-chain ciphertext through `stream()`'s frame-by-frame walk, which never
+	 * touched `_chunkCache` at all — every call re-fetched from chain, cache or no cache.
+	 * These prove that gap is closed for on-chain items specifically (EXTERNAL items always
+	 * had the equivalent benefit already, via `readPointerBytes`'s own cache — see below).
+	 */
+	it('a second at() call for the same on-chain encrypted item makes no new RPC call', async () => {
+		const cacheOptions = { namespace: freshNamespace() };
+		const ev = await Mnemonad.create(baseParams({ cacheOptions, encrypt: true, signer: clients.walletClient }));
+		await ev.push(makeBytes(500, 1));
+
+		const first = await ev.at(0); // populates the durable on-chain cache with ciphertext
+
+		// A fresh instance, so this exercises the durable cache rather than any
+		// per-instance memoization (_layouts, _externalCache) that would trivially skip a
+		// repeat call on the SAME instance regardless of whether this fix existed.
+		const fresh = new Mnemonad({ ...baseParams({ cacheOptions }), id: ev.id, signer: clients.walletClient });
+		await fresh.initialize(); // this call's own reads must not count below
+		const calls = await countReadContractCalls(async () => {
+			const second = await fresh.at(0);
+			expect(second).toEqual(first);
+		});
+		expect(calls).toBe(0);
+	});
+
+	it('shares the cache entry with itemAt().bytes() — same key, ciphertext either way', async () => {
+		const cacheOptions = { namespace: freshNamespace() };
+		const ev = await Mnemonad.create(baseParams({ cacheOptions, encrypt: true, signer: clients.walletClient }));
+		const data = makeBytes(200, 2);
+		await ev.push(data);
+
+		// Populate the cache via the NON-decrypting path first.
+		const raw = await (await ev.itemAt(0)).bytes();
+		expect(raw).not.toEqual(data); // ciphertext, as itemAt()/bytes() always returns
+
+		// at(), from a fresh instance, must be served from that SAME cache entry — zero RPC
+		// calls — and still decrypt correctly, proving the two callers really do share one
+		// entry rather than each keeping their own copy.
+		const fresh = new Mnemonad({ ...baseParams({ cacheOptions }), id: ev.id, signer: clients.walletClient });
+		await fresh.initialize(); // this call's own reads must not count below
+		const calls = await countReadContractCalls(async () => {
+			expect(await fresh.at(0)).toEqual(data);
+		});
+		expect(calls).toBe(0);
+	});
+
+	it('a warm refs cache means at() costs zero RPC calls even from a stream that never itemAt()-ed first', async () => {
+		const cacheOptions = { namespace: freshNamespace() };
+		const ev = await Mnemonad.create(baseParams({ cacheOptions, encrypt: true, signer: clients.walletClient }));
+		const data = makeBytes(300, 3);
+		await ev.push(data);
+		await ev.at(0); // warms both the refs cache (getItemRefs) and the payload cache
+
+		const fresh = new Mnemonad({ ...baseParams({ cacheOptions }), id: ev.id, signer: clients.walletClient });
+		await fresh.initialize(); // this call's own reads must not count below
+		const calls = await countReadContractCalls(async () => {
+			expect(await fresh.at(0)).toEqual(data);
+		});
+		// Confirms at() looks up store via the cached getItemRefs, not an uncached raw
+		// itemStore read — otherwise this would show exactly 1 call, not 0.
+		expect(calls).toBe(0);
+	});
+
+	it('a genuinely partial readRange() is still NOT cached — that scope boundary is unchanged', async () => {
+		const cacheOptions = { namespace: freshNamespace() };
+		const ev = await Mnemonad.create(baseParams({ cacheOptions, encrypt: true, signer: clients.walletClient }));
+		const data = makeBytes(500, 4);
+		await ev.push(data);
+
+		await ev.readRange(0, 0, 100); // a genuine sub-range, not the whole item
+
+		const fresh = new Mnemonad({ ...baseParams({ cacheOptions }), id: ev.id, signer: clients.walletClient });
+		const calls = await countReadContractCalls(async () => {
+			await fresh.readRange(0, 0, 100);
+		});
+		// docs/caching.md documents ranged reads as out of scope for caching — this is the
+		// "still true after this change" regression check, not a new guarantee.
+		expect(calls).toBeGreaterThan(0);
+	});
+
+	it('an on-chain item bigger than readPageBytes is not routed through the single-shot cache', async () => {
+		// A cheap stand-in for encrypted_huge.test.js's much slower (4 MB, ~175-tx) coverage
+		// of the same routing decision — this only needs to prove at() picks the paged path
+		// once ciphertext size crosses readPageBytes, not that paging itself works at scale.
+		const cacheOptions = { namespace: freshNamespace() };
+		const readPageBytes = 128; // smaller than this item's ciphertext, on purpose
+		const ev = await Mnemonad.create(
+			baseParams({ cacheOptions, encrypt: true, signer: clients.walletClient, readPageBytes })
+		);
+		const data = makeBytes(500, 5); // ciphertext > 128 bytes, well under maxChunkBytes
+		await ev.push(data);
+		expect(await ev.at(0)).toEqual(data);
+
+		// If this had gone through the single-shot cached path, a second at() from a fresh
+		// instance would cost zero RPC calls, same as the earlier tests in this describe
+		// block. It must not: that path is reserved for items within readPageBytes.
+		const fresh = new Mnemonad({ ...baseParams({ cacheOptions, readPageBytes }), id: ev.id, signer: clients.walletClient });
+		await fresh.initialize();
+		const calls = await countReadContractCalls(async () => {
+			expect(await fresh.at(0)).toEqual(data);
+		});
+		expect(calls).toBeGreaterThan(0);
+	});
+
+	it('EXTERNAL encrypted items are unaffected — still decrypt correctly via at(), still IPFS-cached', async () => {
+		const cacheOptions = { namespace: freshNamespace() };
+		const ipfsClient = makeMockIpfs();
+		const ev = await Mnemonad.create(
+			baseParams({ cacheOptions, ipfsClient, encrypt: true, signer: clients.walletClient })
+		);
+		const data = makeBytes(MAX_CHUNK * 2, 5);
+		await ev.pushExternal(data);
+
+		const fresh = new Mnemonad({
+			publicClient: clients.publicClient,
+			contractAddress,
+			id: ev.id,
+			ipfsClient,
+			cacheOptions,
+			signer: clients.walletClient,
+		});
+		expect(await fresh.at(0)).toEqual(data);
+		// Its own pre-existing cache path, unrelated to this change — proven not to have
+		// regressed by the single whole-payload fetch this expects.
+		expect(ipfsClient.stats.wholeReads).toBe(1);
+	});
+});
+
 describe('off-chain (IPFS) items', () => {
 	it('a second read of the same external item does not hit the transport again', async () => {
 		const cacheOptions = { namespace: freshNamespace() };

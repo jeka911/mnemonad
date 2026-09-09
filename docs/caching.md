@@ -3,7 +3,10 @@
 The SDK caches everything about an item that's immutable once written — its metadata
 (store/tier, size, chunk locations, off-chain pointer) and its payload bytes — so reading the
 same item twice, even from a brand-new `Mnemonad` instance after a page reload, costs zero
-RPC calls once it's been read once.
+RPC calls once it's been read once. This applies equally to an encrypted stream's items —
+what's cached is always the ciphertext, decrypted fresh on every call (see the design rule
+below) — with one size caveat: an on-chain item bigger than `readPageBytes` can't be fetched
+in a single call at all, so it's paged instead and isn't cached (see "What's out of scope").
 
 Implemented in [`js/MnemonadChunkCache.js`](../js/MnemonadChunkCache.js); wired into
 [`js/Mnemonad.js`](../js/Mnemonad.js) and
@@ -23,7 +26,7 @@ IPFS regardless of who caches a copy of it locally.
 
 | What | Where it's cached | Key scheme | Why that scheme |
 |---|---|---|---|
-| On-chain payload | `Mnemonad._readItemBytes` | `onchain:{chainId}:{contractAddress}:{streamId}:{index}` | Location-addressed — nothing on-chain gives a content hash cheaply *before* fetching, unlike an EXTERNAL item's pointer. |
+| On-chain payload | `Mnemonad._readItemBytes` — called by both `MnemonadItem.bytes()` (unencrypted reads) and `Mnemonad.at()` (encrypted reads, ciphertext, within `readPageBytes`) | `onchain:{chainId}:{contractAddress}:{streamId}:{index}` | Location-addressed — nothing on-chain gives a content hash cheaply *before* fetching, unlike an EXTERNAL item's pointer. |
 | Off-chain (IPFS) payload | `MnemonadIpfs.readPointerBytes` | `ipfs:{pointerHash}` | Content-addressed — the pointer's sha256 is already known from the on-chain `Pointer` before ever touching IPFS. |
 | Item refs (tier/size/chunk addresses) | `Mnemonad.getItemRefs` / `getItemRefsBatch` | `refs:{chainId}:{contractAddress}:{streamId}:{index}` | Location-addressed, immutable once committed — append-only; `concat`/`truncateFrom` never mutate an existing item's own record. |
 | EXTERNAL pointer (the CID) | `Mnemonad.pointerAt` | `pointer:{chainId}:{contractAddress}:{streamId}:{index}` | Separate from the payload's own content-addressed key — this is what a caller needs *before* it can even look the payload up. |
@@ -55,11 +58,17 @@ caller goes through the cache normally.
 
 ## What's out of scope
 
-Whole-item bytes only. Partial byte-range reads (`readRange`, and the streaming
-frame-by-frame decrypt path `Mnemonad.at()` uses for huge items) are not cached — caching a
-range would mean coalescing overlapping spans, real complexity this doesn't take on. Reading
-any part of an item still populates the *whole-item* cache the first time it's read in full,
-same as always.
+Whole-item bytes only, and only up to `readPageBytes` (default 512 KB) for an on-chain item —
+`_readItemBytes` is a single, unpaged contract call, and asking it for more than that risks
+the call itself running out of gas, not just holding too much in memory. Above that size,
+`Mnemonad.at()` falls through to the streaming frame-by-frame path (paging via `readRange`),
+same as it did before whole-item on-chain caching existed for encrypted reads — genuinely
+large items were never the target here, since the whole point of framing is to make them
+readable without holding the whole thing in memory to begin with. Partial byte-range reads
+(`readRange`, and `stream(i, {start, len})` for anything narrower than the whole item) are
+not cached either, regardless of size — caching a range would mean coalescing overlapping
+spans, real complexity this doesn't take on. Reading any part of an item still populates the
+*whole-item* cache the first time it's read in full, same as always.
 
 ## Backend: IndexedDB in a browser, an in-memory Map elsewhere
 
@@ -154,3 +163,9 @@ only needs to implement those two.
   the cache is actually consulted — not just that the class works in isolation — by counting
   real `readContract` calls before and after a cache hit, for both on-chain and off-chain
   items, including the zero-RPC-call fully-cached case and the `verifyAvailability` bypass.
+  A dedicated `describe('encrypted items via at()')` block covers the encrypted-on-chain
+  path specifically: cache sharing with the unencrypted path (same key, ciphertext either
+  way), a warm refs cache reducing a repeat `at()` call to zero RPC calls, the
+  `readPageBytes` size cutoff still routing large items to the uncached paged path, and
+  that a genuinely partial `readRange()` still isn't cached — the one true regression check
+  in that list, confirming a documented-as-out-of-scope case didn't quietly change.

@@ -594,6 +594,24 @@ export default class Mnemonad {
 
 	/**
 	 * Reads the item at a zero-based index, decrypting and fetching from IPFS as needed.
+	 *
+	 * On-chain items up to `readPageBytes` go through the same durable chunk cache an
+	 * unencrypted item's `itemAt().bytes()` already uses (`_readItemBytes`) — the cached
+	 * bytes are always pre-decryption ciphertext (see `docs/caching.md`'s own rule for why:
+	 * never cache plaintext), decrypted fresh on every call via `crypto.decryptItem`. Larger
+	 * on-chain items fall through to the paged frame-by-frame path below instead (staying
+	 * uncached — see that path's own comment), since `_readItemBytes`'s single unpaged
+	 * contract call can run out of gas above that size. A *partial* read (`readRange`/
+	 * `stream(i, {start, len})`) isn't cached either way — see those methods' own comments;
+	 * only a genuinely whole-item read within the size threshold benefits.
+	 *
+	 * EXTERNAL items are deliberately NOT routed through this whole-blob cache path: they
+	 * already get the equivalent benefit from `MnemonadIpfs.readPointerBytes`'s own
+	 * content-addressed cache (via `_prefetchExternal`), and staying on the frame-by-frame
+	 * `stream()` path here means one authenticated frame in memory at a time rather than
+	 * committing to a second whole-ciphertext buffer alongside the one `stream()` already
+	 * builds internally.
+	 *
 	 * @param {number} i
 	 * @returns {Promise<Uint8Array>}
 	 */
@@ -601,6 +619,21 @@ export default class Mnemonad {
 		await this.initialize();
 
 		if (this.encKeyWrapped && this.crypto.isEnabled) {
+			// getItemRefs, not a raw itemStore read: refs are already cached (e.g. by a
+			// prior itemAt() — which a list view calls for every row up front, before any
+			// individual at() is ever requested), so this line costs nothing extra once
+			// warm, rather than paying for an uncached store lookup on every single call.
+			const refs = await this.getItemRefs(i);
+			// _readItemBytes is a single, unpaged contract call — safe (and cacheable) for
+			// anything within readPageBytes, same threshold _atRaw uses to decide the same
+			// question for a plaintext item. Above it, a staged item spanning many chunks
+			// can run the call out of gas, so large on-chain items fall through to the
+			// paged frame-by-frame path below, same as before this cache path existed.
+			if (refs.store !== Store.EXTERNAL && refs.size <= this.readPageBytes) {
+				const ciphertext = await this._readItemBytes(i);
+				return await this.crypto.decryptItem(ciphertext);
+			}
+
 			// An off-chain payload is fetched and hash-verified before its layout header is
 			// consulted, so a substituted blob is reported as a hash mismatch rather than
 			// as a confusing format error from a header that was never trustworthy.
@@ -608,7 +641,8 @@ export default class Mnemonad {
 
 			// Stream the frames rather than pulling the whole ciphertext and decrypting in
 			// one go: only one frame is authenticated at a time, and only one buffer of
-			// plaintext is held.
+			// plaintext is held. Also how a large on-chain item (too big to safely fetch in
+			// a single call above) gets paged — readRange, not a raw at() call.
 			const layout = await this._cipherLayout(i);
 			const out = new Uint8Array(layout.plaintextLength);
 			let pos = 0;
@@ -919,8 +953,15 @@ export default class Mnemonad {
 
 	/**
 	 * Fetches and hex-decodes index `i`'s on-chain payload via a single `at()` contract
-	 * read. Internal — called by `MnemonadItem.bytes()` to lazily fetch what `itemAt()`
-	 * deliberately left unset. Not for external/off-chain items.
+	 * read. Two callers: the *stream method* `at()` above, and `MnemonadItem.bytes()`
+	 * (lazily fetching what `itemAt()` deliberately left unset). Not for external/off-chain
+	 * items. Returns whatever is actually stored on-chain, verbatim — ciphertext on an
+	 * encrypted stream — since this method has no opinion on encryption at all; that's
+	 * exactly why the two callers can share one cache entry per index. `Mnemonad.at()`
+	 * decrypts what comes back before returning it; `MnemonadItem.bytes()` never does
+	 * (see its own file — only `at()`/`readRange()`/`stream()` decrypt anywhere in this
+	 * SDK), so a caller reaching an encrypted item through `itemAt().bytes()` instead of
+	 * `at()` gets ciphertext back, on purpose, not a bug.
 	 * @param {number} i
 	 * @returns {Promise<Uint8Array>}
 	 */
