@@ -77,7 +77,7 @@ Single quotes for strings, semicolons, in JS/TS/Vue — see any existing file in
 
 ## Status
 
-Test MVP, **live on Monad testnet** (not mainnet). 113 Solidity + 153 SDK + 15 server tests
+Test MVP, **live on Monad testnet** (not mainnet). 113 Solidity + 306 SDK + 15 server tests
 passing. Current deployment is recorded in [`js/ids.js`](js/ids.js) — the deploy scripts
 write it there, and the gateway address is read from the registry rather than recorded, so
 the two cannot disagree.

@@ -129,8 +129,11 @@ describe('on-chain items', () => {
 		await (await ev.itemAt(0)).bytes();
 
 		// Two distinct cache entries for one item: refs (consulted by itemAt, via
-		// getItemRefs) and payload bytes (consulted by .bytes(), via _readItemBytes) —
-		// different keys, so a hit on one never masks a miss on the other.
+		// getItemRefs) and payload bytes (consulted by .bytes() — which delegates to
+		// at()/_atRaw, reusing the refs itemAt() already fetched rather than asking again,
+		// then reaching _readItemBytes for the payload itself) — different keys, so a hit
+		// on one never masks a miss on the other, and the refs lookup itself only ever
+		// happens once per item regardless of how many times .bytes() is called.
 		expect(seen.get).toHaveLength(2);
 		expect(seen.set).toHaveLength(2);
 		expect(new Set(seen.get)).toEqual(new Set(seen.set)); // same two keys, read and written
@@ -254,19 +257,21 @@ describe('encrypted items via at()', () => {
 		expect(calls).toBe(0);
 	});
 
-	it('shares the cache entry with itemAt().bytes() — same key, ciphertext either way', async () => {
+	it('shares the cache entry with itemAt().bytes() — both decrypt, from one cached ciphertext', async () => {
 		const cacheOptions = { namespace: freshNamespace() };
 		const ev = await Mnemonad.create(baseParams({ cacheOptions, encrypt: true, signer: clients.walletClient }));
 		const data = makeBytes(200, 2);
 		await ev.push(data);
 
-		// Populate the cache via the NON-decrypting path first.
-		const raw = await (await ev.itemAt(0)).bytes();
-		expect(raw).not.toEqual(data); // ciphertext, as itemAt()/bytes() always returns
+		// Populate the cache via itemAt().bytes() first — MnemonadItem.bytes() delegates
+		// to at() (see MnemonadItem.js's own doc), so this decrypts correctly too, not
+		// just at() itself.
+		const viaItem = await (await ev.itemAt(0)).bytes();
+		expect(new Uint8Array(viaItem)).toEqual(data);
 
-		// at(), from a fresh instance, must be served from that SAME cache entry — zero RPC
-		// calls — and still decrypt correctly, proving the two callers really do share one
-		// entry rather than each keeping their own copy.
+		// at(), from a fresh instance, must be served from that SAME durable ciphertext
+		// cache entry — zero RPC calls — and still decrypt correctly, proving the two
+		// call sites really do share one entry rather than each keeping their own copy.
 		const fresh = new Mnemonad({ ...baseParams({ cacheOptions }), id: ev.id, signer: clients.walletClient });
 		await fresh.initialize(); // this call's own reads must not count below
 		const calls = await countReadContractCalls(async () => {
@@ -355,6 +360,51 @@ describe('encrypted items via at()', () => {
 		// regressed by the single whole-payload fetch this expects.
 		expect(ipfsClient.stats.wholeReads).toBe(1);
 	});
+
+	/**
+	 * The actual motivation for MnemonadItem.bytes() delegating to at() (see its own doc):
+	 * before, isItemLoaded — driven entirely by MnemonadItem.isLoaded, i.e. whether
+	 * .bytes() has ever been called on it — could only ever be true for an item read
+	 * through itemAt().bytes(), which never decrypted. An encrypted item read through
+	 * at() instead (the only path that actually decrypts) left the SDK's own tracking
+	 * permanently false, forcing a caller to track "loaded" separately per encryption
+	 * status. Proven here for both on-chain and external, since the delegation applies to
+	 * both branches of MnemonadItem.bytes() identically.
+	 */
+	it('isItemLoaded reflects an encrypted on-chain item the same way as an unencrypted one', async () => {
+		const cacheOptions = { namespace: freshNamespace() };
+		const ev = await Mnemonad.create(baseParams({ cacheOptions, encrypt: true, signer: clients.walletClient }));
+		const data = makeBytes(200, 30);
+		await ev.push(data);
+
+		const item = await ev.itemAt(0);
+		expect(item.isLoaded).toBe(false);
+		expect(ev.isItemLoaded(0)).toBe(false);
+
+		const decrypted = await item.bytes();
+		expect(new Uint8Array(decrypted)).toEqual(data);
+		expect(item.isLoaded).toBe(true);
+		expect(ev.isItemLoaded(0)).toBe(true); // the SDK's own tracking — no caller-side workaround
+	});
+
+	it('isItemLoaded reflects an encrypted EXTERNAL item the same way too', async () => {
+		const cacheOptions = { namespace: freshNamespace() };
+		const ipfsClient = makeMockIpfs();
+		const ev = await Mnemonad.create(
+			baseParams({ cacheOptions, ipfsClient, encrypt: true, signer: clients.walletClient })
+		);
+		const data = makeBytes(MAX_CHUNK * 2, 31);
+		await ev.pushExternal(data);
+
+		const item = await ev.itemAt(0);
+		expect(item.isLoaded).toBe(false);
+		expect(ev.isItemLoaded(0)).toBe(false);
+
+		const decrypted = await item.bytes();
+		expect(new Uint8Array(decrypted)).toEqual(data);
+		expect(item.isLoaded).toBe(true);
+		expect(ev.isItemLoaded(0)).toBe(true);
+	});
 });
 
 describe('off-chain (IPFS) items', () => {
@@ -420,6 +470,90 @@ describe('off-chain (IPFS) items', () => {
 			cacheOptions,
 		});
 		await expect((await fresh.itemAt(0)).bytes()).rejects.toThrow(/hash mismatch/);
+	});
+});
+
+describe('_readRangeRaw no longer re-fetches itemStore per frame', () => {
+	/**
+	 * `_readRangeRaw` used to call the raw, uncached `itemStore` contract function on
+	 * every invocation — and `stream()` calls it once per frame for an encrypted item, so
+	 * downloading one large external+encrypted item burned one `itemStore` RPC call per 64
+	 * KiB frame (confirmed live: a ~100 KB item logged a couple dozen `itemStore` calls in
+	 * the explorer's own RPC panel). An item's tier never changes once committed, so this
+	 * now goes through the already-cached `getItemRefs` instead — proven here by counting
+	 * the raw `itemStore` function specifically, not just any RPC call.
+	 */
+	it('a multi-frame external+encrypted item makes zero raw itemStore calls, and getItemRefs at most once', async () => {
+		const cacheOptions = { namespace: freshNamespace() };
+		const ipfsClient = makeMockIpfs();
+		const ev = await Mnemonad.create(
+			baseParams({ cacheOptions, ipfsClient, encrypt: true, signer: clients.walletClient })
+		);
+		const data = makeBytes(200_000, 20); // several 64 KiB frames' worth
+		await ev.pushExternal(data);
+
+		const fresh = new Mnemonad({
+			publicClient: clients.publicClient,
+			contractAddress,
+			id: ev.id,
+			ipfsClient,
+			cacheOptions,
+			signer: clients.walletClient,
+		});
+
+		let itemStoreCalls = 0;
+		let getItemRefsCalls = 0;
+		const original = clients.publicClient.readContract.bind(clients.publicClient);
+		clients.publicClient.readContract = async (args) => {
+			if (args.functionName === 'itemStore') itemStoreCalls++;
+			if (args.functionName === 'getItemRefs') getItemRefsCalls++;
+			return original(args);
+		};
+		let result;
+		try {
+			result = await fresh.at(0);
+		} finally {
+			clients.publicClient.readContract = original;
+		}
+
+		expect(result).toEqual(data);
+		expect(itemStoreCalls).toBe(0);
+		// The real regression this guards: refs threaded through explicitly (stream()'s own
+		// single lookup, passed into every _readRangeRaw/_cipherLayout/_prefetchExternal
+		// call for the whole generator) rather than each frame re-deriving it — even via
+		// getItemRefs' own cache, whose write is fire-and-forget and can't be trusted to
+		// have landed before the very next sequential call asks again (observed for real in
+		// a browser's IndexedDB backend; this in-memory backend wouldn't reproduce that race
+		// on its own, which is exactly why this asserts the call COUNT, not just correctness).
+		expect(getItemRefsCalls).toBe(1);
+	});
+
+	it('a multi-page on-chain item (unencrypted) makes zero raw itemStore calls either', async () => {
+		// _atRaw hits the same fixed function — worth covering the unencrypted path too,
+		// since it's a different call site with the same fix applied.
+		const cacheOptions = { namespace: freshNamespace() };
+		const readPageBytes = 512; // force _atRaw's paged branch on a small item
+		const ev = await Mnemonad.create(baseParams({ cacheOptions, readPageBytes }));
+		const data = makeBytes(1500, 21);
+		await ev.push(data);
+
+		const fresh = new Mnemonad({ ...baseParams({ cacheOptions, readPageBytes }), id: ev.id });
+
+		let itemStoreCalls = 0;
+		const original = clients.publicClient.readContract.bind(clients.publicClient);
+		clients.publicClient.readContract = async (args) => {
+			if (args.functionName === 'itemStore') itemStoreCalls++;
+			return original(args);
+		};
+		let result;
+		try {
+			result = await fresh.at(0);
+		} finally {
+			clients.publicClient.readContract = original;
+		}
+
+		expect(result).toEqual(data);
+		expect(itemStoreCalls).toBe(0);
 	});
 });
 

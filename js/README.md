@@ -8,7 +8,7 @@ protects stored data.
 
 See the root [`README.md`](../README.md) for how the pieces fit together.
 
-Status: **test MVP.** 153 passing tests against a local node (plus an opt-in suite against
+Status: **test MVP.** 306 passing tests against a local node (plus an opt-in suite against
 a real Pinata account). Not published; live on Monad testnet, not mainnet.
 
 
@@ -27,8 +27,12 @@ A few methods worth knowing about, beyond `push()` / `at()` / `length`:
   multi-transaction path for `{ onChain: true }` on an oversized item (modeled — the true
   per-call gas can't be simulated without spending it, since `appendChunk`/`commitItem` each
   need a `stagingId` that only exists once a prior transaction has landed), or an
-  IPFS-backed estimate when a transport is configured. Its result carries
-  `transactionCount`, which is `1` except on the staged path
+  IPFS-backed estimate when a transport is configured. Encrypts first on an encrypted
+  stream with a usable key, exactly like `push()` does, since the ~28-byte AES-GCM framing
+  overhead can flip which of those routes actually applies, not just its price. Its result
+  carries `transactionCount`, which is `1` except on the staged path
+- `quoteOffloadUpload()` — MON needed to prepay the wired upload gateway for an off-chain
+  payload of a given size, before ever committing to it; `null` if no gateway is wired
 - `Mnemonad.listOwned(publicClient, contractAddress, owner)` — static; every stream `owner`
   currently holds, via the registry's `ERC721Enumerable` index rather than an off-chain scan
 - `maxRPCRequestsPerSecond` — caps outbound RPC calls, queuing the rest instead of firing
@@ -69,12 +73,31 @@ chain, never hardcoded.
 | ≤ 31 bytes | `SLOT` | One packed storage slot. |
 | 32 bytes – `maxChunkBytes` | `CODE` | Deployed as contract code. ~2.5× cheaper per byte than storage, ~44× cheaper to read. |
 | larger, `{ onChain: true }` | `CODE` × N | Staged across several transactions. |
-| larger, IPFS configured | `EXTERNAL` | Only a CID + hash on-chain. |
+| larger, IPFS configured | `EXTERNAL` | Only a CID + hash on-chain — prepaid through a wired gateway automatically, if one exists (see "Prepaying an off-chain upload is automatic" below). |
 
 ```javascript
 // Force a large item on-chain instead of offloading it
 await ev.push(bigPayload, { onChain: true });
 ```
+
+Both multi-step paths report progress the same way — `onProgress` is silent for anything
+that's just one transaction:
+
+```javascript
+await ev.push(bigPayload, {
+  onChain: true, // staged: fires once per beginItem/appendChunk/commitItem
+  onProgress: ({ phase, chunkIndex, chunkCount }) => {
+    // phase: 'begin' | 'chunk' | 'commit' (staged)
+    //      | 'gateway-pay' | 'gateway-upload' (off-chain, gateway-prepaid)
+    console.log(`${phase}: ${chunkIndex}/${chunkCount}`);
+  },
+});
+```
+
+Only called for the staged path — a single-transaction push has nothing to report progress
+on. There is no resume support yet: `appendChunk` validates its offset on-chain, which is
+what would make resuming a failed upload safe, but nothing currently persists the staging
+id across a failure to make use of that.
 
 ## Batching matters
 
@@ -143,6 +166,24 @@ skipping unwrapping entirely. It's how a second party reads without either crede
 is no delegation otherwise in v1) and how a UI caches an already-unlocked key for the rest of
 a session without re-deriving it on every read.
 
+A UI commonly doesn't have the password up front, though — a stream loads read-only first
+(no `password`/`aesKey` at all), and only later does a "enter password" prompt supply one.
+`unlockWithPassword(password, { passwordSalt, passwordIterations })` handles that sequence
+in place on an already-constructed instance: derive, verify (a wrong password throws — the
+wrapped key's GCM tag fails to check out, rather than silently unwrapping garbage), and
+adopt the key, so every read through that same instance decrypts from then on:
+
+```javascript
+const ev = new Mnemonad({ publicClient, contractAddress, id }); // no password yet
+await ev.at(0); // ciphertext — nothing to decrypt with
+
+const aesKey = await ev.unlockWithPassword(userTypedPassword, {
+    passwordSalt: knownSalt,          // wherever a reader keeps this — typically the
+    passwordIterations: knownIterations, // stream's own cleartext metadata
+});
+await ev.at(0); // plaintext, from here on
+```
+
 ### Framed ciphertext
 
 Each item is encrypted as a sequence of independently-decryptable 64 KiB frames rather than
@@ -182,13 +223,34 @@ Limitations to know:
   blocks it unconditionally — `isEncrypted()` only checks whether a wrapped key exists at
   all, not which method produced it. Lifting this needs the propose/accept rewrap flow,
   which is **not in v1**.
-- **Prepaying an off-chain upload needs one extra step.** `offloadCommitment(data)` throws
-  on an encrypted stream by default — every encryption draws a fresh nonce, so a hash
-  computed over plaintext in advance would never match the ciphertext `push()` actually
-  uploads, and the registry would find no matching escrow. Encrypt once yourself and commit
-  to *that* ciphertext instead:
+- **Prepaying an off-chain upload is automatic through `push()`.** For an item too big for
+  one transaction with no `{ onChain: true }`, `push()` prepays through the registry's
+  wired upload gateway before uploading — encrypting first if the stream is encrypted, all
+  internally. A caller never encrypts, hashes, or pays anything itself:
 
   ```javascript
+  await ev.push(bigPayload); // encrypts (if needed), pays the gateway (if one is wired),
+                              // uploads, and commits the pointer — one call
+  ```
+
+  This is required, not just convenient, whenever the offloading provider is a
+  `MnemonadPresignProvider`: its sign server unconditionally refuses to issue an upload URL
+  without a matching escrow already open (see `presign-server/src/routes/uploadUrl.js`).
+  Pass `{ payGateway: false }` to skip this and pay the registry's flat EXTERNAL fee
+  instead — only useful with a provider that doesn't itself require a paid escrow.
+
+  `pushExternal`/`offloadCommitment` are still there as the low-level primitives, for a
+  caller that wants explicit control over the commit/pay/upload sequence — e.g. showing a
+  price quote before committing, via `ev.quoteOffloadUpload(size)` (`null` when no gateway
+  is wired at all; rejects, same as the gateway's own `quote()`, when one is wired but
+  can't currently price a stale/uncertain oracle). On an encrypted stream, calling
+  `offloadCommitment`/`pushExternal` directly still needs the same one extra step `push()`
+  does automatically: encrypt first, then commit to *that* ciphertext, since every
+  encryption draws a fresh nonce and a hash computed over plaintext in advance would never
+  match what actually gets uploaded.
+
+  ```javascript
+  const quote = await ev.quoteOffloadUpload(plaintext.length); // show this before committing
   const ciphertext = await ev.crypto.encryptItem(plaintext);
   const { hash, size } = await ev.offloadCommitment(ciphertext, { alreadyEncrypted: true });
   await gateway.payForUpload(hash, size);
@@ -392,16 +454,27 @@ items", "a lot of bytes" and "more bytes than one call can return" break in unre
 
 | Suite | Chunk ceiling | Covers |
 |---|---|---|
-| `base.test.js` | 2 KB (small, so the staged path is cheap to reach) | Tiers, packing, staged append, concat, truncate, burn, fees, access control |
-| `large_data.test.js` | 24 KB (realistic) | 1 MB staged on-chain across 44 chunks, 16 MB via IPFS, 60-item packed batch, 128-slot page boundary |
+| `base.test.js` | 2 KB (small, so the staged path is cheap to reach) | Tiers, packing, staged append, concat, truncate, burn, fees, access control, `estimatePushCost` (including its encrypt-first routing) |
+| `large_data.test.js` | 24 KB (realistic) | 1 MB staged on-chain across 44 chunks, 16 MB via IPFS, 60-item packed batch, 128-slot page boundary, staged-push `onProgress` |
 | `huge_data.test.js` | 24 KB | 4 MB on-chain — past what one-shot reads can serve; paged reads and `readRange` slicing |
 | `encrypted_small.test.js` | 2 KB | Key wrap/unwrap, per-stream derivation, wrong-signer rejection, nonce uniqueness, GCM tamper detection, tier crossings caused by the 26-byte framing overhead, every write path encrypting |
+| `encrypted_password.test.js` | 2 KB | The password KEK method alongside `encrypted_small.test.js`'s signature one: derivation, salt/iteration handling, `unlockWithPassword` (fresh instance, wrong password, wrong salt, no wrapped key), every write path still encrypting |
 | `encrypted_large.test.js` | 24 KB | 256 KB staged encrypted, 1 MB encrypted via IPFS, chunk boundaries crossed by overhead alone |
 | `encrypted_huge.test.js` | 24 KB | 4 MB encrypted — partial decryption, streaming, frame-integrity (reorder/truncation), ranged off-chain reads, 8 MB via IPFS |
 | `mixed_tiers.test.js` | 2 KB | SLOT + CODE + multi-chunk + EXTERNAL interleaved in one stream: per-tier dispatch of `at`/`readRange`/`getItemRefs`, `binaryLength` across tiers, concat preserving tiers, and the same encrypted |
+| `item_refs_batch.test.js` | 2 KB | `getItemRefsBatch`/`itemsAt` — matches N individual calls (order-preserving), collapses into exactly one client call, skips already-cached indices |
 | `list_owned.test.js` | 2 KB | `Mnemonad.listOwned()` — empty case, multiple streams, cross-owner isolation, reflecting a transfer |
 | `rate_limiter.test.js` | n/a | `MnemonadRateLimiter` — no-op default, throttling and FIFO ordering, `wrapClient`, and the constructor's `maxRPCRequestsPerSecond` sharing one budget across instances |
+| `rate_limiter_retry.test.js` | n/a | The retry half of `MnemonadRateLimiter` — backoff schedule asserted with injected timing, not real waits |
+| `shared_contract_constants.test.js` | default | `CONTRACT_VERSION`/`maxChunkBytes` read once per chain+contract, not once per `Mnemonad` instance |
 | `custom_offloading_provider.test.js` | 2 KB | A from-scratch `MnemonadOffloadingProvider` subclass, unrelated to `MnemonadIpfs` — proves `offloadingProvider` wiring, a non-standard `codec`, oversized-push routing, and the inherited `_verify` hash check all work for a genuinely third-party provider, not just the SDK's own |
+| `push_external_auto.test.js` | 2 KB | `push()`'s automatic gateway-payment for an oversized off-chain item (`_pushExternalAuto`) against a real deployed `MnemonadUploadGateway` — encrypt-then-commit ordering, `onProgress`, `{ payGateway: false }`, the no-gateway-wired fallback, and `quoteOffloadUpload` |
+| `upload_gateway_chain.test.js` | n/a | Regression: the `chain` field reaching viem correctly on a gateway write (`undefined` vs `null` vs an explicit chain mean three different things to viem) |
+| `write_gas_estimate.test.js` | n/a | Regression: `_write` always supplies an explicit, simulation-derived `gas` limit rather than trusting a connected wallet's own estimate |
+| `chunk_cache.test.js` | n/a | Pure unit tests of `MnemonadChunkCache` itself against both backends (in-memory `Map` and a real IndexedDB via `fake-indexeddb`) — no chain, no node |
+| `chunk_cache_wiring.test.js` | 2 KB | Proves the chunk cache is actually consulted end to end against a real node — on-chain and off-chain payloads, encrypted items via `at()`, the `readPageBytes` size cutoff, and that a genuinely partial `readRange()` stays uncached |
+| `cache_is_safe.test.js` | 2 KB | The chunk cache's one hard invariant: never holds decrypted plaintext for an encrypted stream, across every tier and both read paths (`at()` and `itemAt().bytes()`) |
+| `rpc_recorder.test.js` | n/a | `MnemonadRpcRecorder` — opt-in (`debug: true`) call log/count backing the explorer's RPC panel: pending-then-settled notifications, cross-instance sharing, the 2000-entry cap |
 
 Note what large-data testing **cannot** cover locally: EDR enforces EIP-170's 24,576-byte
 code limit, so a single chunk never exceeds ~24 KB here. Monad allows 128 KB. Chunk count

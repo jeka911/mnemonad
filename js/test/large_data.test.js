@@ -125,6 +125,53 @@ describe('staged on-chain append of large items', () => {
 		expect(new Uint8Array(await ev.at(2))).toEqual(small);
 	}, 120_000);
 
+	it('reports progress once per beginItem/appendChunk/commitItem', async () => {
+		const ev = await Mnemonad.create(baseParams());
+		// Small enough to stay fast (a handful of chunks), big enough to genuinely stage.
+		const size = MAX_CHUNK * 3 + 500;
+		const data = makeBytes(size, 5);
+		const expectedChunks = Math.ceil(size / MAX_CHUNK);
+
+		const events = [];
+		await ev.push(data, { onChain: true, onProgress: (info) => events.push(info) });
+
+		expect(events.length).toBe(1 + expectedChunks + 1); // begin + N chunks + commit
+		expect(events[0]).toEqual({ phase: 'begin', chunkIndex: 0, chunkCount: expectedChunks });
+		for (let i = 0; i < expectedChunks; i += 1) {
+			expect(events[1 + i]).toEqual({ phase: 'chunk', chunkIndex: i + 1, chunkCount: expectedChunks });
+		}
+		expect(events[events.length - 1]).toEqual({
+			phase: 'commit',
+			chunkIndex: expectedChunks,
+			chunkCount: expectedChunks,
+		});
+
+		expectSameBytes(new Uint8Array(await ev.at(0)), data);
+	}, 60_000);
+
+	it('never lets a throwing onProgress break the upload', async () => {
+		const ev = await Mnemonad.create(baseParams());
+		const data = makeBytes(MAX_CHUNK * 2 + 100, 6);
+
+		await ev.push(data, {
+			onChain: true,
+			onProgress: () => {
+				throw new Error('a badly-written callback should not matter');
+			},
+		});
+
+		expectSameBytes(new Uint8Array(await ev.at(0)), data);
+	}, 60_000);
+
+	it('onProgress is never called for a single-transaction push', async () => {
+		const ev = await Mnemonad.create(baseParams());
+		let called = false;
+
+		await ev.push(makeBytes(50, 7), { onProgress: () => { called = true; } });
+
+		expect(called).toBe(false);
+	});
+
 	it('rejects a mid-stage retry at a stale offset', async () => {
 		// Staging offsets are checked on-chain, which is what makes a retry after a
 		// timeout idempotent instead of appending the same chunk twice. Exercised here

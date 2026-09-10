@@ -4,8 +4,8 @@ Solidity implementation of Mnemonad for Monad. See the root [`README.md`](../REA
 how the contracts, SDK, explorer and presign server fit together.
 
 Status: **live on Monad testnet**, not mainnet. Registry v2 at
-`0xbea34c1500832dc0dbf1402d8c15c1cf720d0ad2`, `MnemonadUploadGateway` at
-`0xD1BAe7c151A8DF2b3f5B9D3DBb41c168B7606ED9` (recorded in [`../js/ids.js`](../js/ids.js);
+`0x51f0b9ec54f6c533ba3d9ecb78cca7c502104e05`, `MnemonadUploadGateway` at
+`0x479B04c301EcB6Ec2a039F845a919232E0E3Ac6d` (recorded in [`../js/ids.js`](../js/ids.js);
 the gateway address is read from the registry rather than recorded, so the two cannot
 disagree). 113 unit tests passing.
 

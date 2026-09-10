@@ -14,10 +14,15 @@ Implemented in [`js/MnemonadChunkCache.js`](../js/MnemonadChunkCache.js); wired 
 
 ## The one rule that decides the whole design
 
-**It stores bytes exactly as fetched from chain or IPFS, before any decryption.** Both call
-sites hand it pre-decryption bytes — ciphertext for an encrypted stream, plaintext for an
-unencrypted one — and `Mnemonad.at()` decrypts one layer above either. Caching post-decryption
-plaintext would mean decrypted content sitting in local storage (IndexedDB, specifically)
+**It stores bytes exactly as fetched from chain or IPFS, before any decryption.** Every read
+that populates it hands it pre-decryption bytes — ciphertext for an encrypted stream,
+plaintext for an unencrypted one — and `Mnemonad.at()` decrypts one layer above, on every
+call, never storing the result. `MnemonadItem.bytes()` delegates to `at()` for its own actual
+content (see `MnemonadItem.js`'s own doc) rather than reading the cache directly, so this
+holds regardless of which of the two a caller reaches for — the only thing `MnemonadItem`
+caches itself is the *decrypted* result, in memory, on that one instance (see `isLoaded`
+below), never in the durable cache this file describes. Caching post-decryption plaintext
+durably would mean decrypted content sitting in local storage (IndexedDB, specifically)
 indefinitely, which is exactly the exposure encrypting a stream is meant to avoid. Caching the
 as-stored bytes changes nothing security-wise: that data is already public on-chain or on
 IPFS regardless of who caches a copy of it locally.
@@ -26,7 +31,7 @@ IPFS regardless of who caches a copy of it locally.
 
 | What | Where it's cached | Key scheme | Why that scheme |
 |---|---|---|---|
-| On-chain payload | `Mnemonad._readItemBytes` — called by both `MnemonadItem.bytes()` (unencrypted reads) and `Mnemonad.at()` (encrypted reads, ciphertext, within `readPageBytes`) | `onchain:{chainId}:{contractAddress}:{streamId}:{index}` | Location-addressed — nothing on-chain gives a content hash cheaply *before* fetching, unlike an EXTERNAL item's pointer. |
+| On-chain payload | `Mnemonad._readItemBytes` — the shared small-item fast path both `Mnemonad.at()` and `_atRaw()` (its unencrypted fallback) call into, within `readPageBytes`. `MnemonadItem.bytes()` reaches it only indirectly, by delegating to `at()` | `onchain:{chainId}:{contractAddress}:{streamId}:{index}` | Location-addressed — nothing on-chain gives a content hash cheaply *before* fetching, unlike an EXTERNAL item's pointer. |
 | Off-chain (IPFS) payload | `MnemonadIpfs.readPointerBytes` | `ipfs:{pointerHash}` | Content-addressed — the pointer's sha256 is already known from the on-chain `Pointer` before ever touching IPFS. |
 | Item refs (tier/size/chunk addresses) | `Mnemonad.getItemRefs` / `getItemRefsBatch` | `refs:{chainId}:{contractAddress}:{streamId}:{index}` | Location-addressed, immutable once committed — append-only; `concat`/`truncateFrom` never mutate an existing item's own record. |
 | EXTERNAL pointer (the CID) | `Mnemonad.pointerAt` | `pointer:{chainId}:{contractAddress}:{streamId}:{index}` | Separate from the payload's own content-addressed key — this is what a caller needs *before* it can even look the payload up. |
@@ -169,3 +174,12 @@ only needs to implement those two.
   `readPageBytes` size cutoff still routing large items to the uncached paged path, and
   that a genuinely partial `readRange()` still isn't cached — the one true regression check
   in that list, confirming a documented-as-out-of-scope case didn't quietly change.
+- Safety tests (`js/test/cache_is_safe.test.js`) prove the "one rule" above holds in
+  practice, not just in the wiring above — the previous two files each prove a narrower
+  thing (a hit skips the network; the class works in isolation) that would both stay green
+  even if plaintext leaked into the cache. This file reaches directly into the cache
+  backend after real reads, across every tier (SLOT, CODE, EXTERNAL) and both call sites
+  that populate it (`at()` and `itemAt().bytes()`), and scans every entry byte-for-byte
+  against every plaintext that went in — plus a deliberate control case on an *unencrypted*
+  stream, where the same scan is expected to find a match, proving the technique itself
+  isn't vacuously passing.

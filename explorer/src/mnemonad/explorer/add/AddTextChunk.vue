@@ -31,9 +31,9 @@
 </template>
 
 <script>
-import GradientButton from '../components/GradientButton.vue';
-import { formatBytes } from '../includes/formatBytes.js';
-import { formatMon } from '../includes/formatMon.js';
+import GradientButton from '../../../components/GradientButton.vue';
+import { formatBytes } from '../../../includes/formatBytes.js';
+import { formatMon } from '../../../includes/formatMon.js';
 
 /** Wait for typing to pause before spending an RPC round-trip on an estimate. */
 const ESTIMATE_DEBOUNCE_MS = 500;

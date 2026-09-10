@@ -5,6 +5,7 @@ import MnemonadCrypto from './MnemonadCrypto.js';
 import MnemonadRateLimiter from './MnemonadRateLimiter.js';
 import { wrapClientForRecording } from './MnemonadRpcRecorder.js';
 import MnemonadChunkCache from './MnemonadChunkCache.js';
+import MnemonadUploadGateway from './MnemonadUploadGateway.js';
 import { mnemonadAbi } from './abi.js';
 import ids from './ids.js';
 
@@ -350,6 +351,49 @@ export default class Mnemonad {
 		return !!(this.encKeyWrapped && this.encKeyWrapped.length > 0);
 	}
 
+	/**
+	 * Unlocks a password-encrypted stream in place: derives the key-encryption key from
+	 * `password` (plus `passwordSalt`/`passwordIterations`, which the caller must already
+	 * know — a password KEK is never owner-bound, so these have to be public for *any*
+	 * reader to reproduce it; a typical caller keeps them alongside the stream's own
+	 * cleartext metadata), unwraps `encKeyWrapped`, and adopts the resulting data key on
+	 * `this.crypto` — every read through this instance decrypts from this point on, with
+	 * no separate `setAesKey` call needed.
+	 *
+	 * A wrong password is caught here, not left to surface confusingly later:
+	 * `unwrapAesKey`'s AES-GCM tag check is itself the validity check (see its own doc), so
+	 * a bad password throws immediately rather than silently adopting garbage.
+	 *
+	 * Not a client concern: this exists so a caller (a UI's "enter password" dialog, most
+	 * commonly) never has to construct its own throwaway `MnemonadCrypto` or reach into
+	 * `this.crypto` directly just to unlock — same reasoning `push()` owns encryption
+	 * rather than leaving it to the caller (see that method's own doc).
+	 *
+	 * @param {string} password
+	 * @param {Object} [params={}]
+	 * @param {(string|Uint8Array)} params.passwordSalt
+	 * @param {?number} [params.passwordIterations]
+	 * @returns {Promise<Uint8Array>} the unwrapped data key — the same value
+	 *   `this.crypto.getAesKey()` returns from now on, handed back so a caller can also
+	 *   cache it (e.g. a per-session key store) without a second read.
+	 * @throws {Error} If this stream has no wrapped key at all, or the password is wrong.
+	 */
+	async unlockWithPassword(password, params = {}) {
+		await this.initialize();
+		if (!this.encKeyWrapped || !this.encKeyWrapped.length) {
+			throw new Error('unlockWithPassword: this stream has no wrapped key to unlock');
+		}
+		const crypto = new MnemonadCrypto({
+			mnemonad: this,
+			password,
+			passwordSalt: params.passwordSalt,
+			passwordIterations: params.passwordIterations,
+		});
+		const aesKey = await crypto.unwrapAesKey(this.encKeyWrapped);
+		this.crypto.setAesKey(aesKey);
+		return aesKey;
+	}
+
 	// -----------------------------------------------------------------------------
 	// Creation
 	// -----------------------------------------------------------------------------
@@ -594,16 +638,20 @@ export default class Mnemonad {
 
 	/**
 	 * Reads the item at a zero-based index, decrypting and fetching from IPFS as needed.
+	 * The one place in this SDK that actually decrypts (along with `readRange()` and
+	 * `stream()`, which this itself uses for anything past a single whole-item fetch) —
+	 * `MnemonadItem.bytes()` delegates here rather than duplicating any of this, so an
+	 * item's content is the same whichever of the two a caller reaches for.
 	 *
-	 * On-chain items up to `readPageBytes` go through the same durable chunk cache an
-	 * unencrypted item's `itemAt().bytes()` already uses (`_readItemBytes`) — the cached
-	 * bytes are always pre-decryption ciphertext (see `docs/caching.md`'s own rule for why:
-	 * never cache plaintext), decrypted fresh on every call via `crypto.decryptItem`. Larger
-	 * on-chain items fall through to the paged frame-by-frame path below instead (staying
-	 * uncached — see that path's own comment), since `_readItemBytes`'s single unpaged
-	 * contract call can run out of gas above that size. A *partial* read (`readRange`/
-	 * `stream(i, {start, len})`) isn't cached either way — see those methods' own comments;
-	 * only a genuinely whole-item read within the size threshold benefits.
+	 * On-chain items up to `readPageBytes` go through the durable chunk cache
+	 * (`_readItemBytes`) — the cached bytes are always pre-decryption ciphertext (see
+	 * `docs/caching.md`'s own rule for why: never cache plaintext), decrypted fresh on
+	 * every call via `crypto.decryptItem`. Larger on-chain items fall through to the paged
+	 * frame-by-frame path below instead (staying uncached — see that path's own comment),
+	 * since `_readItemBytes`'s single unpaged contract call can run out of gas above that
+	 * size. A *partial* read (`readRange`/`stream(i, {start, len})`) isn't cached either
+	 * way — see those methods' own comments; only a genuinely whole-item read within the
+	 * size threshold benefits.
 	 *
 	 * EXTERNAL items are deliberately NOT routed through this whole-blob cache path: they
 	 * already get the equivalent benefit from `MnemonadIpfs.readPointerBytes`'s own
@@ -613,9 +661,15 @@ export default class Mnemonad {
 	 * builds internally.
 	 *
 	 * @param {number} i
+	 * @param {Object} [params={}]
+	 * @param {?Object} [params._refs] - internal-only (same convention as `stream()`'s
+	 *   own `params._refs`) — a `getItemRefs(i)` result already in hand, e.g. from
+	 *   `MnemonadItem.bytes()`, which already knows its own `store`/`size` from the
+	 *   `itemAt()` call that constructed it and would otherwise make this re-derive the
+	 *   exact same thing a second time.
 	 * @returns {Promise<Uint8Array>}
 	 */
-	async at(i) {
+	async at(i, params = {}) {
 		await this.initialize();
 
 		if (this.encKeyWrapped && this.crypto.isEnabled) {
@@ -623,7 +677,7 @@ export default class Mnemonad {
 			// prior itemAt() — which a list view calls for every row up front, before any
 			// individual at() is ever requested), so this line costs nothing extra once
 			// warm, rather than paying for an uncached store lookup on every single call.
-			const refs = await this.getItemRefs(i);
+			const refs = params._refs ?? await this.getItemRefs(i);
 			// _readItemBytes is a single, unpaged contract call — safe (and cacheable) for
 			// anything within readPageBytes, same threshold _atRaw uses to decide the same
 			// question for a plaintext item. Above it, a staged item spanning many chunks
@@ -637,43 +691,52 @@ export default class Mnemonad {
 			// An off-chain payload is fetched and hash-verified before its layout header is
 			// consulted, so a substituted blob is reported as a hash mismatch rather than
 			// as a confusing format error from a header that was never trustworthy.
-			await this._prefetchExternal(i);
+			await this._prefetchExternal(i, refs);
 
 			// Stream the frames rather than pulling the whole ciphertext and decrypting in
 			// one go: only one frame is authenticated at a time, and only one buffer of
 			// plaintext is held. Also how a large on-chain item (too big to safely fetch in
 			// a single call above) gets paged — readRange, not a raw at() call.
-			const layout = await this._cipherLayout(i);
+			const layout = await this._cipherLayout(i, refs);
 			const out = new Uint8Array(layout.plaintextLength);
 			let pos = 0;
-			for await (const part of this.stream(i)) {
+			// `_refs` is an internal-only field (same convention as `alreadyEncrypted`
+			// elsewhere in this file) — hands stream() the lookup already made two lines
+			// up instead of it repeating the same getItemRefs call a second time.
+			for await (const part of this.stream(i, { _refs: refs })) {
 				out.set(part, pos);
 				pos += part.length;
 			}
 			return out;
 		}
 
-		return await this._atRaw(i);
+		return await this._atRaw(i, params._refs);
 	}
 
 	/**
 	 * Reads the item at `i` without decrypting, paging automatically when it is too large
 	 * for a single call.
 	 * @param {number} i
+	 * @param {?Object} [refs] - see `at()`'s own doc on `params._refs`.
 	 * @returns {Promise<Uint8Array>}
 	 */
-	async _atRaw(i) {
+	async _atRaw(i, refs = null) {
 		await this.initialize();
-		const store = Number(await this._read('itemStore', [this.id, BigInt(i)]));
+		refs ??= await this.getItemRefs(i);
 
-		if (store === Store.EXTERNAL) {
+		if (refs.store === Store.EXTERNAL) {
 			const pointer = await this.pointerAt(i);
 			return await this.offloadingProvider.readPointerBytes(pointer);
 		}
 
-		const size = Number(await this._read('itemSize', [this.id, BigInt(i)]));
+		const size = refs.size;
 		if (size <= this.readPageBytes) {
-			return hexToBytes(await this._read('at', [this.id, BigInt(i)]));
+			// _readItemBytes, not a raw _read('at', ...) call — same durable chunk cache
+			// the encrypted branch of at() already uses, so a repeat call (or a repeat
+			// call via the OTHER route to the same bytes, itemAt().bytes()) is free either
+			// way, and both share one cache entry per index regardless of which read this
+			// item first.
+			return await this._readItemBytes(i);
 		}
 
 		// Paged read. A single `at()` allocates the item and the ABI return copies it, so
@@ -723,14 +786,34 @@ export default class Mnemonad {
 
 	/**
 	 * Reads a byte range of the stored bytes, without decrypting.
+	 *
+	 * Called once per frame by `stream()`'s loop for an encrypted item — which is every
+	 * on-chain frame *and* every external one, since framing is what makes partial reads of
+	 * a large encrypted item possible in the first place. An item's tier never changes once
+	 * committed, so re-deriving it from `getItemRefs` (already cached — see
+	 * `docs/caching.md`) instead of a raw, uncached `itemStore` read turns what used to be
+	 * one RPC call per frame into effectively zero once the first frame has warmed the
+	 * cache — confirmed live: downloading one ~100 KB external+encrypted item previously
+	 * burned a couple dozen `itemStore` calls in the RPC log for what should cost none.
 	 * @param {number} i
 	 * @param {number} start
 	 * @param {number} len
 	 * @returns {Promise<Uint8Array>}
 	 */
-	async _readRangeRaw(i, start, len) {
+	async _readRangeRaw(i, start, len, refs = null) {
 		await this.initialize();
-		const store = Number(await this._read('itemStore', [this.id, BigInt(i)]));
+		// `refs`, when passed, is a lookup already made by the caller (stream()'s loop
+		// fetches it once for the whole generator, not once per frame/page it then calls
+		// this with) — self-fetching only when called standalone. Deliberately not relying
+		// on getItemRefs' own cache alone to collapse the redundant lookups: its write is
+		// fire-and-forget (see MnemonadChunkCache.set's own doc) and IndexedDB commits
+		// asynchronously, so a tight sequential loop of calls can outrun it in a real
+		// browser even though a Node/in-memory-backed test never observes the race —
+		// confirmed live, not theoretical (the explorer's own RPC panel still showed one
+		// `getItemRefs` call per frame after switching from the raw `itemStore` read to a
+		// cached one; passing the value through directly removes the dependency on cache
+		// timing entirely, rather than hoping the write always lands in time).
+		const store = (refs ?? await this.getItemRefs(i)).store;
 
 		if (store === Store.EXTERNAL) {
 			const cached = this._externalCache?.[i];
@@ -782,14 +865,21 @@ export default class Mnemonad {
 	async *stream(i, params = {}) {
 		await this.initialize();
 		const encrypted = !!(this.encKeyWrapped && this.crypto.isEnabled);
+		// Looked up once for this whole call, not once per page/frame below — see
+		// `_readRangeRaw`'s own doc for why passing it through explicitly matters even
+		// though `getItemRefs` is itself cached. `params._refs` is an internal-only escape
+		// hatch (same convention as `alreadyEncrypted` elsewhere in this file, not part of
+		// the documented public params) letting `at()` hand over the lookup it already
+		// made for its own routing decision, instead of this repeating it.
+		const refs = params._refs ?? await this.getItemRefs(i);
 
 		if (!encrypted) {
-			const size = await this.plaintextLengthAt(i);
+			const size = refs.store === Store.EXTERNAL ? Number((await this.pointerAt(i)).size) : refs.size;
 			const start = params.start ?? 0;
 			const len = params.len ?? size - start;
 			for (let off = start; off < start + len; off += this.readPageBytes) {
 				const take = Math.min(this.readPageBytes, start + len - off);
-				yield await this._readRangeRaw(i, off, take);
+				yield await this._readRangeRaw(i, off, take, refs);
 			}
 			return;
 		}
@@ -799,10 +889,10 @@ export default class Mnemonad {
 		// blob hash meaningful. Done BEFORE reading the layout header, so a substituted
 		// payload is reported as a hash mismatch rather than as a puzzling format error.
 		if ((params.start ?? 0) === 0 && params.len === undefined) {
-			await this._prefetchExternal(i);
+			await this._prefetchExternal(i, refs);
 		}
 
-		const layout = await this._cipherLayout(i);
+		const layout = await this._cipherLayout(i, refs);
 		const start = params.start ?? 0;
 		const len = params.len ?? layout.plaintextLength - start;
 		const { first, last } = MnemonadCrypto.framesForRange(layout, start, len);
@@ -812,7 +902,8 @@ export default class Mnemonad {
 			const frameCipher = await this._readRangeRaw(
 				i,
 				layout.frameOffset(f),
-				layout.frameCipherLength(f)
+				layout.frameCipherLength(f),
+				refs
 			);
 			const plain = await this.crypto.decryptFrame(
 				frameCipher,
@@ -832,10 +923,12 @@ export default class Mnemonad {
 	/**
 	 * Fetches and verifies an off-chain payload whole, caching it. No-op for on-chain items.
 	 * @param {number} i
+	 * @param {?Object} [refs] - see `_readRangeRaw`'s doc for why this is threaded through
+	 *   rather than left to `getItemRefs`'s own cache.
 	 */
-	async _prefetchExternal(i) {
+	async _prefetchExternal(i, refs = null) {
 		if (this._externalCache?.[i]) return;
-		const store = Number(await this._read('itemStore', [this.id, BigInt(i)]));
+		const store = (refs ?? await this.getItemRefs(i)).store;
 		if (store !== Store.EXTERNAL) return;
 		const whole = await this.offloadingProvider.readPointerBytes(await this.pointerAt(i));
 		this._externalCache ??= {};
@@ -853,26 +946,32 @@ export default class Mnemonad {
 		if (this.encKeyWrapped && this.crypto.isEnabled) {
 			return (await this._cipherLayout(i)).plaintextLength;
 		}
-		const store = Number(await this._read('itemStore', [this.id, BigInt(i)]));
-		if (store === Store.EXTERNAL) return Number((await this.pointerAt(i)).size);
-		return Number(await this._read('itemSize', [this.id, BigInt(i)]));
+		const refs = await this.getItemRefs(i);
+		if (refs.store === Store.EXTERNAL) return Number((await this.pointerAt(i)).size);
+		return refs.size;
 	}
 
 	/**
-	 * Reads an item's frame header and derives its layout. Cached per index, since it is
-	 * needed by every range read of the same item.
+	 * Reads an item's frame header and derives its layout. Cached per index (in `_layouts`,
+	 * separate from the durable chunk cache — this is derived data, cheap to recompute, and
+	 * only needs to survive this one instance's lifetime), since it is needed by every
+	 * range read of the same item.
 	 * @param {number} i
+	 * @param {?Object} [refs] - a `getItemRefs(i)` result already in hand, e.g. from
+	 *   `stream()`'s own single lookup for the whole call — see `_readRangeRaw`'s doc for
+	 *   why this is threaded through explicitly rather than relying on `getItemRefs`'s own
+	 *   cache to collapse repeat calls.
 	 * @returns {Promise<Object>}
 	 */
-	async _cipherLayout(i) {
+	async _cipherLayout(i, refs = null) {
 		this._layouts ??= {};
 		if (this._layouts[i]) return this._layouts[i];
 
-		const store = Number(await this._read('itemStore', [this.id, BigInt(i)]));
+		refs ??= await this.getItemRefs(i);
 		let ciphertextLength;
 		let header;
 
-		if (store === Store.EXTERNAL) {
+		if (refs.store === Store.EXTERNAL) {
 			// The ciphertext length is already on-chain in the pointer, so the layout needs
 			// only the 10-byte header — no reason to download the payload to learn it.
 			const pointer = await this.pointerAt(i);
@@ -881,8 +980,8 @@ export default class Mnemonad {
 				? this._externalCache[i].subarray(0, 10)
 				: await this.offloadingProvider.readPointerRange(pointer, 0, Math.min(10, ciphertextLength));
 		} else {
-			ciphertextLength = Number(await this._read('itemSize', [this.id, BigInt(i)]));
-			header = await this._readRangeRaw(i, 0, Math.min(10, ciphertextLength));
+			ciphertextLength = refs.size;
+			header = await this._readRangeRaw(i, 0, Math.min(10, ciphertextLength), refs);
 		}
 
 		this._layouts[i] = MnemonadCrypto.parseHeader(header, ciphertextLength);
@@ -953,15 +1052,15 @@ export default class Mnemonad {
 
 	/**
 	 * Fetches and hex-decodes index `i`'s on-chain payload via a single `at()` contract
-	 * read. Two callers: the *stream method* `at()` above, and `MnemonadItem.bytes()`
-	 * (lazily fetching what `itemAt()` deliberately left unset). Not for external/off-chain
-	 * items. Returns whatever is actually stored on-chain, verbatim — ciphertext on an
-	 * encrypted stream — since this method has no opinion on encryption at all; that's
-	 * exactly why the two callers can share one cache entry per index. `Mnemonad.at()`
-	 * decrypts what comes back before returning it; `MnemonadItem.bytes()` never does
-	 * (see its own file — only `at()`/`readRange()`/`stream()` decrypt anywhere in this
-	 * SDK), so a caller reaching an encrypted item through `itemAt().bytes()` instead of
-	 * `at()` gets ciphertext back, on purpose, not a bug.
+	 * read. Called directly by the *stream method* `at()` above, for an on-chain item
+	 * within `readPageBytes`; `MnemonadItem.bytes()` reaches it only indirectly, by
+	 * delegating to that same `at()` (see its own doc) rather than calling this itself —
+	 * so both routes share one cache entry per index, and both decrypt identically. Not
+	 * for external/off-chain items. Returns whatever is actually stored on-chain,
+	 * verbatim — ciphertext on an encrypted stream — since this method has no opinion on
+	 * encryption at all; that indifference is exactly what lets the durable chunk cache
+	 * hold one pre-decryption entry per item regardless of which caller populated it,
+	 * with decryption applied one layer up, in `at()`, on every read.
 	 * @param {number} i
 	 * @returns {Promise<Uint8Array>}
 	 */
@@ -1177,6 +1276,29 @@ export default class Mnemonad {
 	}
 
 	/**
+	 * MON required to prepay this stream's wired upload gateway for an off-chain payload of
+	 * up to `size` bytes — the same gateway `push()`'s own `_pushExternalAuto` pays
+	 * automatically when routing an oversized item off-chain. A thin convenience over
+	 * `MnemonadUploadGateway.fromMnemonad` + `.quote()`, so a caller that only wants to
+	 * show a pre-commit price (a UI's upload form, say) doesn't need to import
+	 * `MnemonadUploadGateway` itself, or know `uploadGateway()` above exists at all, just to
+	 * ask this one question.
+	 *
+	 * @param {number} size
+	 * @returns {Promise<?bigint>} wei, or null when no gateway is wired to this registry.
+	 * @throws Whatever `MnemonadUploadGateway.quote` itself throws — most commonly a stale
+	 *   or too-uncertain Pyth price — when a gateway IS wired but currently refuses to
+	 *   quote. Left to propagate rather than folded into the `null` case, so a caller can
+	 *   tell "no gateway at all" apart from "a gateway exists but can't price this right now".
+	 */
+	async quoteOffloadUpload(size) {
+		await this.initialize();
+		const gw = await MnemonadUploadGateway.fromMnemonad(this);
+		if (!gw) return null;
+		return await gw.quote(size);
+	}
+
+	/**
 	 * The sha256 an offloaded push of `data` would record in its `Pointer.hash` — i.e. the
 	 * exact value to commit to when prepaying through `MnemonadUploadGateway`.
 	 *
@@ -1248,17 +1370,31 @@ export default class Mnemonad {
 	// -----------------------------------------------------------------------------
 
 	/**
-	 * Appends one or more items, routing each to the cheapest viable tier.
+	 * Appends one or more items, routing each to the cheapest viable tier. Handles
+	 * encryption, tier routing, and — for an off-chain item — the gateway
+	 * commit/pay/upload sequence entirely internally: a caller never encrypts, hashes, or
+	 * pays anything itself, regardless of item size or whether the stream is encrypted.
 	 *
 	 * Routing, all thresholds read from chain:
 	 *   - up to `maxChunkBytes`  → on-chain (the contract picks SLOT vs CODE at 31 bytes)
 	 *   - larger, `onChain: true` → staged multi-chunk append, several transactions
-	 *   - larger, IPFS available  → off-chain pointer
+	 *   - larger, IPFS available  → off-chain pointer, prepaid through the registry's
+	 *     wired upload gateway first when one exists — see `_pushExternalAuto`'s own doc
+	 *     for why that step isn't optional for some offloading providers, and why it's
+	 *     strictly cheaper even for the ones where it is
 	 *
 	 * @param {Uint8Array|Uint8Array[]} arr
 	 * @param {Object} [params={}]
 	 * @param {boolean} [params.onChain=false] - force large items on-chain via staging
 	 * @param {?Uint8Array} [params.itemMeta] - per-item metadata (single items only)
+	 * @param {boolean} [params.payGateway=true] - set `false` to skip prepaying through a
+	 *   wired gateway even for an off-chain item — see `_pushExternalAuto`'s own doc for
+	 *   when a caller would want that.
+	 * @param {?Function} [params.onProgress] - called for a multi-step write: the staged
+	 *   on-chain path (see `_pushStaged`'s own doc for that callback shape) or the
+	 *   gateway-prepaid off-chain path (`{phase: 'gateway-pay'|'gateway-upload', ...}` —
+	 *   see `_pushExternalAuto`). Ignored for a single-transaction push, which has nothing
+	 *   to report progress on.
 	 * @param {?number} [params.timeout]
 	 * @param {?number} [params.pollIntervalMs]
 	 * @returns {Promise<boolean>}
@@ -1281,7 +1417,7 @@ export default class Mnemonad {
 			const data = items[0];
 			if (data.length > this.maxChunkBytes) {
 				if (params.onChain) return await this._pushStaged(data, params);
-				if (this.offloadingProvider.canWrite) return await this.pushExternal(data, params);
+				if (this.offloadingProvider.canWrite) return await this._pushExternalAuto(data, params);
 				throw new Error(
 					`Item of ${data.length} bytes exceeds maxChunkBytes (${this.maxChunkBytes}). ` +
 					'Pass { onChain: true } to store it on-chain across several transactions, ' +
@@ -1378,6 +1514,74 @@ export default class Mnemonad {
 	}
 
 	/**
+	 * Routes an oversized item off-chain via `pushExternal`, prepaying through the
+	 * registry's wired upload gateway first when one exists — this is what makes `push()`
+	 * itself "just work" for an off-chain item, with no caller-side orchestration of
+	 * encryption, commitments, or payment at all.
+	 *
+	 * Two independent reasons prepaying matters here, not just one:
+	 *   - It's the *only* thing that makes `MnemonadPresignProvider` usable at all: the
+	 *     sign server it talks to unconditionally requires a matching on-chain escrow
+	 *     before it will issue an upload URL (see `presign-server/src/routes/uploadUrl.js`)
+	 *     — a bare `pushExternal` against it fails every time with "No open escrow for
+	 *     this (payer, contentHash). Call payForUpload first."
+	 *   - Even for a provider that does not itself require it (a direct pinning
+	 *     credential), a matching escrow makes the registry waive its flat EXTERNAL fee on
+	 *     settlement — so paying first is strictly cheaper whenever a gateway exists, not
+	 *     merely sometimes required.
+	 *
+	 * Falls back to a bare `pushExternal` — paying the registry's full EXTERNAL fee, and
+	 * only actually working if the offloading provider doesn't itself demand a pre-paid
+	 * escrow — when no gateway is wired to this registry, or `params.payGateway` opts out.
+	 *
+	 * @param {Uint8Array} data - already encrypted, if applicable (`push()` calls this with
+	 *   `params.alreadyEncrypted` already set from its own `_maybeEncrypt` step, so this
+	 *   never encrypts a second time).
+	 * @param {Object} params
+	 * @param {boolean} [params.payGateway=true] - set `false` to call `pushExternal`
+	 *   directly even when a gateway is wired — e.g. a caller intentionally managing its
+	 *   own escrow lifecycle rather than paying fresh on every push.
+	 * @returns {Promise<boolean>}
+	 */
+	async _pushExternalAuto(data, params = {}) {
+		// MnemonadUploadGateway can only send transactions through a real viem
+		// WalletClient (see its own _write) — a Mnemonad configured with the alternative
+		// CustomSendTransactionFunction has no such client to hand it, so this skips
+		// straight to pushExternal rather than throwing "not writable" from a gateway the
+		// caller never asked for by name.
+		if (params.payGateway === false || !this._walletClient) {
+			return await this.pushExternal(data, params);
+		}
+
+		const gw = await MnemonadUploadGateway.fromMnemonad(this, { walletClient: this._walletClient });
+		if (!gw) return await this.pushExternal(data, params);
+
+		this._reportProgress(params, { phase: 'gateway-pay', chunkIndex: 0, chunkCount: 1 });
+		// `params` already carries `alreadyEncrypted: true` from push()'s own
+		// _maybeEncrypt step by the time this runs, so this commits to and later uploads
+		// the exact same bytes — never re-encrypting, never drawing a second nonce.
+		const { hash, size } = await this.offloadCommitment(data, params);
+		await gw.payForUpload(hash, size);
+		this._reportProgress(params, { phase: 'gateway-upload', chunkIndex: 1, chunkCount: 1 });
+		return await this.pushExternal(data, params);
+	}
+
+	/**
+	 * Calls `params.onProgress`, if given, swallowing anything it throws — shared by every
+	 * multi-step write path (`_pushStaged`, `_pushExternalAuto`) so progress reporting can
+	 * never be the thing that breaks a write that would otherwise have succeeded.
+	 * @param {Object} params
+	 * @param {Object} info
+	 */
+	_reportProgress(params, info) {
+		try {
+			params.onProgress?.(info);
+		} catch {
+			// Deliberately swallowed — see this method's own doc.
+		}
+	}
+
+	/**
 	 * Stores an item larger than one transaction can carry, across several transactions.
 	 *
 	 * The item stays invisible to `at()` until committed, so a reader never observes a
@@ -1386,20 +1590,34 @@ export default class Mnemonad {
 	 *
 	 * @param {Uint8Array} data
 	 * @param {Object} [params={}]
+	 * @param {?(info: {phase: 'begin'|'chunk'|'commit', chunkIndex: number, chunkCount: number}) => void}
+	 *   [params.onProgress] - called once after `beginItem`, once after each `appendChunk`
+	 *   (with `chunkIndex` = how many have landed so far, 1-based), and once after
+	 *   `commitItem`. Best-effort visibility only — there is no resume support yet: a
+	 *   failure partway through leaves the staging id unrecoverable from the caller's side,
+	 *   even though `appendChunk`'s own offset check would make resuming it safe in
+	 *   principle. A callback throwing does not stop the upload; errors from it are swallowed
+	 *   the same way a caching failure is elsewhere in this file — progress reporting must
+	 *   never be able to break a write that would otherwise have succeeded.
 	 * @returns {Promise<boolean>}
 	 */
 	async _pushStaged(data, params = {}) {
 		const chunkSize = this.maxChunkBytes;
+		const chunkCount = Math.ceil(data.length / chunkSize);
+		const report = (info) => this._reportProgress(params, info);
+
 		await this._write(
 			'beginItem',
 			[this.id, data.length, bytesToHex(params.itemMeta || new Uint8Array())],
 			params
 		);
+		report({ phase: 'begin', chunkIndex: 0, chunkCount });
 
 		// beginItem returns the staging id, but a receipt doesn't carry return values, so
 		// recover it from the ItemStaged event.
 		const stagingId = await this._lastStagingId();
 
+		let chunkIndex = 0;
 		for (let offset = 0; offset < data.length; offset += chunkSize) {
 			const slice = data.subarray(offset, Math.min(offset + chunkSize, data.length));
 			const fee = await this.quotePushFee(slice.length, Store.CODE);
@@ -1407,9 +1625,12 @@ export default class Mnemonad {
 				value: fee,
 				...params,
 			});
+			chunkIndex += 1;
+			report({ phase: 'chunk', chunkIndex, chunkCount });
 		}
 
 		await this._write('commitItem', [stagingId], params);
+		report({ phase: 'commit', chunkIndex: chunkCount, chunkCount });
 		this._afterWrite(1);
 		return true;
 	}
@@ -1529,6 +1750,13 @@ export default class Mnemonad {
 	 * `pushExternal` when a transport is configured. Throws the same descriptive error
 	 * `push()` would if none of those apply.
 	 *
+	 * Encrypts first, exactly like `push()` does, when this is an encrypted stream with a
+	 * usable key — not just for an accurate byte count (AES-GCM framing adds ~28 bytes),
+	 * but because that overhead can flip which of the three paths above actually applies
+	 * (push()'s own comment on this: routing on plaintext size would occasionally be
+	 * wrong). Estimating on `data`'s plaintext length would then estimate the wrong
+	 * routing entirely, not just the wrong price for the right one.
+	 *
 	 * Worth calling before large writes, and more important here than on other EVM chains:
 	 * Monad charges the gas *limit* rather than gas used, so a loose estimate is a direct
 	 * overcharge rather than a harmless margin.
@@ -1538,6 +1766,8 @@ export default class Mnemonad {
 	 * @param {number} [params.bufferPercent=10]
 	 * @param {boolean} [params.onChain] - see `push()`; selects the staged path for an
 	 *   oversized item instead of IPFS
+	 * @param {boolean} [params.alreadyEncrypted] - see `_maybeEncrypt`; `data` is already
+	 *   ciphertext, so skip encrypting it a second time
 	 * @returns {Promise<{gas: bigint, gasCost: bigint, fee: bigint, total: bigint, transactionCount: number}>}
 	 */
 	async estimatePushCost(data, params = {}) {
@@ -1545,6 +1775,7 @@ export default class Mnemonad {
 		const buffer = params.bufferPercent ?? 10;
 		const gasPrice = await this.publicClient.getGasPrice();
 		const account = this._requireSender();
+		const [payload] = await this._maybeEncrypt([data], params);
 
 		const withBuffer = (gas) => (gas * BigInt(100 + buffer)) / 100n;
 		const finish = (gas, fee, transactionCount) => {
@@ -1553,13 +1784,13 @@ export default class Mnemonad {
 			return { gas: gasWithBuffer, gasCost, fee, total: gasCost + fee, transactionCount };
 		};
 
-		if (data.length <= this.maxChunkBytes) {
-			const fee = await this.quotePushFee(data.length, Store.CODE);
+		if (payload.length <= this.maxChunkBytes) {
+			const fee = await this.quotePushFee(payload.length, Store.CODE);
 			const gas = await this.publicClient.estimateContractGas({
 				address: this._contractAddress,
 				abi: mnemonadAbi,
 				functionName: 'push',
-				args: [this.id, BigInt(this.length), bytesToHex(data), '0x'],
+				args: [this.id, BigInt(this.length), bytesToHex(payload), '0x'],
 				account,
 				value: fee,
 			});
@@ -1568,13 +1799,13 @@ export default class Mnemonad {
 
 		if (!params.onChain && !this.offloadingProvider.canWrite) {
 			throw new Error(
-				`Item of ${data.length} bytes exceeds maxChunkBytes (${this.maxChunkBytes}). ` +
+				`Item of ${payload.length} bytes exceeds maxChunkBytes (${this.maxChunkBytes}). ` +
 				'Pass { onChain: true } to store it on-chain across several transactions, ' +
 				'or configure pinningUrl/ipfsClient to offload it to IPFS.'
 			);
 		}
 
-		const fee = await this.quotePushFee(data.length, Store.CODE);
+		const fee = await this.quotePushFee(payload.length, Store.CODE);
 
 		if (!params.onChain) {
 			// pushExternal's gas doesn't depend on the payload — it records a fixed-shape
@@ -1582,7 +1813,7 @@ export default class Mnemonad {
 			// of realistic field sizes estimates it without a real IPFS upload.
 			const placeholderPointer = {
 				hash: `0x${'00'.repeat(32)}`,
-				size: BigInt(data.length),
+				size: BigInt(payload.length),
 				codec: 0,
 				locator: bytesToHex(new TextEncoder().encode('ipfs://bafkreiaexampleexampleexampleexampleexampleexample')),
 			};
@@ -1599,8 +1830,8 @@ export default class Mnemonad {
 		// Staged: beginItem, then one appendChunk per maxChunkBytes-sized slice, then
 		// commitItem — but appendChunk/commitItem each need a stagingId that only exists
 		// once a prior transaction has actually landed, so the true sequence can't be
-		// simulated without spending it. Modeled instead, using real slices of `data` (not
-		// synthetic zero-filled ones) so calldata cost reflects the payload's actual
+		// simulated without spending it. Modeled instead, using real slices of `payload`
+		// (not synthetic zero-filled ones) so calldata cost reflects the payload's actual
 		// zero/non-zero byte mix:
 		//   - beginItem is simulated directly — real args, no prior state needed
 		//   - each appendChunk is modeled by simulating an ordinary push() of the same-sized
@@ -1610,8 +1841,8 @@ export default class Mnemonad {
 		//   - commitItem is modeled as another beginItem-sized call: both are small,
 		//     fixed-accounting writes with no chunk deploy
 		const chunkSize = this.maxChunkBytes;
-		const fullChunks = Math.floor(data.length / chunkSize);
-		const remainder = data.length - fullChunks * chunkSize;
+		const fullChunks = Math.floor(payload.length / chunkSize);
+		const remainder = payload.length - fullChunks * chunkSize;
 		const transactionCount = fullChunks + (remainder > 0 ? 1 : 0) + 2; // + beginItem + commitItem
 
 		const itemMetaHex = bytesToHex(params.itemMeta || new Uint8Array());
@@ -1619,13 +1850,13 @@ export default class Mnemonad {
 			address: this._contractAddress,
 			abi: mnemonadAbi,
 			functionName: 'beginItem',
-			args: [this.id, data.length, itemMetaHex],
+			args: [this.id, payload.length, itemMetaHex],
 			account,
 		});
 
 		let chunkGasTotal = 0n;
 		if (fullChunks > 0) {
-			const slice = data.subarray(0, chunkSize);
+			const slice = payload.subarray(0, chunkSize);
 			const sliceFee = await this.quotePushFee(chunkSize, Store.CODE);
 			const perChunkGas = await this.publicClient.estimateContractGas({
 				address: this._contractAddress,
@@ -1638,7 +1869,7 @@ export default class Mnemonad {
 			chunkGasTotal += perChunkGas * BigInt(fullChunks);
 		}
 		if (remainder > 0) {
-			const slice = data.subarray(data.length - remainder);
+			const slice = payload.subarray(payload.length - remainder);
 			const sliceFee = await this.quotePushFee(remainder, Store.CODE);
 			chunkGasTotal += await this.publicClient.estimateContractGas({
 				address: this._contractAddress,

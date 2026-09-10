@@ -1,3 +1,4 @@
+import fs from 'node:fs';
 import { spawn } from 'node:child_process';
 import net from 'node:net';
 import path from 'node:path';
@@ -151,6 +152,76 @@ export async function deployRegistry(clients, params = {}) {
 		throw new Error('registry deployment failed');
 	}
 	return receipt.contractAddress;
+}
+
+/** Lazily read — only the two tests that actually deploy a gateway pay for this. */
+function readArtifact(relativePath) {
+	const full = path.join(CONTRACTS_DIR, relativePath);
+	if (!fs.existsSync(full)) {
+		throw new Error(`fixture: artifact not found at ${full} — run \`pnpm build\` in contracts/ first`);
+	}
+	return JSON.parse(fs.readFileSync(full, 'utf8'));
+}
+
+/**
+ * Deploys a `MockPyth` + `MnemonadUploadGateway` pair and wires it to `registryAddress`,
+ * mirroring `contracts/test/MnemonadUploadGateway.t.sol`'s own `setUp()` exactly (same
+ * price/expo/pricing constants) so the numbers here are hand-checkable against that suite
+ * rather than invented fresh. Deliberately the *only* JS-side gateway deployment in the
+ * repo — `sync_abi.js`'s own comment notes the gateway's on-chain behavior is covered by
+ * the Solidity suite, not the JS one; this exists specifically to prove `Mnemonad.push()`'s
+ * own orchestration (encrypt → commit → pay → upload) calls a *real* gateway correctly,
+ * which the Solidity suite has no way to exercise (it never runs the SDK).
+ *
+ * @param {Object} clients - from makeClients()
+ * @param {string} registryAddress
+ * @returns {Promise<{gatewayAddress: string, pythAddress: string}>}
+ */
+export async function deployGateway(clients, registryAddress) {
+	const { publicClient, walletClient, account } = clients;
+
+	const pythArtifact = readArtifact('artifacts/test/MnemonadUploadGateway.t.sol/MockPyth.json');
+	const gatewayArtifact = readArtifact('artifacts/src/MnemonadUploadGateway.sol/MnemonadUploadGateway.json');
+
+	const pythHash = await walletClient.deployContract({
+		abi: pythArtifact.abi,
+		bytecode: pythArtifact.bytecode,
+		args: [],
+	});
+	const pythReceipt = await publicClient.waitForTransactionReceipt({ hash: pythHash });
+	const pythAddress = pythReceipt.contractAddress;
+
+	// MON/USD = $0.025 at Pyth's usual exponent — same numbers EvTest's setUp() uses, so a
+	// discrepancy against that suite would be a real signal, not just a different fixture.
+	const PRICE = 2_500_000n;
+	const EXPO = -8;
+	const block = await publicClient.getBlock();
+	await walletClient.writeContract({
+		address: pythAddress,
+		abi: pythArtifact.abi,
+		functionName: 'set',
+		args: [PRICE, 1000n, EXPO, block.timestamp],
+	});
+
+	const FEED = `0x${'0'.repeat(60)}feed`;
+	const CENTS_PER_MIB = 5n; // $0.05/MiB — 2 MON/MiB at the price above
+	const BAND_MAX = 100n * 10n ** 18n;
+	const gatewayHash = await walletClient.deployContract({
+		abi: gatewayArtifact.abi,
+		bytecode: gatewayArtifact.bytecode,
+		args: [registryAddress, pythAddress, FEED, account.address, CENTS_PER_MIB, 0n, 0n, BAND_MAX],
+	});
+	const gatewayReceipt = await publicClient.waitForTransactionReceipt({ hash: gatewayHash });
+	const gatewayAddress = gatewayReceipt.contractAddress;
+
+	await walletClient.writeContract({
+		address: registryAddress,
+		abi,
+		functionName: 'setUploadGateway',
+		args: [gatewayAddress],
+	});
+
+	return { gatewayAddress, pythAddress };
 }
 
 /**

@@ -56,100 +56,16 @@
 							:loading="itemsLoading"
 							:omitted="omitted"
 							:load-bytes="loadItemBytes"
+							:load-refs="loadItemRefs"
 							:is-loaded="isItemLoaded"
 							:locked="isLocked"
+							:chain="activeNetwork.chain"
 							@unlock-requested="openUnlock"
 						/>
 					</template>
 				</GradientPanel>
 
-				<JPanel
-					icon="add"
-					title="Add"
-					class="q-mt-md add-panel presentation-dim"
-					:class="{ 'presentation-dim--active': debugStore.presentationMode }"
-				>
-					<template #header>
-						<q-tabs
-							v-model="addTab"
-							dense
-							align="left"
-							class="add-panel__tabs"
-							active-color="primary"
-							indicator-color="primary"
-						>
-							<q-tab name="random" label="Random bytes" />
-							<q-tab name="text" label="Text" />
-							<q-tab name="offload" label="IPFS" />
-						</q-tabs>
-					</template>
-					<!-- Tabs stay at full brightness (they're harmless to click either way —
-					     every form underneath is gated the same way regardless of which one
-					     shows); only the form content itself dims, with one overlay message
-					     covering all three tabs uniformly. Today only AddTextChunk/OffloadUpload
-					     take a `hint` prop of their own, so AddRandomBytes silently showed
-					     disabled controls with no explanation at all — this fixes that too. -->
-					<div class="add-panel__panel-wrap">
-						<!-- Plain v-show, not <q-tab-panels>: that component left both panels
-						     rendered with display:block simultaneously in this app (likely the
-						     two-Quasar-instances issue already documented in GradientPanel.vue) —
-						     confirmed live, not assumed. v-show keeps each form's own state
-						     intact when switching tabs, same as q-tab-panels would have. -->
-						<div class="add-panel__panel q-pa-md" :class="{ 'add-panel__panel--disabled': !canWrite || !hasUsableKey }">
-							<AddRandomBytes
-								v-show="addTab === 'random'"
-								:disable="!canWrite || !hasUsableKey"
-								:loading="pushingRandom"
-								:max-bytes="stream.maxChunkBytes"
-								@submit="onAddRandomBytes"
-							/>
-							<AddTextChunk
-								v-show="addTab === 'text'"
-								:disable="!canWrite || !hasUsableKey"
-								:hint="writeHint"
-								:loading="pushing"
-								:max-bytes="stream.maxChunkBytes"
-								:can-offload="presignConfigured"
-								:estimate="estimateCost"
-								@submit="onAddText"
-							/>
-							<OffloadUpload
-								v-show="addTab === 'offload'"
-								:active="addTab === 'offload'"
-								:disable="!canWrite || !hasUsableKey || !presignConfigured"
-								:hint="offloadHint"
-								:loading="offloading"
-								:max-chunk-bytes="stream.maxChunkBytes"
-								:gateway="mnemonadStore.gateway"
-								:quote-for="quoteOffload"
-								@submit="onOffloadUpload"
-							/>
-						</div>
-						<!-- Sibling of the dimmed content above, not a descendant — CSS opacity
-						     applies to every descendant with no way to opt a child back out, so
-						     this has to sit outside `.add-panel__panel` to stay readable. -->
-						<div v-if="!canWrite || !hasUsableKey" class="add-panel__overlay">
-							<q-icon name="lock" size="20px" class="add-panel__overlay-icon" />
-							<p class="add-panel__overlay-title">
-								{{ !hasUsableKey ? 'Unlock this stream to add items' : 'Connect as the owner to manage this stream' }}
-							</p>
-							<p class="add-panel__overlay-hint">{{ writeHint }}</p>
-							<!-- The only unlock trigger before this was an item card's click, so an
-							     empty stream (nothing to click) had no way to reach the dialog at
-							     all — this button works regardless of item count. Only shown when
-							     unlocking is actually possible (the password method); a
-							     signer-encrypted stream has no unlock mechanism here at all, so a
-							     button here would just be a dead end. -->
-							<GradientButton
-								v-if="isLocked"
-								label="Unlock"
-								size="sm"
-								class="q-mt-sm"
-								@click="openUnlock"
-							/>
-						</div>
-					</div>
-				</JPanel>
+				<AddPanel :stream="_stream" @added="load" @unlock-requested="openUnlock" />
 			</div>
 		</div>
 
@@ -189,8 +105,8 @@
 
 <script>
 import { mapStores } from 'pinia';
-import { getPublicClient, getWalletClient } from '@wagmi/core';
-import Mnemonad, { MnemonadUploadGateway, MnemonadCrypto } from '@mnemonad';
+import { getPublicClient } from '@wagmi/core';
+import Mnemonad from '@mnemonad';
 import { config } from '../wagmi';
 import { getActiveNetwork } from '../settings.js';
 import { useWalletStore } from '../stores/wallet.js';
@@ -198,15 +114,14 @@ import { useMnemonadStore, MAX_RPC_REQUESTS_PER_SECOND, RPC_RETRY } from '../sto
 import { useDebugStore } from '../stores/debug.js';
 import { useStreamKeysStore } from '../stores/streamKeys.js';
 import { decodeStreamMeta } from '../mnemonad/streamMeta.js';
-import { createPresignProvider, presignConfigured, presignServerUrl } from '../mnemonad/presignProvider.js';
+import { decodeItemMeta } from '../mnemonad/itemMeta.js';
+import { createPresignProvider } from '../mnemonad/presignProvider.js';
 import { JPanel } from 'themed_varmory';
 import GradientPanel from '../components/GradientPanel.vue';
 import GradientButton from '../components/GradientButton.vue';
 import StreamSummary from '../mnemonad/StreamSummary.vue';
 import ItemList from '../mnemonad/ItemList.vue';
-import AddTextChunk from '../mnemonad/AddTextChunk.vue';
-import AddRandomBytes from '../mnemonad/AddRandomBytes.vue';
-import OffloadUpload from '../mnemonad/OffloadUpload.vue';
+import AddPanel from '../mnemonad/explorer/add/AddPanel.vue';
 import DebugPanel from '../mnemonad/DebugPanel.vue';
 
 /** Items beyond this are counted, never silently dropped — see ItemList's `omitted`. */
@@ -277,13 +192,11 @@ export default {
 	title: 'Stream',
 	components: {
 		JPanel, GradientPanel, GradientButton, StreamSummary,
-		ItemList, AddTextChunk, AddRandomBytes, OffloadUpload, DebugPanel,
+		ItemList, AddPanel, DebugPanel,
 	},
 	data() {
 		return {
 			activeNetwork: getActiveNetwork(),
-			presignConfigured,
-			presignServerUrl,
 			stream: null,
 			items: [],
 			omitted: 0,
@@ -296,14 +209,7 @@ export default {
 			// items it actually has. True until loadItems() has synchronously built its
 			// placeholders (or established there really are none).
 			itemsLoading: true,
-			pushing: false,
-			pushingRandom: false,
-			offloading: false,
-			// Which of the "Add" panel's two forms is showing — random bytes first, since
-			// that's the quicker way to generate test data.
-			addTab: 'random',
 			error: null,
-			canWrite: false,
 			// How many of the loaded rows already have their payload resident in memory,
 			// and how many bytes that adds up to — see recomputeLoaded(). Both start at 0
 			// on every fresh stream load, since a brand new Mnemonad instance's cache is
@@ -352,26 +258,16 @@ export default {
 				return false;
 			}
 		},
-		offloadHint: function() {
-			if (!this.presignConfigured) return 'Set VITE_PRESIGN_URL to the sign server to enable IPFS uploads.';
-			return this.writeHint;
-		},
-		writeHint: function() {
-			if (!this.walletStore.isConnected) return 'Connect a wallet to add items.';
-			if (this.walletStore.wrongNetwork) return `Switch to ${this.activeNetwork.label} to add items.`;
-			if (!this.canWrite) return "Only the stream's owner or an approved writer can add items.";
-			if (!this.hasUsableKey) {
-				return this.isLocked
-					? 'Unlock this stream (enter its password) before adding items.'
-					: "This stream's key isn't available in this session — adding items here would write them as plaintext, so it's blocked.";
-			}
-			return '';
-		},
 		// True when this is a password-encrypted stream (see streamMeta.js's `kek` block)
 		// and no key is cached for it yet this session (see streamKeysStore). A
 		// signer-encrypted stream (no `kek` in metadata — created outside the explorer, or
 		// before this feature existed) has no unlock affordance here either way; that isn't
 		// a regression, since the explorer never had one for that method to begin with.
+		// Also read by AddPanel's own `isLocked` (it computes its own copy from the raw SDK
+		// instance rather than taking this as a prop — see that component's own doc) for
+		// its "Unlock" button's visibility; the two are computed differently (this one from
+		// the decoded `stream` metadata object, that one from the live instance directly)
+		// but describe the same thing and can never disagree in practice.
 		isLocked: function() {
 			return !!(
 				this.stream &&
@@ -380,26 +276,6 @@ export default {
 				this.stream.kek.method === 'password' &&
 				!this.streamKeysStore.hasKey(this.stream.id)
 			);
-		},
-		// True when writing to this stream right now would produce a PLAINTEXT item despite
-		// the stream being marked encrypted -- because this session has no data key for it.
-		// Has to gate every write path (onAddText/onAddRandomBytes/onOffloadUpload each build
-		// their own writable Mnemonad instance) -- without this, they silently push
-		// unencrypted bytes with no error at all, which is exactly what happened before this
-		// existed. Deliberately NOT the same condition as isLocked: a signer-encrypted stream
-		// has no unlock mechanism in this UI at all, so it must block writing unconditionally,
-		// not just while "locked" (a state that only ever applies to the password method).
-		hasUsableKey: function() {
-			if (!this.stream?.encrypted) return true;
-			if (this.stream.kek && this.stream.kek.method === 'password') {
-				return this.streamKeysStore.hasKey(this.stream.id);
-			}
-			return false;
-		},
-	},
-	watch: {
-		'walletStore.connectionId': function() {
-			this.checkCanWrite();
 		},
 	},
 	created() {
@@ -410,11 +286,6 @@ export default {
 		// Timer handle for the "loaded items/size" poll — same reasoning, a plain interval
 		// id has no business in reactive state either.
 		this._loadedPollTimer = null;
-		// Indices read via loadItemBytes() while encrypted, tracked here rather than
-		// relying on the SDK's own `isItemLoaded` — that only reflects `itemAt()`/
-		// `MnemonadItem.bytes()`, which never decrypts (only `Mnemonad.at()` does), so an
-		// encrypted stream's reads bypass it entirely. See loadItemBytes/isItemLoaded below.
-		this._loadedEncryptedIndices = new Set();
 	},
 	mounted() {
 		this.load();
@@ -430,7 +301,6 @@ export default {
 			this.loading = true;
 			this.itemsLoading = true;
 			this.error = null;
-			this._loadedEncryptedIndices.clear();
 			try {
 				const publicClient = getPublicClient(config);
 				const id = BigInt(this.$route.params.id);
@@ -472,15 +342,12 @@ export default {
 					kek: meta.kek,
 				};
 
-				// Fired before checkCanWrite (an unrelated read — write permission has nothing
-				// to do with item listing) and deliberately not awaited — see loadItems()'s
-				// own comment on why it streams items in one at a time instead of loading
-				// them all before returning. Both together mean this.items gets its
-				// placeholders in the same tick `this.stream` is set, with no gap where the
-				// Items panel has mounted but doesn't yet know whether there's anything to
-				// show — see `itemsLoading`.
+				// Deliberately not awaited — see loadItems()'s own comment on why it streams
+				// items in one at a time instead of loading them all before returning. This
+				// means this.items gets its placeholders in the same tick `this.stream` is
+				// set, with no gap where the Items panel has mounted but doesn't yet know
+				// whether there's anything to show — see `itemsLoading`.
 				this.loadItems();
-				await this.checkCanWrite();
 				this.startLoadedPoll();
 			} catch (e) {
 				this.error = e?.shortMessage || e?.message || 'Failed to load stream';
@@ -507,6 +374,8 @@ export default {
 				size: 0,
 				locator: null,
 				hash: null,
+				name: null,
+				chunkAddress: null,
 			}));
 			// Only now do we actually know whether there's anything to show — flips
 			// ItemList from its loading skeleton to either real placeholders or a genuine
@@ -569,7 +438,7 @@ export default {
 		},
 		async loadOneItem(index) {
 			if (index < this.stream.firstAvailableIndex) {
-				return { index, tier: 'truncated', size: 0, locator: null, hash: null };
+				return { index, tier: 'truncated', size: 0, locator: null, hash: null, name: null, chunkAddress: null };
 			}
 			// Tier/size/pointer only — no payload fetch here. Content is hidden by default
 			// and loaded on demand (see loadItemBytes below), so listing N items never pulls
@@ -582,6 +451,21 @@ export default {
 				size: item.size,
 				locator: pointer?.locator ?? null,
 				hash: pointer?.hash ?? null,
+				// Already fetched as part of itemAt()'s own refs read — decoding it costs
+				// nothing extra. null for anything not pushed with itemMeta (every tab but
+				// File) or pushed before this format existed; ItemListItem falls back to a
+				// generic label either way.
+				name: decodeItemMeta(item.meta).name,
+				// The deployed chunk this item's bytes live in — only CODE items have one at
+				// all (SLOT is packed into the Item struct's own slot; EXTERNAL lives off
+				// -chain), and only this one matters for "does this item share a chunk with
+				// its neighbor" (ItemList's connector line): a pushMany batch packs into
+				// exactly one chunk per item, never spanning, so `chunks[0]` alone is enough
+				// to detect real sharing without also querying a staged item's own extra
+				// chunks. `getItemRefs` is a cache hit here — `itemAt()` just above already
+				// populated this exact entry; itemAt()/itemsAt() just never carry it forward
+				// onto MnemonadItem (see Mnemonad.js's own doc on why).
+				chunkAddress: item.storeName === 'code' ? (await this._stream.getItemRefs(index)).chunks[0] ?? null : null,
 			};
 		},
 		/**
@@ -599,13 +483,17 @@ export default {
 			const toFetch = [];
 			for (const index of indices) {
 				if (index < this.stream.firstAvailableIndex) {
-					rows[index] = { index, tier: 'truncated', size: 0, locator: null, hash: null };
+					rows[index] = { index, tier: 'truncated', size: 0, locator: null, hash: null, name: null, chunkAddress: null };
 				} else {
 					toFetch.push(index);
 				}
 			}
 			if (toFetch.length) {
 				const items = await this._stream.itemsAt(toFetch);
+				// Cache hits, same reasoning as loadOneItem's own getItemRefs call — itemsAt()
+				// just above already populated every one of these entries; only fetched again
+				// here for the chunks[] field it discards (see Mnemonad.js's own doc on why).
+				const refs = await this._stream.getItemRefsBatch(toFetch);
 				toFetch.forEach((index, k) => {
 					const item = items[k];
 					const pointer = item.isExternal ? item.pointerData() : null;
@@ -615,6 +503,8 @@ export default {
 						size: item.size,
 						locator: pointer?.locator ?? null,
 						hash: pointer?.hash ?? null,
+						name: decodeItemMeta(item.meta).name,
+						chunkAddress: item.storeName === 'code' ? (refs[k].chunks[0] ?? null) : null,
 					};
 				});
 			}
@@ -626,35 +516,41 @@ export default {
 		 * ItemListItem gate every read behind `isLocked`; see the `:locked` prop) — this is
 		 * a defensive check, not the primary guard.
 		 *
-		 * `itemAt()`/`MnemonadItem.bytes()` never decrypt — only `Mnemonad.at()` (and
-		 * `readRange`/`stream()`) do — so an encrypted stream reads through `at()` instead,
-		 * which also means it bypasses the SDK's own `itemAt`-based loaded-cache; see
-		 * isItemLoaded below for how that's covered. An unencrypted stream keeps the
-		 * original path, whose `itemAt`/`bytes()` caching a repeat call benefits from.
+		 * `itemAt(index).bytes()` now decrypts correctly regardless of encryption —
+		 * `MnemonadItem.bytes()` delegates to `Mnemonad.at()` internally (see
+		 * `MnemonadItem.js`'s own doc) — so this is the one path for every stream, same as
+		 * before encryption ever needed special-casing here.
 		 * @param {number} index
 		 * @returns {Promise<Uint8Array>}
 		 */
 		async loadItemBytes(index) {
 			if (this.isLocked) throw new Error('Stream is locked');
-			if (this.stream?.encrypted) {
-				const bytes = await this._stream.at(index);
-				this._loadedEncryptedIndices.add(index);
-				return bytes;
-			}
 			const item = await this._stream.itemAt(index);
 			return await item.bytes();
 		},
 		/**
+		 * Raw on-chain layout for item `index` -- tier, size, its packed offset within a
+		 * shared chunk (meaningful for CODE only -- see `getItemRefs`'s own doc), and the
+		 * deployed chunk address(es) actually holding its bytes. Deliberately NOT gated
+		 * behind `isLocked` the way `loadItemBytes` is: this is public on-chain metadata,
+		 * never the item's content, so it's exactly as visible on a locked stream as the
+		 * tier/size already shown on every card face -- encryption has nothing to say
+		 * about where bytes are stored, only what they say.
+		 * @param {number} index
+		 * @returns {Promise<{store: number, chunks: string[], offset: number, size: number}>}
+		 */
+		async loadItemRefs(index) {
+			return await this._stream.getItemRefs(index);
+		},
+		/**
 		 * Synchronous, fetch-free cache peek — lets ItemList style an item's size by
-		 * whether its payload is already resident in memory. For an unencrypted stream this
-		 * is the SDK's own cache (`Mnemonad.isItemLoaded`); an encrypted stream's reads go
-		 * through `at()` instead (see loadItemBytes), which that cache never sees, so those
-		 * are tracked locally in `_loadedEncryptedIndices`.
+		 * whether its payload is already resident in memory. The SDK's own cache
+		 * (`Mnemonad.isItemLoaded`) now reflects this correctly for every item regardless
+		 * of encryption, so this needs no local tracking of its own.
 		 * @param {number} index
 		 * @returns {boolean}
 		 */
 		isItemLoaded(index) {
-			if (this._loadedEncryptedIndices.has(index)) return true;
 			return this._stream?.isItemLoaded(index) ?? false;
 		},
 		/** Opens the shared password-unlock dialog — triggered by any locked item's click. */
@@ -672,18 +568,14 @@ export default {
 			this.unlocking = true;
 			this.unlockError = null;
 			try {
+				// unlockWithPassword owns the derive/verify/adopt sequence — a wrong password
+				// throws (its unwrap's GCM tag check is itself the validity check) rather than
+				// silently adopting garbage, so a bad attempt never reaches setKey below.
 				const kek = this.stream.kek;
-				const crypto = new MnemonadCrypto({
-					mnemonad: this._stream,
-					password: this.unlockPassword,
+				const aesKey = await this._stream.unlockWithPassword(this.unlockPassword, {
 					passwordSalt: kek.salt,
 					passwordIterations: kek.iterations,
 				});
-				// unwrapAesKey is itself the validity check: a wrong password derives a wrong
-				// KEK, and the wrapped key's GCM tag fails to verify — it throws rather than
-				// silently returning garbage.
-				const aesKey = await crypto.unwrapAesKey(this._stream.encKeyWrapped);
-				this._stream.crypto.setAesKey(aesKey);
 				this.streamKeysStore.setKey(this.stream.id, aesKey);
 				this.unlockDialog = false;
 			} catch {
@@ -718,227 +610,8 @@ export default {
 			this.loadedItemsCount = count;
 			this.loadedBinaryLength = bytes;
 		},
-		async checkCanWrite() {
-			// Needs the loaded instance (its id, its already-rate-limited publicClient) —
-			// load() calls this again once `this._stream` is set, so there is nothing else
-			// to do here if it isn't yet.
-			if (!this.walletStore.isConnected || !this._stream) {
-				this.canWrite = false;
-				return;
-			}
-			try {
-				this.canWrite = await this._stream.canWrite(this.walletStore.address);
-			} catch {
-				this.canWrite = false;
-			}
-		},
-		/**
-		 * The unwrapped data key for this stream, if this session has one — `undefined`
-		 * (never `null`) so it's safe to spread straight into a `Mnemonad` constructor's
-		 * `aesKey` param, which treats either the same way. Every write path below passes
-		 * this so a push to an already-encrypted stream actually encrypts, instead of
-		 * silently writing plaintext the way a writable instance with no key at all would
-		 * (`crypto.isEnabled` false → `_maybeEncrypt` is a no-op — see MnemonadCrypto.js).
-		 * @returns {?Uint8Array}
-		 */
-		writeAesKey() {
-			return this._stream?.crypto?.getAesKey() || undefined;
-		},
-		/**
-		 * @param {string} text
-		 * @returns {Promise<?import('@mnemonad').CostEstimate>} null if there's nothing
-		 *   loaded yet to estimate against — AddTextChunk treats that as "show nothing".
-		 */
-		async estimateCost(text) {
-			if (!this._stream || !this.walletStore.isConnected) return null;
-			const estimator = new Mnemonad({
-				// Reuses the already-rate-limited client from load() rather than asking the
-				// constructor to wrap it a second time.
-				publicClient: this._stream.publicClient,
-				contractAddress: this.mnemonadStore.contractAddress,
-				id: this._stream.id,
-				senderAddress: this.walletStore.address,
-				// Only its `canWrite` matters here: estimatePushCost uses it to decide
-				// whether an oversized item routes off-chain, and never uploads anything.
-				offloadingProvider: createPresignProvider({ account: this.walletStore.address }),
-				cache: this.cacheParam,
-				debug: true,
-				// Without this, the estimate would be computed on the PLAINTEXT size for an
-				// encrypted stream — undercounting the ~26+ bytes of framing overhead per
-				// item and potentially misjudging the SLOT/CODE tier boundary too.
-				aesKey: this.writeAesKey(),
-			});
-			return await estimator.estimatePushCost(new TextEncoder().encode(text));
-		},
-		async onAddText(text) {
-			if (!this._stream || !this.hasUsableKey) return;
-			this.pushing = true;
-			try {
-				const publicClient = getPublicClient(config);
-				const walletClient = await getWalletClient(config);
-				const writable = new Mnemonad({
-					publicClient,
-					walletClient,
-					contractAddress: this.mnemonadStore.contractAddress,
-					id: this._stream.id,
-					maxRPCRequestsPerSecond: MAX_RPC_REQUESTS_PER_SECOND,
-					rpcRetry: RPC_RETRY,
-					offloadingProvider: createPresignProvider({ account: this.walletStore.address }),
-					cache: this.cacheParam,
-					debug: true,
-					aesKey: this.writeAesKey(),
-				});
-				await writable.push(new TextEncoder().encode(text));
-				await this.load();
-			} catch (e) {
-				this.$q.notify({
-					type: 'negative',
-					message: e?.shortMessage || e?.message || 'Failed to add item',
-					position: 'top',
-				});
-			} finally {
-				this.pushing = false;
-			}
-		},
-		/**
-		 * @param {Object} params
-		 * @param {number} params.count
-		 * @param {number} params.chunkSize
-		 */
-		async onAddRandomBytes({ count, chunkSize }) {
-			if (!this._stream || !this.hasUsableKey) return;
-			this.pushingRandom = true;
-			try {
-				const publicClient = getPublicClient(config);
-				const walletClient = await getWalletClient(config);
-				const writable = new Mnemonad({
-					publicClient,
-					walletClient,
-					contractAddress: this.mnemonadStore.contractAddress,
-					id: this._stream.id,
-					maxRPCRequestsPerSecond: MAX_RPC_REQUESTS_PER_SECOND,
-					rpcRetry: RPC_RETRY,
-					offloadingProvider: createPresignProvider({ account: this.walletStore.address }),
-					cache: this.cacheParam,
-					debug: true,
-					aesKey: this.writeAesKey(),
-				});
-				const chunks = Array.from({ length: count }, () => randomBytes(chunkSize));
-				await writable.push(chunks);
-				await this.load();
-			} catch (e) {
-				this.$q.notify({
-					type: 'negative',
-					message: e?.shortMessage || e?.message || 'Failed to add random bytes',
-					position: 'top',
-				});
-			} finally {
-				this.pushingRandom = false;
-			}
-		},
-		/**
-		 * Gateway quote for an off-chain payload of `size` bytes.
-		 * @param {number} size
-		 * @returns {Promise<?bigint>} null when no gateway is wired; rejects when one is but
-		 *   currently refuses to quote (stale/uncertain oracle), which the tab renders.
-		 */
-		async quoteOffload(size) {
-			if (!this._stream) return null;
-			const gw = await MnemonadUploadGateway.fromMnemonad(this._stream);
-			if (!gw) return null;
-			return await gw.quote(size);
-		},
-		/**
-		 * The full paid-upload path: escrow, upload, settle.
-		 *
-		 * Two transactions by necessity, not by choice — the escrow has to exist on-chain
-		 * before the pointer commit can find it. The second one carries no `value`: the
-		 * registry sees a matching escrow and waives its EXTERNAL fee.
-		 *
-		 * @param {{size: number}} param0
-		 */
-		async onOffloadUpload({ size }) {
-			if (!this._stream || !this.hasUsableKey) return;
-			this.offloading = true;
-			try {
-				const publicClient = getPublicClient(config);
-				const walletClient = await getWalletClient(config);
-				const writable = new Mnemonad({
-					publicClient,
-					walletClient,
-					contractAddress: this.mnemonadStore.contractAddress,
-					id: this._stream.id,
-					maxRPCRequestsPerSecond: MAX_RPC_REQUESTS_PER_SECOND,
-					rpcRetry: RPC_RETRY,
-					offloadingProvider: createPresignProvider({ account: this.walletStore.address }),
-					cache: this.cacheParam,
-					debug: true,
-					aesKey: this.writeAesKey(),
-				});
-
-				const plaintext = randomBytes(size);
-				// On an encrypted stream, the bytes committed to the gateway and the bytes
-				// actually uploaded have to be IDENTICAL ciphertext -- encrypting twice (once
-				// here, once again inside a plain push()/pushExternal()) would draw two
-				// different nonces, and the escrow would never find a matching hash to settle
-				// against. So the stream itself is encrypted ONCE, here, and that exact
-				// ciphertext is what both the commitment and the upload use -- see
-				// offloadCommitment's own doc for the full reasoning.
-				const encrypted = !!this.stream.encrypted;
-				const payload = encrypted ? await writable.crypto.encryptItem(plaintext) : plaintext;
-				const commitOptions = encrypted ? { alreadyEncrypted: true } : {};
-				const { hash, size: commitSize } = await writable.offloadCommitment(payload, commitOptions);
-
-				const gw = await MnemonadUploadGateway.fromMnemonad(writable, { walletClient });
-				if (!gw) throw new Error('No upload gateway is wired to this registry.');
-
-				// No explicit value: the SDK re-quotes immediately before sending. Passing a
-				// padded amount would avoid a rare price-movement revert, but overpayment is
-				// swept into gateway revenue on settlement rather than refunded — so paying
-				// the exact quote is the honest default.
-				await gw.payForUpload(hash, commitSize);
-				// pushExternal directly, not push() -- push() would route this same size
-				// through its own _maybeEncrypt and re-encrypt the ALREADY-encrypted payload a
-				// second time (or, for an unencrypted stream, would just re-derive the same
-				// plaintext routing push() already does; pushExternal is equivalent there since
-				// this data is always oversized enough to go external regardless).
-				await writable.pushExternal(payload, commitOptions);
-
-				await this.load();
-				await this.mnemonadStore.fetchGateway();
-				this.$q.notify({
-					type: 'positive',
-					message: `Uploaded ${size} bytes to IPFS — registry fee waived by prepaid escrow.`,
-					position: 'top',
-				});
-			} catch (e) {
-				this.$q.notify({
-					type: 'negative',
-					message: e?.shortMessage || e?.message || 'Paid upload failed',
-					position: 'top',
-				});
-			} finally {
-				this.offloading = false;
-			}
-		},
 	},
 };
-
-/**
- * `crypto.getRandomValues` rejects requests over 65536 bytes (a real Web Crypto spec
- * limit) — chunkSize can run up to the stream's maxChunkBytes, which is often well past
- * that, so this fills in 64 KB slices rather than one call on the whole buffer.
- * @param {number} length
- * @returns {Uint8Array}
- */
-function randomBytes(length) {
-	const bytes = new Uint8Array(length);
-	const MAX_PER_CALL = 65536;
-	for (let offset = 0; offset < length; offset += MAX_PER_CALL) {
-		crypto.getRandomValues(bytes.subarray(offset, Math.min(offset + MAX_PER_CALL, length)));
-	}
-	return bytes;
-}
 
 /** @param {number} ms */
 function sleep(ms) {
@@ -978,73 +651,6 @@ function sleep(ms) {
 	margin: 0;
 	font-size: 12px;
 	opacity: 0.75;
-}
-
-/* Sits in JPanel's header slot, alongside the "Add" title — see the template. */
-.add-panel__tabs {
-	margin-left: 8px;
-}
-
-/* Positions the overlay below against the dimmed form content, not the page. */
-.add-panel__panel-wrap {
-	position: relative;
-}
-
-/* Dims and disables the form content — tabs stay bright, see the template comment.
-   The individual `:disable` props on each form are still there underneath (belt and
-   suspenders: this is only a visual/pointer-events treatment, not the actual guard). */
-.add-panel__panel--disabled {
-	opacity: 0.35;
-	pointer-events: none;
-}
-
-/* Presentation mode: dims the whole "Add" panel for a recording/demo, without disabling it
-   — unlike .add-panel__panel--disabled above, this is purely visual, so it deliberately
-   skips pointer-events: none. Same class name (and rule, same opacity) also appears in
-   layout/Default.vue for the header/footer — not shared via a global stylesheet since every
-   other style in this app stays scoped per-component; small enough to duplicate rather than
-   break that convention for. */
-.presentation-dim {
-	transition: opacity 0.2s ease;
-}
-
-.presentation-dim--active {
-	opacity: 0.35;
-}
-
-.add-panel__overlay {
-	position: absolute;
-	inset: 0;
-	display: flex;
-	flex-direction: column;
-	align-items: center;
-	justify-content: center;
-	gap: 6px;
-	padding: 16px;
-	text-align: center;
-	/* Not dimmed — a sibling of `.add-panel__panel--disabled`, not a descendant. */
-}
-
-.add-panel__overlay-icon {
-	color: var(--q-text-muted, #8a94a6);
-	opacity: 0.8;
-}
-
-.add-panel__overlay-title {
-	margin: 0;
-	font-size: 14px;
-	font-weight: 600;
-	color: var(--q-text-bright, #ffffff);
-}
-
-.add-panel__overlay-hint {
-	margin: 0;
-	font-size: 12px;
-	color: var(--q-text-muted, #8a94a6);
-}
-
-body.body--light .add-panel__overlay-title {
-	color: #2a2440;
 }
 
 .stream-layout {

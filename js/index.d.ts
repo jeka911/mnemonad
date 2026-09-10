@@ -188,6 +188,27 @@ export interface PushParams extends TxOptions {
 	/** Per-item metadata. Single items only. */
 	itemMeta?: Uint8Array | null;
 	/**
+	 * Set `false` to skip prepaying through a wired upload gateway for an off-chain item —
+	 * on by default, since `push()` handles the whole commit/pay/upload sequence itself.
+	 */
+	payGateway?: boolean;
+	/**
+	 * Called for a multi-step write. Staged on-chain (`onChain: true` past
+	 * `maxChunkBytes`): once after `beginItem`, once after each `appendChunk`
+	 * (`chunkIndex` = how many have landed so far, 1-based), and once after `commitItem`.
+	 * Gateway-prepaid off-chain: once before `payForUpload` (`phase: 'gateway-pay'`) and
+	 * once before the upload itself (`phase: 'gateway-upload'`). Ignored for a
+	 * single-transaction push, which has nothing to report progress on. Best-effort
+	 * visibility only; there is no resume support if a staged upload fails partway through.
+	 */
+	onProgress?:
+		| ((info: {
+				phase: 'begin' | 'chunk' | 'commit' | 'gateway-pay' | 'gateway-upload';
+				chunkIndex: number;
+				chunkCount: number;
+		  }) => void)
+		| null;
+	/**
 	 * The payload is already ciphertext; skip re-encrypting it. Needed for `pushExternal`
 	 * when prepaying through `MnemonadUploadGateway` on an encrypted stream — see
 	 * `offloadCommitment`'s own doc for the full sequence.
@@ -488,6 +509,17 @@ export declare class Mnemonad {
 	initialize(): Promise<void>;
 	reInitialize(): void;
 	isEncrypted(): Promise<boolean>;
+	/**
+	 * Unlocks a password-encrypted stream in place: derives the KEK from `password` plus
+	 * `passwordSalt`/`passwordIterations`, unwraps `encKeyWrapped`, and adopts the result
+	 * on `this.crypto` — every read through this instance decrypts from this point on.
+	 * Throws on a wrong password (the wrapped key's GCM tag fails to verify) or a stream
+	 * with no wrapped key at all.
+	 */
+	unlockWithPassword(
+		password: string,
+		params: { passwordSalt: string | Uint8Array; passwordIterations?: number }
+	): Promise<Uint8Array>;
 	owner(): Promise<string>;
 	/**
 	 * Whether `address` (default: this instance's configured sender) can append to this
@@ -517,6 +549,16 @@ export declare class Mnemonad {
 	isItemLoaded(i: number): boolean;
 	pointerAt(i: number): Promise<Pointer>;
 	getItemRefs(i: number): Promise<ItemRefs>;
+
+	/** The registry's wired paid-upload gateway address, or the zero address if none. */
+	uploadGateway(): Promise<string>;
+	/**
+	 * MON required to prepay the wired upload gateway for an off-chain payload of up to
+	 * `size` bytes — the same gateway `push()` pays automatically for an oversized item.
+	 * `null` when no gateway is wired; throws (a stale/uncertain Pyth price, typically)
+	 * when one is wired but currently refuses to quote.
+	 */
+	quoteOffloadUpload(size: number): Promise<bigint | null>;
 
 	/**
 	 * The sha256 an offloaded push of `data` would record in its `Pointer.hash` — the value
@@ -553,7 +595,12 @@ export declare class Mnemonad {
 	 */
 	estimatePushCost(
 		data: Uint8Array,
-		params?: { bufferPercent?: number; onChain?: boolean; itemMeta?: Uint8Array | null }
+		params?: {
+			bufferPercent?: number;
+			onChain?: boolean;
+			itemMeta?: Uint8Array | null;
+			alreadyEncrypted?: boolean;
+		}
 	): Promise<CostEstimate>;
 }
 

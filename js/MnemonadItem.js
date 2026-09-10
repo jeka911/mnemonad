@@ -93,33 +93,50 @@ export default class MnemonadItem {
 	}
 
 	/**
-	 * Returns the raw payload — lazily fetching it on first call for both on-chain items
-	 * (a single `at()` contract read) and external items (from IPFS, verified against the
-	 * on-chain pointer hash), then caching it so repeat calls are free.
+	 * Returns this item's actual content — lazily fetching it on first call, then caching
+	 * so repeat calls are free.
+	 *
+	 * Delegates to `Mnemonad.at()`, the one place in this SDK that actually decrypts (see
+	 * that method's own doc): on an encrypted stream with a usable key, this returns
+	 * plaintext, for both on-chain and external items, exactly as `at(index)` would;
+	 * unencrypted, or without a key, it returns the stored bytes verbatim, same as
+	 * always. One consequence worth knowing: on a locked encrypted stream (no
+	 * signer/password/aesKey supplied), this returns ciphertext rather than throwing —
+	 * matching `at()`'s own documented behavior — so a caller that needs to distinguish
+	 * "locked" from "genuinely this item's content" has to know separately whether the
+	 * stream is unlockable, the same way it already would calling `at()` directly.
+	 *
+	 * `_bytes` — and therefore `isLoaded` below — is set the same way regardless of
+	 * encryption, which is what makes "has this item's content been loaded" a single,
+	 * consistent question again instead of one a caller has to track differently per
+	 * stream.
+	 *
 	 * @returns {Promise<Uint8Array>}
-	 * @throws {Error} If the item is external and no IPFS transport is configured, if it's
-	 *   on-chain but has no `mnemonad`/index reference to fetch through, or if it's empty.
+	 * @throws {Error} If the item is external and no IPFS transport is configured, if it
+	 *   has no `mnemonad`/index reference to fetch through, or if it's empty.
 	 */
 	async bytes() {
-		if (this.type === 'bytes') {
-			if (this._bytes) return this._bytes; // already fetched once — no repeat round trip
-			if (this._mnemonad && this._index != null) {
-				this._bytes = await this._mnemonad._readItemBytes(this._index);
-				return this._bytes;
-			}
+		if (this.type === 'empty') throw new Error('Item is empty');
+		if (this._bytes) return this._bytes; // already fetched once — no repeat round trip
+		if (!this._mnemonad || this._index == null) {
 			throw new Error('Item has no cached bytes and no mnemonad/index reference to fetch them');
 		}
-		if (this.type === 'external') {
-			if (this._bytes) return this._bytes; // already fetched once — no repeat round trip
-			if (this._mnemonad?.offloadingProvider?.isEnabled) {
-				this._bytes = await this._mnemonad.offloadingProvider.readPointerBytes(this._pointerData);
-				return this._bytes;
-			}
+		if (this.type === 'external' && !this._mnemonad.offloadingProvider?.isEnabled) {
 			throw new Error(
 				'External items require gatewayUrl or ipfsClient to be configured on the Mnemonad'
 			);
 		}
-		throw new Error('Item is empty');
+		// This item already knows its own store/size (from the getItemRefs call itemAt()
+		// made to construct it) — handing that straight to at() via its internal _refs
+		// override avoids re-deriving the exact same thing a second time. Deliberately
+		// `this._size`, not the public `size` getter: that getter prefers an
+		// already-loaded `_bytes` length when present, which would be the DECRYPTED
+		// plaintext length on an encrypted item — not the stored/ciphertext size at()'s
+		// own routing needs. (`_bytes` is guaranteed null here regardless, since the
+		// early return above already handles the loaded case, but this stays correct by
+		// construction rather than by that invariant holding.)
+		this._bytes = await this._mnemonad.at(this._index, { _refs: { store: this.store, size: this._size } });
+		return this._bytes;
 	}
 
 	/**

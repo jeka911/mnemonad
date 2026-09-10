@@ -72,9 +72,9 @@
 </template>
 
 <script>
-import GradientButton from '../components/GradientButton.vue';
-import { formatBytes } from '../includes/formatBytes.js';
-import { formatMon } from '../includes/formatMon.js';
+import GradientButton from '../../../components/GradientButton.vue';
+import { formatBytes } from '../../../includes/formatBytes.js';
+import { formatMon } from '../../../includes/formatMon.js';
 
 /** Slider granularity. Byte-exact sizing here would be false precision. */
 const STEP = 4096;

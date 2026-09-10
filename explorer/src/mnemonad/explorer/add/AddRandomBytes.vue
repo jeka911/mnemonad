@@ -51,8 +51,8 @@
 </template>
 
 <script>
-import GradientButton from '../components/GradientButton.vue';
-import { formatBytes } from '../includes/formatBytes.js';
+import GradientButton from '../../../components/GradientButton.vue';
+import { formatBytes } from '../../../includes/formatBytes.js';
 
 /** Purely a UI ceiling on the "chunks" slider — keeps one generated batch (and the
  *  single transaction it becomes) from growing unreasonably large by default. */

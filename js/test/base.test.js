@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import Mnemonad, { EXPECTED_CONTRACT_VERSION } from '../Mnemonad.js';
+import MnemonadCrypto from '../MnemonadCrypto.js';
 import { Store } from '../MnemonadItem.js';
 import {
 	startNode,
@@ -456,6 +457,49 @@ describe('fees', () => {
 		const ev = await Mnemonad.create(baseParams());
 		const data = makeBytes(MAX_CHUNK + 1, 4);
 		await expect(ev.estimatePushCost(data)).rejects.toThrow(/exceeds maxChunkBytes/);
+	});
+
+	describe('on an encrypted stream', () => {
+		it('estimates on ciphertext size, not plaintext -- fee matches the larger encrypted length', async () => {
+			const ev = await Mnemonad.create(baseParams({ encrypt: true, signer: clients.walletClient }));
+			const plaintext = makeBytes(500, 5);
+			const cipherLen = MnemonadCrypto.ciphertextLengthFor(plaintext.length);
+			// Sanity: the two lengths actually differ, so the assertions below aren't
+			// vacuously true regardless of which one estimatePushCost used.
+			expect(cipherLen).not.toBe(plaintext.length);
+
+			const estimate = await ev.estimatePushCost(plaintext);
+			expect(estimate.fee).toBe(await ev.quotePushFee(cipherLen, Store.CODE));
+
+			// The estimate has to genuinely match what push() does with the same input.
+			await ev.push(plaintext);
+			expect((await ev.itemAt(0)).size).toBe(cipherLen);
+		});
+
+		it('a plaintext size that fits on-chain unencrypted can still need { onChain: true } once encrypted', async () => {
+			// Exactly the case push()'s own "encrypt first, then route" comment warns
+			// about — the bug this fix closes: estimating on plaintext length would have
+			// picked the single-transaction on-chain path here, when push() itself (which
+			// encrypts before routing) would actually need the staged path or IPFS.
+			const ev = await Mnemonad.create(baseParams({ encrypt: true, signer: clients.walletClient }));
+			const plaintext = makeBytes(MAX_CHUNK - 10, 6);
+			expect(MnemonadCrypto.ciphertextLengthFor(plaintext.length)).toBeGreaterThan(MAX_CHUNK);
+
+			await expect(ev.estimatePushCost(plaintext)).rejects.toThrow(/exceeds maxChunkBytes/);
+
+			const estimate = await ev.estimatePushCost(plaintext, { onChain: true });
+			expect(estimate.transactionCount).toBeGreaterThan(1);
+			await ev.push(plaintext, { onChain: true });
+		});
+
+		it('{ alreadyEncrypted: true } estimates on the given ciphertext directly, without encrypting it again', async () => {
+			const ev = await Mnemonad.create(baseParams({ encrypt: true, signer: clients.walletClient }));
+			const plaintext = makeBytes(300, 7);
+			const ciphertext = await ev.crypto.encryptItem(plaintext);
+
+			const estimate = await ev.estimatePushCost(ciphertext, { alreadyEncrypted: true });
+			expect(estimate.fee).toBe(await ev.quotePushFee(ciphertext.length, Store.CODE));
+		});
 	});
 });
 

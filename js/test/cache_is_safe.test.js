@@ -120,21 +120,25 @@ describe('on-chain items (SLOT and CODE)', () => {
 		expect(new Uint8Array(await ev.crypto.decryptItem(onchain.bytes))).toEqual(plaintext);
 	});
 
-	it('reading via the non-decrypting itemAt().bytes() path caches the same ciphertext', async () => {
-		// The path that never decrypts (see Mnemonad.js's own comment on _readItemBytes)
-		// caches too — worth its own check, since it's a different call site from at().
+	it('itemAt().bytes() decrypts too — plaintext out, ciphertext still what is actually cached', async () => {
+		// MnemonadItem.bytes() delegates to at() (the one place that actually decrypts —
+		// see MnemonadItem.js's own doc), so this now returns plaintext, same as at()
+		// would. What's worth its own check is that the DURABLE cache underneath it is
+		// still ciphertext regardless — decryption happens above the cache, not inside it,
+		// same rule as always, just reached via a different call site now.
 		const cacheOptions = { namespace: freshNamespace() };
 		const ev = await createEncrypted({ cacheOptions });
 		const plaintext = makeBytes(120, 3);
 		await ev.push(plaintext);
 
-		const raw = await (await ev.itemAt(0)).bytes();
-		expect(Buffer.from(raw)).not.toEqual(Buffer.from(plaintext));
+		const decrypted = await (await ev.itemAt(0)).bytes();
+		expect(new Uint8Array(decrypted)).toEqual(plaintext);
 
 		const entries = await allCacheEntries(ev);
 		const onchain = entries.find((e) => e.key.startsWith('onchain:'));
-		expect(Buffer.from(onchain.bytes)).toEqual(Buffer.from(raw)); // same ciphertext, one cache entry
-		expect(Buffer.from(onchain.bytes)).not.toEqual(Buffer.from(plaintext));
+		expect(onchain).toBeTruthy();
+		expect(Buffer.from(onchain.bytes)).not.toEqual(Buffer.from(plaintext)); // cache: ciphertext
+		expect(Buffer.from(onchain.bytes)).not.toEqual(Buffer.from(decrypted)); // decrypted != cached
 	});
 
 	it('a batch packed by pushMany is still all-ciphertext in the cache, per item', async () => {

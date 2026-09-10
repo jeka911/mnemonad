@@ -364,6 +364,68 @@ describe('reading without the key', () => {
 	});
 });
 
+describe('unlockWithPassword', () => {
+	it('unlocks a fresh instance opened with no password at all, in place', async () => {
+		const created = await createEncrypted();
+		const data = makeBytes(200, 3);
+		await created.push(data);
+
+		// No password/salt/aesKey given at construction — exactly the "load read-only
+		// first, unlock later once the user types a password" shape a UI actually uses,
+		// unlike the constructor-time password already covered above.
+		const reader = new Mnemonad(baseParams({ id: created.id }));
+		expect(reader.crypto.isEnabled).toBe(false);
+		expect(Buffer.from(await reader.at(0))).not.toEqual(Buffer.from(data));
+
+		const key = await reader.unlockWithPassword(PASSWORD, {
+			passwordSalt: created.crypto.getPasswordSalt(),
+			passwordIterations: TEST_ITERATIONS,
+		});
+
+		expect(reader.crypto.isEnabled).toBe(true);
+		expect(new Uint8Array(reader.crypto.getAesKey())).toEqual(new Uint8Array(key));
+		expect(new Uint8Array(await reader.at(0))).toEqual(data);
+	});
+
+	it('rejects a wrong password without adopting anything', async () => {
+		const created = await createEncrypted();
+		await created.push(makeBytes(50, 1));
+
+		const reader = new Mnemonad(baseParams({ id: created.id }));
+		await expect(
+			reader.unlockWithPassword('not the right password', {
+				passwordSalt: created.crypto.getPasswordSalt(),
+				passwordIterations: TEST_ITERATIONS,
+			})
+		).rejects.toThrow();
+
+		// The failed attempt must not have left a key installed — still ciphertext.
+		expect(reader.crypto.isEnabled).toBe(false);
+		expect(Buffer.from(await reader.at(0))).not.toEqual(Buffer.from(makeBytes(50, 1)));
+	});
+
+	it('rejects the right password with the wrong salt', async () => {
+		const created = await createEncrypted();
+		await created.push(makeBytes(50, 1));
+
+		const reader = new Mnemonad(baseParams({ id: created.id }));
+		await expect(
+			reader.unlockWithPassword(PASSWORD, {
+				passwordSalt: MnemonadCrypto.generatePasswordSalt(), // fresh, unrelated salt
+				passwordIterations: TEST_ITERATIONS,
+			})
+		).rejects.toThrow();
+		expect(reader.crypto.isEnabled).toBe(false);
+	});
+
+	it('throws for a stream with no wrapped key at all', async () => {
+		const plain = await Mnemonad.create(baseParams());
+		await expect(
+			plain.unlockWithPassword(PASSWORD, { passwordSalt: MnemonadCrypto.generatePasswordSalt() })
+		).rejects.toThrow(/no wrapped key/);
+	});
+});
+
 describe('password-encrypted streams and ownership', () => {
 	it('blocks transfer while a key is set, same as the signature method', async () => {
 		const { mnemonadAbi } = await import('../abi.js');

@@ -1,16 +1,44 @@
 <template>
 	<div class="item-card">
+		<!-- A short line into the grid's own gap, toward whichever card is next in index
+		     order — drawn only when that neighbor was packed into the very same on-chain
+		     chunk (a batched pushMany call), never for two items that just happen to sit
+		     next to each other. See ItemList's own `connectsToNext` for how this is decided,
+		     and its `.item-list__grid` CSS for why this can safely extend past this card's
+		     own box without ever visibly overflowing the grid itself. The visible line is
+		     only 2px tall (see .item-card__connector's own ::after) — the span itself is
+		     taller, purely so there's an actually-hoverable target for the tooltip below. -->
+		<span v-if="connectsToNext" class="item-card__connector">
+			<q-tooltip>Packed into the same chunk as the next item</q-tooltip>
+		</span>
 		<div class="item-card__head">
 			<span class="item-card__index">#{{ item.index }}</span>
 			<q-skeleton v-if="item.tier === 'pending'" type="text" width="34px" />
 			<span v-else class="item-card__tier" :class="`item-card__tier--${item.tier}`">{{ tierLabel(item.tier) }}</span>
 		</div>
 
+		<!-- Known in the same batch as tier/size (both come from one itemAt()/itemsAt()
+		     refs read — see Stream.vue's loadOneItem/loadItemsBatch), never fetched
+		     separately or later, so this never appears-after-the-fact on an already-settled
+		     card — the exact height-jump bug this file's own CSS comments already fought to
+		     fix once. Absent entirely for anything not pushed with itemMeta (every tab but
+		     File), so most cards are unaffected either way. Skipped for external items: their
+		     body already shows the name in place of the locator (see below) — showing it
+		     twice would just spend this row's height on a repeat of the same text. -->
+		<p v-if="item.name && item.tier !== 'external'" class="item-card__filename" :title="item.name">
+			{{ item.name }}
+		</p>
+
 		<div class="item-card__body">
 			<q-skeleton v-if="item.tier === 'pending'" type="text" width="70%" />
 			<span v-else-if="item.tier === 'truncated'" class="item-card__placeholder">(truncated)</span>
 			<div v-else-if="item.tier === 'external'" class="item-card__details">
-				<span class="item-card__detail" :title="item.locator || ''">{{ item.locator || '(no locator)' }}</span>
+				<!-- The name, when there is one, is more useful here than the raw CID — the
+				     full locator is still one hover (or the "Chunk info" popup) away via the
+				     title attribute below, never lost, just not the default thing shown. -->
+				<span class="item-card__detail" :title="item.locator || ''">
+					{{ item.name || item.locator || '(no locator)' }}
+				</span>
 				<span v-if="item.hash" class="item-card__detail item-card__detail--muted" :title="item.hash">
 					{{ truncateMiddle(item.hash) }}
 				</span>
@@ -72,6 +100,19 @@
 					:loading="downloading"
 					@click="download"
 				/>
+				<!-- Never gated behind `locked` (unlike View/Download above): tier, size,
+				     chunk addresses and offset are public on-chain metadata, not content —
+				     visible regardless of whether this stream is encrypted or unlocked. -->
+				<q-btn
+					v-if="canShowChunks"
+					flat
+					dense
+					round
+					icon="storage"
+					size="sm"
+					title="Chunk info"
+					@click="$emit('chunks', item)"
+				/>
 			</span>
 		</div>
 	</div>
@@ -129,8 +170,16 @@ export default {
 			type: Boolean,
 			default: false,
 		},
+		// Whether the NEXT item by index (not necessarily the next DOM sibling — ItemList
+		// only ever passes true when it genuinely is both) shares this one's on-chain
+		// chunk. Purely decorative (a connecting line, see the template) — never gates any
+		// read the way `locked` does.
+		connectsToNext: {
+			type: Boolean,
+			default: false,
+		},
 	},
-	emits: ['view', 'unlock'],
+	emits: ['view', 'unlock', 'chunks'],
 	data() {
 		return {
 			// { status: 'loading'|'ready'|'error', type?, snippet? } — one item per
@@ -153,6 +202,12 @@ export default {
 		},
 		canDownload() {
 			return this.loadBytes && !this.locked && !NO_CONTENT_TIERS.has(this.item.tier);
+		},
+		// Deliberately no `!this.locked` check, unlike the two above: chunk placement is
+		// metadata, not content, so it's available on a locked stream too. Still excludes
+		// pending/truncated — neither has a settled tier to describe anything about yet.
+		canShowChunks() {
+			return !NO_CONTENT_TIERS.has(this.item.tier);
 		},
 	},
 	methods: {
@@ -214,7 +269,7 @@ export default {
 				const url = URL.createObjectURL(blob);
 				const link = document.createElement('a');
 				link.href = url;
-				link.download = `item-${this.item.index}.bin`;
+				link.download = this.item.name || `item-${this.item.index}.bin`;
 				document.body.appendChild(link);
 				link.click();
 				link.remove();
@@ -253,6 +308,7 @@ function buildPreview(bytes) {
 
 <style scoped>
 .item-card {
+	position: relative; /* anchors .item-card__connector below */
 	display: flex;
 	flex-direction: column;
 	gap: 8px;
@@ -262,6 +318,42 @@ function buildPreview(bytes) {
 	border: 1px solid rgba(140, 120, 200, 0.12);
 	font-size: 0.9em;
 	transition: border-color 0.15s ease, background 0.15s ease;
+}
+
+/* Bridges exactly the parent grid's own `gap` (10px, see ItemList's .item-list__grid) so
+   it visually touches the next card's left edge when there is one there to touch — see
+   that grid's own comment for what happens when there isn't (the last card in a row). */
+.item-card__connector {
+	/* The hoverable box — generously tall so the tooltip has something realistic to
+	   trigger on; the actual visible line is the thin ::after below, not this box itself. */
+	position: absolute;
+	top: 50%;
+	right: -10px;
+	width: 10px;
+	height: 16px;
+	transform: translateY(-50%);
+}
+
+.item-card__connector::after {
+	content: '';
+	position: absolute;
+	top: 50%;
+	left: 0;
+	width: 100%;
+	height: 2px;
+	/* `border-top: dashed` scales its dash length to the border width (~3x, per engine),
+	   which at 2px gives ~6px dashes — on a line this short (10px, the grid's own gap)
+	   that rendered as one barely-broken segment instead of a visibly dashed one. An
+	   explicit repeating pattern keeps the dash/gap size fixed regardless of how short
+	   the line is. */
+	background-image: repeating-linear-gradient(
+		to right,
+		#6d6cf0 0,
+		#6d6cf0 2px,
+		transparent 2px,
+		transparent 4px
+	);
+	transform: translateY(-50%);
 }
 
 .item-card:hover {
@@ -279,6 +371,19 @@ function buildPreview(bytes) {
 .item-card__index {
 	color: var(--q-text-muted, #8a94a6);
 	font-family: var(--font-mono, monospace);
+}
+
+.item-card__filename {
+	margin: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+	font-size: 0.85em;
+	color: var(--q-text-bright, #ffffff);
+}
+
+body.body--light .item-card__filename {
+	color: #2a2440;
 }
 
 .item-card__tier {
