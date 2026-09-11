@@ -27,6 +27,16 @@ const MNEMONAD_ADDRESS = ENTRY ? ENTRY.contractAddress : null;
  */
 const streamCache = new Map();
 
+// Companion caches to `streamCache`, same module-level lifetime and same reason not to be
+// Pinia state (plain values, not reactivity-worthy, and read far more often than written).
+// Neither `owner` nor `canWrite` has an invalidation path in this app — there is no transfer
+// or setWriterApproval UI here — so both are cached for the life of the session, same as
+// `streamCache` itself, and dropped together with it in `clearStreamCache()`.
+/** @type {Map<string, string>} streamId -> owner address */
+const ownerCache = new Map();
+/** @type {Map<string, boolean>} `${streamId}:${address}` -> canWrite */
+const canWriteCache = new Map();
+
 // Monad testnet's public RPC 429s under a burst of individual eth_calls, and this app's own
 // pattern (hydrate N owned streams, each several reads, all via Promise.all) produces
 // exactly that burst on a single page load. Passed to every Mnemonad call site in this file
@@ -155,10 +165,9 @@ export const useMnemonadStore = defineStore('mnemonad', {
 		 *
 		 * `initialize()` is always (re-)awaited regardless of cache status: a no-op on a
 		 * cache hit unless something `reInitialize()`d it since (a push, most commonly —
-		 * see `Mnemonad._afterWrite`), a real fetch on a genuine miss. `owner()` always
-		 * runs live either way — ownership can genuinely change via transfer, and it's one
-		 * cheap read, not worth caching separately just to shave one call off an
-		 * already-cached visit.
+		 * see `Mnemonad._afterWrite`), a real fetch on a genuine miss. `owner()` is cached
+		 * too (`ownerCache`, keyed by id) — this app has no transfer-ownership UI, so
+		 * there's nothing that could make a cached owner stale within a session.
 		 *
 		 * @param {bigint} id
 		 * @returns {Promise<{stream: Mnemonad, owner: string}>}
@@ -179,22 +188,51 @@ export const useMnemonadStore = defineStore('mnemonad', {
 				});
 				streamCache.set(key, stream);
 			}
-			// Run together, not sequentially — on a cache miss, owner() doesn't depend on
-			// initialize()'s result, and firing both in the same tick lets the transport's
-			// JSON-RPC batching (see wagmi.js) fold owner() into the same HTTP request as
-			// initialize()'s own reads instead of a separate round trip for it alone.
-			const [, owner] = await Promise.all([stream.initialize(), stream.owner()]);
+			const cachedOwner = ownerCache.get(key);
+			// Run together, not sequentially — on a genuine owner-cache miss, owner() doesn't
+			// depend on initialize()'s result, and firing both in the same tick lets the
+			// transport's JSON-RPC batching (see wagmi.js) fold owner() into the same HTTP
+			// request as initialize()'s own reads instead of a separate round trip for it
+			// alone. On an owner-cache hit this just awaits the cached value alongside.
+			const [, owner] = await Promise.all([
+				stream.initialize(),
+				cachedOwner !== undefined ? Promise.resolve(cachedOwner) : stream.owner(),
+			]);
+			if (cachedOwner === undefined) ownerCache.set(key, owner);
 			return { stream, owner };
 		},
 		/**
+		 * Whether `address` can write to stream `id` — cached (`canWriteCache`, keyed by
+		 * `${id}:${address}`) for the same reason `owner` is: this app has no
+		 * setWriterApproval UI, so nothing can make a cached answer stale within a session.
+		 * Keying by address (not just id) means an account switch is naturally a cache miss
+		 * rather than needing its own explicit invalidation.
+		 *
+		 * @param {bigint} id
+		 * @param {string} address
+		 * @returns {Promise<boolean>}
+		 */
+		async checkCanWrite(id, address) {
+			const key = `${id}:${address}`;
+			if (canWriteCache.has(key)) return canWriteCache.get(key);
+			const stream = streamCache.get(String(id));
+			if (!stream) return false; // loadStream() always runs first in practice
+			const canWrite = await stream.canWrite(address);
+			canWriteCache.set(key, canWrite);
+			return canWrite;
+		},
+		/**
 		 * Drops every cached stream instance — and with it, any unwrapped password key one
-		 * was holding. Called on wallet disconnect (see wallet.js), the same "a shared/
-		 * public machine disconnecting shouldn't leave decrypted keys resident" reasoning
-		 * the old streamKeysStore existed for; caching a stream is only meant to save RPC
-		 * calls within one connected session, not to survive past it.
+		 * was holding, plus the companion `ownerCache`/`canWriteCache` entries. Called on
+		 * wallet disconnect (see wallet.js), the same "a shared/public machine disconnecting
+		 * shouldn't leave decrypted keys resident" reasoning the old streamKeysStore existed
+		 * for; caching a stream is only meant to save RPC calls within one connected
+		 * session, not to survive past it.
 		 */
 		clearStreamCache() {
 			streamCache.clear();
+			ownerCache.clear();
+			canWriteCache.clear();
 		},
 		/**
 		 * Discovers the wired gateway and reads its pricing. Safe to call unconditionally:
@@ -284,8 +322,11 @@ export const useMnemonadStore = defineStore('mnemonad', {
 				// Cached immediately — already-unwrapped key included, if this was a password
 				// stream — so if the creator now navigates to it, loadStream() finds this
 				// exact instance and costs no RPC calls, no re-prompt for the password they
-				// just typed, and no separate key-only store needed to bridge the two.
+				// just typed, and no separate key-only store needed to bridge the two. The
+				// creator is the owner by construction, so ownerCache is seeded the same way
+				// — loadStream() then finds that cached too, no owner() call either.
 				streamCache.set(String(stream.id), stream);
+				ownerCache.set(String(stream.id), walletClient.account.address);
 
 				// Append locally rather than re-running the whole list — this stream is
 				// known-fresh (just minted), no need to re-fetch it.

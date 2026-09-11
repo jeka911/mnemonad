@@ -300,7 +300,9 @@ export default {
 				return;
 			}
 			try {
-				this.canWrite = await this.stream.canWrite(this.walletStore.address);
+				// mnemonadStore caches this by (id, address) — a remount of this panel (e.g.
+				// navigating away and back to the same stream) costs no RPC call on a hit.
+				this.canWrite = await this.mnemonadStore.checkCanWrite(this.stream.id, this.walletStore.address);
 			} catch {
 				this.canWrite = false;
 			}
