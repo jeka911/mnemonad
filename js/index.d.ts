@@ -168,8 +168,13 @@ export interface CreateParams extends MnemonadParams {
 	array?: Uint8Array | Uint8Array[] | null;
 	/** 0x-prefixed 32-byte hex. Random if omitted. */
 	salt?: string | null;
-	/** Stream-level metadata. */
+	/** Raw stream-level metadata bytes. Wins outright over `name` when given. */
 	meta?: Uint8Array | null;
+	/**
+	 * Stream name, encoded (with this stream's own password KEK block, if any) into `meta`
+	 * automatically when `meta` isn't given directly. See `streamMeta.js`'s own doc.
+	 */
+	name?: string | null;
 	/** Create an encrypted stream. Requires `signer` or `password`. */
 	encrypt?: boolean;
 	options?: TxOptions;
@@ -185,8 +190,12 @@ export interface TxOptions {
 export interface PushParams extends TxOptions {
 	/** Force large items on-chain via staged append instead of offloading to IPFS. */
 	onChain?: boolean;
-	/** Per-item metadata. Single items only. */
+	/** Raw per-item metadata bytes (single items only). Wins outright over `name`/`type`. */
 	itemMeta?: Uint8Array | null;
+	/** Item name, encoded into `itemMeta` automatically when it isn't given directly. */
+	name?: string | null;
+	/** Item MIME type, encoded the same way as `name`. */
+	type?: string | null;
 	/**
 	 * Set `false` to skip prepaying through a wired upload gateway for an off-chain item —
 	 * on by default, since `push()` handles the whole commit/pay/upload sequence itself.
@@ -232,6 +241,9 @@ export declare class MnemonadItem {
 	 * external — both are lazy), always false for empty items. Pure cache inspection.
 	 */
 	readonly isLoaded: boolean;
+	/** This item's own metadata (`{name, type}`), decoded from raw `meta` on every access —
+	 *  see `itemMeta.js`'s own doc. */
+	readonly itemMeta: { name: string | null; type: string | null };
 	bytes(): Promise<Uint8Array>;
 	pointerData(): Pointer | null;
 	static fromChain(raw: unknown, context?: unknown): MnemonadItem;
@@ -415,6 +427,12 @@ export declare class MnemonadCrypto {
 	getAesKey(): Uint8Array | null;
 	/** The salt in use for password-based key derivation, if any. */
 	getPasswordSalt(): Uint8Array | null;
+	/** The iteration count in use for password-based key derivation, or `null` when this
+	 *  instance isn't using the password method at all. */
+	getPasswordIterations(): number | null;
+	/** This instance's stream-metadata `kek` block, or `null` when there isn't one to
+	 *  publish (unencrypted, signer-based, or a password whose salt doesn't exist yet). */
+	getPasswordKek(): StreamMetaKek | null;
 	wrapAesKey(aesKey: Uint8Array, streamId?: bigint | null): Promise<Uint8Array>;
 	unwrapAesKey(wrapped: Uint8Array, streamId?: bigint | null): Promise<Uint8Array>;
 	/** Encrypts into independently-decryptable frames (STREAM construction). */
@@ -479,6 +497,9 @@ export declare class Mnemonad {
 
 	readonly contractAddress: string | null;
 	readonly isWritable: boolean;
+	/** The stream's own metadata (`{name, kek}`), decoded from raw `meta` on every access —
+	 *  see `streamMeta.js`'s own doc. Requires `initialize()` to have already run. */
+	readonly streamMeta: { name: string | null; kek: StreamMetaKek | null };
 
 	offloadingProvider: MnemonadOffloadingProvider;
 	crypto: MnemonadCrypto;
@@ -511,14 +532,16 @@ export declare class Mnemonad {
 	isEncrypted(): Promise<boolean>;
 	/**
 	 * Unlocks a password-encrypted stream in place: derives the KEK from `password` plus
-	 * `passwordSalt`/`passwordIterations`, unwraps `encKeyWrapped`, and adopts the result
-	 * on `this.crypto` — every read through this instance decrypts from this point on.
-	 * Throws on a wrong password (the wrapped key's GCM tag fails to verify) or a stream
-	 * with no wrapped key at all.
+	 * `passwordSalt`/`passwordIterations` (defaulting to this stream's own
+	 * `streamMeta.kek` when omitted — the common case is just the password), unwraps
+	 * `encKeyWrapped`, and adopts the result on `this.crypto` — every read through this
+	 * instance decrypts from this point on. Throws on a wrong password (the wrapped key's
+	 * GCM tag fails to verify), a stream with no wrapped key at all, or no salt available
+	 * from either `params` or `streamMeta.kek`.
 	 */
 	unlockWithPassword(
 		password: string,
-		params: { passwordSalt: string | Uint8Array; passwordIterations?: number }
+		params?: { passwordSalt?: string | Uint8Array; passwordIterations?: number }
 	): Promise<Uint8Array>;
 	owner(): Promise<string>;
 	/**
@@ -599,9 +622,52 @@ export declare class Mnemonad {
 			bufferPercent?: number;
 			onChain?: boolean;
 			itemMeta?: Uint8Array | null;
+			name?: string | null;
+			type?: string | null;
 			alreadyEncrypted?: boolean;
 		}
 	): Promise<CostEstimate>;
 }
+
+/** See `streamMeta.js`'s own doc — a stream's decoded `kek` block, present only for a
+ *  password-encrypted stream (a signer-encrypted one has no salt/iterations to publish). */
+export interface StreamMetaKek {
+	method: string;
+	salt: string;
+	iterations: number;
+}
+
+/**
+ * Encodes a stream's `{name, kek}` metadata into its opaque on-chain `meta` bytes, gzipped
+ * only when that's smaller than plain JSON (see `metaCodec.js`'s own doc for the measured
+ * break-even). `undefined` when there's nothing to store at all.
+ */
+export declare function encodeStreamMeta(fields?: {
+	name?: string | null;
+	kek?: StreamMetaKek | null;
+}): Uint8Array | undefined;
+
+/** Reverses `encodeStreamMeta`, tolerant of legacy plain-text (pre-JSON) and ungzipped
+ *  values already on chain from before this format existed. */
+export declare function decodeStreamMeta(bytes?: Uint8Array | null): {
+	name: string | null;
+	kek: StreamMetaKek | null;
+};
+
+/**
+ * Encodes an item's `{name, type}` metadata into its opaque on-chain `meta` bytes, gzipped
+ * only when that's smaller than plain JSON. `undefined` when there's nothing to store.
+ */
+export declare function encodeItemMeta(fields?: {
+	name?: string | null;
+	type?: string | null;
+}): Uint8Array | undefined;
+
+/** Reverses `encodeItemMeta`. Unlike `decodeStreamMeta`, a non-JSON value is never treated
+ *  as a legacy name — `meta` is a free-form per-item field with no such convention. */
+export declare function decodeItemMeta(bytes?: Uint8Array | null): {
+	name: string | null;
+	type: string | null;
+};
 
 export default Mnemonad;

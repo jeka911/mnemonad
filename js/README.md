@@ -8,7 +8,7 @@ protects stored data.
 
 See the root [`README.md`](../README.md) for how the pieces fit together.
 
-Status: **test MVP.** 306 passing tests against a local node (plus an opt-in suite against
+Status: **test MVP.** 330 passing tests against a local node (plus an opt-in suite against
 a real Pinata account). Not published; live on Monad testnet, not mainnet.
 
 
@@ -33,6 +33,11 @@ A few methods worth knowing about, beyond `push()` / `at()` / `length`:
   carries `transactionCount`, which is `1` except on the staged path
 - `quoteOffloadUpload()` — MON needed to prepay the wired upload gateway for an off-chain
   payload of a given size, before ever committing to it; `null` if no gateway is wired
+- `create`/`push`'s `name`/`type` params, and the `streamMeta`/`itemMeta` getters — a small
+  JSON metadata format for a stream's name/KEK and an item's name/MIME type, gzip-compressed
+  on-chain when that's smaller; `encodeStreamMeta`/`decodeStreamMeta`/`encodeItemMeta`/
+  `decodeItemMeta` are the low-level functions underneath, for raw-bytes access. See
+  Metadata below
 - `Mnemonad.listOwned(publicClient, contractAddress, owner)` — static; every stream `owner`
   currently holds, via the registry's `ERC721Enumerable` index rather than an off-chain scan
 - `maxRPCRequestsPerSecond` — caps outbound RPC calls, queuing the rest instead of firing
@@ -112,6 +117,71 @@ Packing is only possible within a single transaction — chunks are immutable, s
 never be folded into an existing chunk afterwards. Measured on-chain, 10 × 200 B costs
 729,986 gas packed versus 1,048,092 individually.
 
+## Metadata
+
+Both a stream and an item carry an opaque `meta` field on-chain — the contract never
+interprets it. The SDK's own convention on top of that: a small JSON object, gzip-compressed
+when that's actually smaller than plain (the common case for a bare short name is that it
+isn't — gzip's own header/trailer overhead outweighs the savings below a certain size; a
+name alongside a KEK block, or anything with enough repeated structure, wins — measured, not
+assumed). The two forms self-distinguish on decode (gzip's magic header can never start a
+JSON object's UTF-8 bytes), so there's no separate format-version byte to track.
+
+A caller never has to encode this itself — `name`/`type` are just params on `create()`/
+`push()` directly, alongside everything else those already take:
+
+```javascript
+const ev = await Mnemonad.create({ ...params, name: 'My Documents' });
+
+await ev.push(fileBytes, { name: 'photo.jpg', type: 'image/jpeg' });
+```
+
+`create()` folds in this stream's own password KEK block automatically too, when one
+exists — a caller passing `password` never has to read back `crypto.getPasswordSalt()`,
+build a `{ method, salt, iterations }` object, and encode it itself; `create()` already
+knows all three by the time it writes `meta`, since deriving the salt is a side effect of
+wrapping the data key a few lines earlier (see `MnemonadCrypto.getPasswordKek`'s own doc):
+
+```javascript
+const ev = await Mnemonad.create({
+    ...params,
+    encrypt: true,
+    password: 'a strong passphrase',
+    name: 'My Documents',
+});
+ev.streamMeta.kek; // { method: 'password', salt: '0x...', iterations: 600000 } — already there
+```
+
+Reading it back never needs a decode function either — `Mnemonad`/`MnemonadItem` expose the
+decoded form as a getter:
+
+```javascript
+ev.streamMeta;                 // { name: 'My Documents', kek: {...} }
+(await ev.itemAt(0)).itemMeta; // { name: 'photo.jpg', type: 'image/jpeg' }
+```
+
+Both getters decode fresh on every access (the underlying `meta` bytes are immutable once
+committed, so there's nothing to cache) and tolerate whatever's actually on chain: a legacy
+plain-text stream name from before this JSON format existed decodes into `{ name, kek: null
+}` rather than throwing; an item's own `meta` never falls back to treating non-JSON bytes as
+a name (unlike a stream's), since it's a genuinely free-form field other tools can put
+anything into.
+
+`meta`/`itemMeta` (raw `Uint8Array`) are still there as the low-level escape hatch — pass
+either directly and it wins outright over `name`/`type`/the auto-built `kek`, for a caller
+that wants full control over the on-chain bytes instead. `encodeStreamMeta`/`decodeStreamMeta`/
+`encodeItemMeta`/`decodeItemMeta` are exported too, for that same case (or for decoding
+metadata you only have the raw bytes for, with no live instance at hand) — both return
+`undefined` for an empty object, so storing neither name nor type costs nothing on chain,
+same as before this format existed.
+
+The stream-level `kek` block is what `unlockWithPassword` needs and is exactly why this
+metadata format exists at all: a password KEK isn't owner-bound, so its salt and iteration
+count have to live somewhere public for a later reader to find before ever entering a
+password. This is that place — `unlockWithPassword` itself stays agnostic about where those
+two values come from, since not every caller will keep them here (see that method's own
+doc), but `create()`/`streamMeta` make it the path of least resistance.
+
 ## Encryption
 
 A random AES-256-GCM data key is always generated at `create()` time and stored, wrapped,
@@ -142,9 +212,10 @@ const ev = await Mnemonad.create({
     contractAddress,
     encrypt: true,
     password: 'a strong passphrase',
-    // Omit passwordSalt to have one generated for you — read it back via
-    // ev.crypto.getPasswordSalt() (or MnemonadCrypto.saltToHex(...) for storage) and
-    // persist it: unwrapping later needs the SAME salt supplied back in.
+    // Omit passwordSalt to have one generated for you. It (and the iteration count) get
+    // published automatically in this stream's own metadata — see Metadata above — so a
+    // later reader has everything unlockWithPassword needs; ev.crypto.getPasswordSalt()
+    // is still there directly too, for a caller persisting it somewhere else instead.
 });
 await ev.push(secret);
 await ev.at(0);
@@ -168,21 +239,23 @@ a session without re-deriving it on every read.
 
 A UI commonly doesn't have the password up front, though — a stream loads read-only first
 (no `password`/`aesKey` at all), and only later does a "enter password" prompt supply one.
-`unlockWithPassword(password, { passwordSalt, passwordIterations })` handles that sequence
-in place on an already-constructed instance: derive, verify (a wrong password throws — the
-wrapped key's GCM tag fails to check out, rather than silently unwrapping garbage), and
-adopt the key, so every read through that same instance decrypts from then on:
+`unlockWithPassword(password)` handles that sequence in place on an already-constructed
+instance: derive, verify (a wrong password throws — the wrapped key's GCM tag fails to
+check out, rather than silently unwrapping garbage), and adopt the key, so every read
+through that same instance decrypts from then on:
 
 ```javascript
 const ev = new Mnemonad({ publicClient, contractAddress, id }); // no password yet
 await ev.at(0); // ciphertext — nothing to decrypt with
 
-const aesKey = await ev.unlockWithPassword(userTypedPassword, {
-    passwordSalt: knownSalt,          // wherever a reader keeps this — typically the
-    passwordIterations: knownIterations, // stream's own cleartext metadata
-});
+// Salt/iterations default to this stream's own streamMeta.kek — the block create()
+// already published when the stream was made — so the password is all a caller needs.
+const aesKey = await ev.unlockWithPassword(userTypedPassword);
 await ev.at(0); // plaintext, from here on
 ```
+
+Pass `{ passwordSalt, passwordIterations }` explicitly to override, for a caller keeping
+those two values somewhere other than this metadata format.
 
 ### Framed ciphertext
 
@@ -454,11 +527,11 @@ items", "a lot of bytes" and "more bytes than one call can return" break in unre
 
 | Suite | Chunk ceiling | Covers |
 |---|---|---|
-| `base.test.js` | 2 KB (small, so the staged path is cheap to reach) | Tiers, packing, staged append, concat, truncate, burn, fees, access control, `estimatePushCost` (including its encrypt-first routing) |
+| `base.test.js` | 2 KB (small, so the staged path is cheap to reach) | Tiers, packing, staged append, concat, truncate, burn, fees, access control, `estimatePushCost` (including its encrypt-first routing and itemMeta calldata), `streamMeta`/`itemMeta` getters, and the `create`/`push`/`estimatePushCost` `name`/`type` sugar (never calling `encode*Meta` directly, raw `meta`/`itemMeta` still winning when given) |
 | `large_data.test.js` | 24 KB (realistic) | 1 MB staged on-chain across 44 chunks, 16 MB via IPFS, 60-item packed batch, 128-slot page boundary, staged-push `onProgress` |
 | `huge_data.test.js` | 24 KB | 4 MB on-chain — past what one-shot reads can serve; paged reads and `readRange` slicing |
 | `encrypted_small.test.js` | 2 KB | Key wrap/unwrap, per-stream derivation, wrong-signer rejection, nonce uniqueness, GCM tamper detection, tier crossings caused by the 26-byte framing overhead, every write path encrypting |
-| `encrypted_password.test.js` | 2 KB | The password KEK method alongside `encrypted_small.test.js`'s signature one: derivation, salt/iteration handling, `unlockWithPassword` (fresh instance, wrong password, wrong salt, no wrapped key), every write path still encrypting |
+| `encrypted_password.test.js` | 2 KB | The password KEK method alongside `encrypted_small.test.js`'s signature one: derivation, salt/iteration handling, `unlockWithPassword` (defaulting to `streamMeta.kek` with just a password, an explicit-salt override, wrong password, no wrapped key, no salt anywhere), every write path still encrypting, and unlocking end to end using nothing but the password |
 | `encrypted_large.test.js` | 24 KB | 256 KB staged encrypted, 1 MB encrypted via IPFS, chunk boundaries crossed by overhead alone |
 | `encrypted_huge.test.js` | 24 KB | 4 MB encrypted — partial decryption, streaming, frame-integrity (reorder/truncation), ranged off-chain reads, 8 MB via IPFS |
 | `mixed_tiers.test.js` | 2 KB | SLOT + CODE + multi-chunk + EXTERNAL interleaved in one stream: per-tier dispatch of `at`/`readRange`/`getItemRefs`, `binaryLength` across tiers, concat preserving tiers, and the same encrypted |
@@ -475,6 +548,7 @@ items", "a lot of bytes" and "more bytes than one call can return" break in unre
 | `chunk_cache_wiring.test.js` | 2 KB | Proves the chunk cache is actually consulted end to end against a real node — on-chain and off-chain payloads, encrypted items via `at()`, the `readPageBytes` size cutoff, and that a genuinely partial `readRange()` stays uncached |
 | `cache_is_safe.test.js` | 2 KB | The chunk cache's one hard invariant: never holds decrypted plaintext for an encrypted stream, across every tier and both read paths (`at()` and `itemAt().bytes()`) |
 | `rpc_recorder.test.js` | n/a | `MnemonadRpcRecorder` — opt-in (`debug: true`) call log/count backing the explorer's RPC panel: pending-then-settled notifications, cross-instance sharing, the 2000-entry cap |
+| `meta_codec.test.js` | n/a | Pure unit tests for `metaCodec.js`/`streamMeta.js`/`itemMeta.js` — the gzip-or-plain size choice (measured, not assumed), tolerant decoding of legacy plain-text and of a JSON array/non-object, and the `undefined`-for-empty convention |
 
 Note what large-data testing **cannot** cover locally: EDR enforces EIP-170's 24,576-byte
 code limit, so a single chunk never exceeds ~24 KB here. Monad allows 128 KB. Chunk count

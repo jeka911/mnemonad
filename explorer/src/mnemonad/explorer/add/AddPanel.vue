@@ -113,9 +113,6 @@ import { getActiveNetwork } from '../../../settings.js';
 import { useWalletStore } from '../../../stores/wallet.js';
 import { useMnemonadStore, MAX_RPC_REQUESTS_PER_SECOND, RPC_RETRY } from '../../../stores/mnemonad.js';
 import { useDebugStore } from '../../../stores/debug.js';
-import { useStreamKeysStore } from '../../../stores/streamKeys.js';
-import { decodeStreamMeta } from '../../streamMeta.js';
-import { encodeItemMeta } from '../../itemMeta.js';
 import { createPresignProvider, presignConfigured } from '../../presignProvider.js';
 import { JPanel } from 'themed_varmory';
 import GradientButton from '../../../components/GradientButton.vue';
@@ -131,10 +128,11 @@ import OffloadUpload from './OffloadUpload.vue';
  * component doesn't cross.
  *
  * Deliberately narrow at the boundary: `stream` (the live, already-`initialize()`d SDK
- * instance the page loaded — Stream.vue's own `_stream`) is the only prop, and every write
- * this panel makes is reported back with a single `added` event rather than this reaching
- * into the page to refresh anything itself. Everything else this needs — wallet/debug/
- * stream-keys state, the registry's wired gateway — comes from the same Pinia stores the
+ * instance the page loaded — Stream.vue's own `_stream`) plus `unlocked` (a plain reactive
+ * mirror of that instance's key state — see the prop's own doc) are the only props, and
+ * every write this panel makes is reported back with a single `added` event rather than
+ * this reaching into the page to refresh anything itself. Everything else this needs —
+ * wallet/debug state, the registry's wired gateway — comes from the same Pinia stores the
  * page itself uses, not threaded through as further props.
  */
 
@@ -162,6 +160,15 @@ export default {
 		stream: {
 			type: Object,
 			required: true,
+		},
+		// Mirrors whether `stream.crypto` actually has a usable key — Stream.vue's own
+		// reactive flag, passed down rather than re-derived here, since `stream` itself is
+		// a plain (non-reactive) object: mutating its `crypto` doesn't change the `stream`
+		// prop's own reference, so nothing here would otherwise notice a just-completed
+		// unlock. See Stream.vue's own `unlocked` in data() for the full reasoning.
+		unlocked: {
+			type: Boolean,
+			default: false,
 		},
 	},
 	emits: [
@@ -199,7 +206,7 @@ export default {
 		};
 	},
 	computed: {
-		...mapStores(useWalletStore, useMnemonadStore, useDebugStore, useStreamKeysStore),
+		...mapStores(useWalletStore, useMnemonadStore, useDebugStore),
 		// Passed as every Mnemonad's `cache` param below — `false` disables caching outright
 		// (see MnemonadChunkCache), `undefined` leaves the SDK's own default (the shared
 		// cache) untouched. Never write `!this.debugStore.cachingDisabled` directly as the
@@ -219,7 +226,7 @@ export default {
 		// outside the explorer before this feature existed) — every reader below already
 		// treats that the same as "not the password method".
 		kek: function() {
-			return decodeStreamMeta(this.stream.meta).kek;
+			return this.stream.streamMeta.kek;
 		},
 		offloadHint: function() {
 			if (!this.presignConfigured) return 'Set VITE_PRESIGN_URL to the sign server to enable IPFS uploads.';
@@ -237,17 +244,12 @@ export default {
 			return '';
 		},
 		// True when this is a password-encrypted stream (see streamMeta.js's `kek` block)
-		// and no key is cached for it yet this session (see streamKeysStore). A
-		// signer-encrypted stream (no `kek` in metadata) has no unlock affordance here
+		// and this session doesn't have a usable key for it yet (see the `unlocked` prop).
+		// A signer-encrypted stream (no `kek` in metadata) has no unlock affordance here
 		// either way; that isn't a regression, since this panel never had one for that
 		// method to begin with.
 		isLocked: function() {
-			return !!(
-				this.encrypted &&
-				this.kek &&
-				this.kek.method === 'password' &&
-				!this.streamKeysStore.hasKey(this.stream.id)
-			);
+			return !!(this.encrypted && this.kek && this.kek.method === 'password' && !this.unlocked);
 		},
 		// True when writing to this stream right now would produce a PLAINTEXT item despite
 		// the stream being marked encrypted -- because this session has no data key for it.
@@ -260,20 +262,18 @@ export default {
 		// applies to the password method).
 		hasUsableKey: function() {
 			if (!this.encrypted) return true;
-			if (this.kek && this.kek.method === 'password') {
-				return this.streamKeysStore.hasKey(this.stream.id);
-			}
+			if (this.kek && this.kek.method === 'password') return this.unlocked;
 			return false;
 		},
 	},
 	watch: {
-		// Fires on every reassignment of the page's `_stream` — including a refresh-after-
-		// push of the SAME logical stream, since that always constructs a brand new SDK
-		// instance (see Stream.vue's own `load()`). Only a genuinely different stream (a
-		// different `id`) invalidates the cached writable; `checkCanWrite` re-runs either
-		// way, matching what `load()` itself always did. `immediate: true` so the very
-		// first mount (this panel never renders before the page has a stream at all — see
-		// Stream.vue's own `v-if="stream"`) still populates `canWrite`.
+		// `mnemonadStore.loadStream()` caches and reuses the same instance across a
+		// refresh-after-push of the same logical stream (see Stream.vue's own `load()`),
+		// so this fires only on an actual navigation to a genuinely different stream — a
+		// different `id`, which is exactly the case that invalidates the cached writable
+		// and needs `checkCanWrite` to run again. `immediate: true` so the very first mount
+		// (this panel never renders before the page has a stream at all — see Stream.vue's
+		// own `v-if="stream"`) still populates `canWrite`.
 		stream: {
 			handler(newStream, oldStream) {
 				if (!oldStream || newStream.id !== oldStream.id) this.writable = null;
@@ -417,8 +417,10 @@ export default {
 			this.fileProgress = null;
 			try {
 				const writable = await this.getWritable();
+				// name/type, not a pre-encoded itemMeta — push() builds and gzips that itself.
 				await writable.push(bytes, {
-					itemMeta: encodeItemMeta({ name, type: mimeType }),
+					name,
+					type: mimeType,
 					onChain,
 					onProgress: (info) => { this.fileProgress = info; },
 				});

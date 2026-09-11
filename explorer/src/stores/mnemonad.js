@@ -1,11 +1,10 @@
 import { defineStore } from 'pinia';
 import { getPublicClient, getWalletClient } from '@wagmi/core';
-import Mnemonad, { MnemonadCrypto, MnemonadUploadGateway, mnemonadAbi, ids as mnemonadIds } from '@mnemonad';
+import Mnemonad, { MnemonadUploadGateway, mnemonadAbi, ids as mnemonadIds } from '@mnemonad';
 import { config } from '../wagmi';
 import { getActiveNetwork } from '../settings.js';
 import { useDebugStore } from './debug.js';
-import { useStreamKeysStore } from './streamKeys.js';
-import { encodeStreamMeta } from '../mnemonad/streamMeta.js';
+import { createPresignProvider } from '../mnemonad/presignProvider.js';
 
 // ids.js keys by contract-key name ('monadTestnet'/'monadMainnet'), settings.js keys by a
 // different name ('testnet'/'mainnet') — matching on chainId instead of threading one
@@ -13,6 +12,20 @@ import { encodeStreamMeta } from '../mnemonad/streamMeta.js';
 const ACTIVE_CHAIN = getActiveNetwork().chain;
 const ENTRY = Object.values(mnemonadIds).find((e) => e.chainId === ACTIVE_CHAIN.id) || null;
 const MNEMONAD_ADDRESS = ENTRY ? ENTRY.contractAddress : null;
+
+/**
+ * Live Mnemonad instances for the "stream detail" page, keyed by `String(id)` — a plain
+ * module-level Map, not Pinia state: an instance holding viem clients (and, once unlocked,
+ * an actual decryption key) has no business being wrapped in a Vue reactivity proxy, same
+ * reasoning Stream.vue's own `_stream` and AddPanel's own `writable` are kept off their
+ * components' `data()` too. Caching it here — rather than pages/Stream.vue building a fresh
+ * one on every visit — is what lets navigating back to an already-loaded stream cost zero
+ * RPC calls (see `loadStream` below), and lets a password-unlocked key survive that
+ * navigation with no separate key-only store needed to bridge the two: the SAME instance,
+ * `crypto` included, is just handed back.
+ * @type {Map<string, Mnemonad>}
+ */
+const streamCache = new Map();
 
 // Monad testnet's public RPC 429s under a burst of individual eth_calls, and this app's own
 // pattern (hydrate N owned streams, each several reads, all via Promise.all) produces
@@ -105,6 +118,55 @@ export const useMnemonadStore = defineStore('mnemonad', {
 			}
 		},
 		/**
+		 * The live Mnemonad instance for `id`, for the stream detail page — from cache if
+		 * this session already loaded it (zero RPC calls, including whatever key it was
+		 * unlocked with, since the exact same instance is handed back rather than a fresh
+		 * one), built and cached otherwise.
+		 *
+		 * `initialize()` is always (re-)awaited regardless of cache status: a no-op on a
+		 * cache hit unless something `reInitialize()`d it since (a push, most commonly —
+		 * see `Mnemonad._afterWrite`), a real fetch on a genuine miss. `owner()` always
+		 * runs live either way — ownership can genuinely change via transfer, and it's one
+		 * cheap read, not worth caching separately just to shave one call off an
+		 * already-cached visit.
+		 *
+		 * @param {bigint} id
+		 * @returns {Promise<{stream: Mnemonad, owner: string}>}
+		 */
+		async loadStream(id) {
+			const key = String(id);
+			let stream = streamCache.get(key);
+			if (!stream) {
+				stream = new Mnemonad({
+					publicClient: getPublicClient(config),
+					contractAddress: MNEMONAD_ADDRESS,
+					id,
+					maxRPCRequestsPerSecond: MAX_RPC_REQUESTS_PER_SECOND,
+					rpcRetry: RPC_RETRY,
+					offloadingProvider: createPresignProvider({}),
+					cache: useDebugStore().cachingDisabled ? false : undefined,
+					debug: true,
+				});
+				streamCache.set(key, stream);
+			}
+			// Run together, not sequentially — on a cache miss, owner() doesn't depend on
+			// initialize()'s result, and firing both in the same tick lets the transport's
+			// JSON-RPC batching (see wagmi.js) fold owner() into the same HTTP request as
+			// initialize()'s own reads instead of a separate round trip for it alone.
+			const [, owner] = await Promise.all([stream.initialize(), stream.owner()]);
+			return { stream, owner };
+		},
+		/**
+		 * Drops every cached stream instance — and with it, any unwrapped password key one
+		 * was holding. Called on wallet disconnect (see wallet.js), the same "a shared/
+		 * public machine disconnecting shouldn't leave decrypted keys resident" reasoning
+		 * the old streamKeysStore existed for; caching a stream is only meant to save RPC
+		 * calls within one connected session, not to survive past it.
+		 */
+		clearStreamCache() {
+			streamCache.clear();
+		},
+		/**
 		 * Discovers the wired gateway and reads its pricing. Safe to call unconditionally:
 		 * no gateway, or an oracle the gateway itself won't quote against, both resolve to a
 		 * renderable state rather than throwing.
@@ -158,9 +220,11 @@ export const useMnemonadStore = defineStore('mnemonad', {
 		 * @param {Object} [params={}]
 		 * @param {string} [params.name] - optional label, stored in stream metadata
 		 * @param {string} [params.password] - if given, the stream is created encrypted,
-		 *   password-protected. A fresh salt is generated and stored (in the clear, alongside
-		 *   `name`) in the stream's own metadata — see `streamMeta.js` — so a later reader only
-		 *   needs the password itself, never anything out of band.
+		 *   password-protected. `Mnemonad.create()` itself derives the salt, picks the
+		 *   shipped default iteration count, and publishes both (in the clear, alongside
+		 *   `name`) in the stream's own metadata — see `MnemonadCrypto.getPasswordKek`'s own
+		 *   doc — so this never has to build that block itself, and a later reader only
+		 *   needs the password, never anything out of band.
 		 * @returns {Promise<Mnemonad>}
 		 */
 		async createStream(params = {}) {
@@ -171,42 +235,27 @@ export const useMnemonadStore = defineStore('mnemonad', {
 				const walletClient = await getWalletClient(config);
 
 				const password = params.password || null;
-				let meta;
-				let passwordSalt;
-				let passwordIterations;
-				if (password) {
-					passwordSalt = MnemonadCrypto.generatePasswordSalt();
-					passwordIterations = MnemonadCrypto.DEFAULT_PBKDF2_ITERATIONS;
-					meta = encodeStreamMeta({
-						name: params.name || undefined,
-						kek: {
-							method: 'password',
-							salt: MnemonadCrypto.saltToHex(passwordSalt),
-							iterations: passwordIterations,
-						},
-					});
-				} else if (params.name) {
-					meta = encodeStreamMeta({ name: params.name });
-				}
-
 				const stream = await Mnemonad.create({
 					publicClient,
 					walletClient,
 					contractAddress: MNEMONAD_ADDRESS,
-					meta,
+					name: params.name || undefined,
 					encrypt: !!password,
 					password: password || undefined,
-					passwordSalt,
-					passwordIterations,
 					maxRPCRequestsPerSecond: MAX_RPC_REQUESTS_PER_SECOND,
 					rpcRetry: RPC_RETRY,
+					// Same read-only provider loadStream() builds its own instances with —
+					// this one becomes that same cached read instance below the moment the
+					// creator navigates to it, so it needs to be just as capable of reading
+					// an external item back, even though create() itself never routes one.
+					offloadingProvider: createPresignProvider({}),
 				});
 
-				if (password) {
-					// Already unwrapped from just having created it — cache it so the creator
-					// isn't immediately re-prompted for the password they just typed.
-					useStreamKeysStore().setKey(stream.id, stream.crypto.getAesKey());
-				}
+				// Cached immediately — already-unwrapped key included, if this was a password
+				// stream — so if the creator now navigates to it, loadStream() finds this
+				// exact instance and costs no RPC calls, no re-prompt for the password they
+				// just typed, and no separate key-only store needed to bridge the two.
+				streamCache.set(String(stream.id), stream);
 
 				// Append locally rather than re-running the whole list — this stream is
 				// known-fresh (just minted), no need to re-fetch it.

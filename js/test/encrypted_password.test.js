@@ -365,7 +365,10 @@ describe('reading without the key', () => {
 });
 
 describe('unlockWithPassword', () => {
-	it('unlocks a fresh instance opened with no password at all, in place', async () => {
+	it('unlocks a fresh instance using just the password — salt/iterations default to streamMeta.kek', async () => {
+		// createEncrypted() never passes `name`, but create() still publishes a kek block
+		// on its own (see MnemonadCrypto.getPasswordKek's own doc) whenever `password` is
+		// given at all — this is what unlockWithPassword now defaults to reading.
 		const created = await createEncrypted();
 		const data = makeBytes(200, 3);
 		await created.push(data);
@@ -377,10 +380,7 @@ describe('unlockWithPassword', () => {
 		expect(reader.crypto.isEnabled).toBe(false);
 		expect(Buffer.from(await reader.at(0))).not.toEqual(Buffer.from(data));
 
-		const key = await reader.unlockWithPassword(PASSWORD, {
-			passwordSalt: created.crypto.getPasswordSalt(),
-			passwordIterations: TEST_ITERATIONS,
-		});
+		const key = await reader.unlockWithPassword(PASSWORD);
 
 		expect(reader.crypto.isEnabled).toBe(true);
 		expect(new Uint8Array(reader.crypto.getAesKey())).toEqual(new Uint8Array(key));
@@ -392,19 +392,14 @@ describe('unlockWithPassword', () => {
 		await created.push(makeBytes(50, 1));
 
 		const reader = new Mnemonad(baseParams({ id: created.id }));
-		await expect(
-			reader.unlockWithPassword('not the right password', {
-				passwordSalt: created.crypto.getPasswordSalt(),
-				passwordIterations: TEST_ITERATIONS,
-			})
-		).rejects.toThrow();
+		await expect(reader.unlockWithPassword('not the right password')).rejects.toThrow();
 
 		// The failed attempt must not have left a key installed — still ciphertext.
 		expect(reader.crypto.isEnabled).toBe(false);
 		expect(Buffer.from(await reader.at(0))).not.toEqual(Buffer.from(makeBytes(50, 1)));
 	});
 
-	it('rejects the right password with the wrong salt', async () => {
+	it('an explicit passwordSalt overrides streamMeta.kek, and rejects the right password with the wrong one', async () => {
 		const created = await createEncrypted();
 		await created.push(makeBytes(50, 1));
 
@@ -423,6 +418,43 @@ describe('unlockWithPassword', () => {
 		await expect(
 			plain.unlockWithPassword(PASSWORD, { passwordSalt: MnemonadCrypto.generatePasswordSalt() })
 		).rejects.toThrow(/no wrapped key/);
+	});
+
+	it('throws when neither an explicit passwordSalt nor a streamMeta.kek block is available', async () => {
+		// Signer-encrypted: encKeyWrapped IS set (so the earlier guard doesn't fire), but
+		// there's no password kek block published at all — exactly the gap this error
+		// describes, and the reason the default can't just be "assume there's a kek".
+		const signerEncrypted = await Mnemonad.create(baseParams({ encrypt: true, signer: clients.walletClient }));
+		await signerEncrypted.push(makeBytes(50, 8));
+
+		const reader = new Mnemonad(baseParams({ id: signerEncrypted.id }));
+		await expect(reader.unlockWithPassword(PASSWORD)).rejects.toThrow(/no passwordSalt/);
+	});
+
+	it('unlocks end to end using just the password — create() and streamMeta already did the rest', async () => {
+		// The full real-world shape: the creator never touches getPasswordSalt(), never
+		// builds a `{method, salt, iterations}` object itself — `name`/`password` alone are
+		// enough for create() to derive the salt (see MnemonadCrypto.getPasswordKek's own
+		// doc) and publish it. A later reader passes nothing but the password itself,
+		// exactly like the explorer's own unlock dialog now does.
+		const created = await Mnemonad.create(
+			baseParams({ encrypt: true, password: PASSWORD, passwordIterations: TEST_ITERATIONS, name: 'My Documents' })
+		);
+		const data = makeBytes(120, 7);
+		await created.push(data);
+
+		expect(created.streamMeta).toEqual({
+			name: 'My Documents',
+			kek: {
+				method: 'password',
+				salt: MnemonadCrypto.saltToHex(created.crypto.getPasswordSalt()),
+				iterations: TEST_ITERATIONS,
+			},
+		});
+
+		const reader = new Mnemonad(baseParams({ id: created.id }));
+		await reader.unlockWithPassword(PASSWORD);
+		expect(new Uint8Array(await reader.at(0))).toEqual(data);
 	});
 });
 

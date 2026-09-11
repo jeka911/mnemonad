@@ -2,6 +2,8 @@ import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import Mnemonad, { EXPECTED_CONTRACT_VERSION } from '../Mnemonad.js';
 import MnemonadCrypto from '../MnemonadCrypto.js';
 import { Store } from '../MnemonadItem.js';
+import { encodeStreamMeta } from '../streamMeta.js';
+import { encodeItemMeta } from '../itemMeta.js';
 import {
 	startNode,
 	makeClients,
@@ -88,6 +90,73 @@ describe('create', () => {
 		expect(new Uint8Array(await ev.at(0))).toEqual(chunks[0]);
 		expect(new Uint8Array(await ev.at(2))).toEqual(chunks[2]);
 		expect(new Uint8Array(ev.meta)).toEqual(makeBytes(4, 9));
+	});
+});
+
+describe('metadata', () => {
+	it('streamMeta reflects encodeStreamMeta round-tripped through a real create', async () => {
+		const kek = { method: 'password', salt: `0x${'22'.repeat(16)}`, iterations: 600_000 };
+		const meta = encodeStreamMeta({ name: 'My Documents', kek });
+		const ev = await Mnemonad.create(baseParams({ meta }));
+		await ev.initialize();
+
+		expect(ev.streamMeta).toEqual({ name: 'My Documents', kek });
+	});
+
+	it('streamMeta is {name: null, kek: null} for a stream created with no meta at all', async () => {
+		const ev = await Mnemonad.create(baseParams());
+		await ev.initialize();
+		expect(ev.streamMeta).toEqual({ name: null, kek: null });
+	});
+
+	it("itemMeta reflects encodeItemMeta round-tripped through a real push, via both itemAt() and itemsAt()", async () => {
+		const itemMeta = encodeItemMeta({ name: 'photo.jpg', type: 'image/jpeg' });
+		const ev = await Mnemonad.create(baseParams());
+		await ev.push(makeBytes(50, 1), { itemMeta });
+
+		expect((await ev.itemAt(0)).itemMeta).toEqual({ name: 'photo.jpg', type: 'image/jpeg' });
+		expect((await ev.itemsAt([0]))[0].itemMeta).toEqual({ name: 'photo.jpg', type: 'image/jpeg' });
+	});
+
+	it('itemMeta is {name: null, type: null} for an item pushed with no itemMeta at all', async () => {
+		const ev = await Mnemonad.create(baseParams());
+		await ev.push(makeBytes(50, 2));
+		expect((await ev.itemAt(0)).itemMeta).toEqual({ name: null, type: null });
+	});
+
+	describe('name/type sugar — the caller never calls encodeStreamMeta/encodeItemMeta itself', () => {
+		it('create({ name }) encodes it, with no meta/encodeStreamMeta call from the caller', async () => {
+			const ev = await Mnemonad.create(baseParams({ name: 'My Documents' }));
+			await ev.initialize();
+			expect(ev.streamMeta).toEqual({ name: 'My Documents', kek: null });
+		});
+
+		it('push({ name, type }) encodes it, with no itemMeta/encodeItemMeta call from the caller', async () => {
+			const ev = await Mnemonad.create(baseParams());
+			await ev.push(makeBytes(50, 3), { name: 'photo.jpg', type: 'image/jpeg' });
+			expect((await ev.itemAt(0)).itemMeta).toEqual({ name: 'photo.jpg', type: 'image/jpeg' });
+		});
+
+		it('an explicit raw meta/itemMeta still wins outright over name/type', async () => {
+			const rawStreamMeta = new TextEncoder().encode('raw legacy bytes');
+			const ev = await Mnemonad.create(baseParams({ meta: rawStreamMeta, name: 'ignored' }));
+			await ev.initialize();
+			expect(new Uint8Array(ev.meta)).toEqual(rawStreamMeta);
+
+			const rawItemMeta = new TextEncoder().encode('also raw');
+			await ev.push(makeBytes(50, 4), { itemMeta: rawItemMeta, name: 'ignored', type: 'ignored' });
+			expect(new Uint8Array((await ev.itemAt(0)).meta)).toEqual(rawItemMeta);
+		});
+
+		it('estimatePushCost accepts name/type too, without throwing or ignoring them', async () => {
+			const ev = await Mnemonad.create(baseParams());
+			const withoutMeta = await ev.estimatePushCost(makeBytes(50, 5));
+			const withMeta = await ev.estimatePushCost(makeBytes(50, 5), { name: 'a', type: 'b' });
+			// Not a byte-exact assertion (gas varies with calldata) — just proving name/type
+			// actually reached the estimate rather than being silently dropped: a non-empty
+			// itemMeta payload on the staged path changes beginItem's own calldata size.
+			expect(withMeta.gas).not.toBe(withoutMeta.gas);
+		});
 	});
 });
 

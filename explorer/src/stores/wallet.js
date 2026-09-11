@@ -14,7 +14,7 @@ import { Notify } from 'quasar';
 import { config } from '../wagmi';
 import BlockNumberEstimator from '../includes/BlockNumberEstimator';
 import { getActiveNetwork } from '../settings.js';
-import { useStreamKeysStore } from './streamKeys.js';
+import { useMnemonadStore } from './mnemonad.js';
 
 // The chain this whole session is pinned to (see settings.js). The wallet's
 // actual chain is the user's to control; we only compare against this to detect
@@ -220,7 +220,10 @@ export const useWalletStore = defineStore('wallet', {
 			// Password-unlocked stream keys are unrelated to wallet auth, but forgetting
 			// them on disconnect is the least surprising behavior — a shared/public
 			// machine disconnecting a wallet shouldn't leave decrypted keys resident.
-			useStreamKeysStore().clearAll();
+			// Drops the whole cached-stream-instance cache to do it (see mnemonadStore's
+			// own doc) rather than a separate key-only store: caching a stream is only
+			// meant to save RPC calls within one connected session, not to survive past it.
+			useMnemonadStore().clearStreamCache();
 		},
 		fetchBlockNumber() {
 			return estimator ? estimator.fetchNow() : null;

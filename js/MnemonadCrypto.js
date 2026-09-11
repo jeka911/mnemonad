@@ -192,6 +192,40 @@ export default class MnemonadCrypto {
 	}
 
 	/**
+	 * @returns {?number} The iteration count in use for password-based key derivation, or
+	 *   `null` when this instance isn't using the password method at all. Persist this
+	 *   alongside the salt (see `getPasswordSalt()`) — raising the shipped default later
+	 *   must not change what an existing stream needs to unwrap.
+	 */
+	getPasswordIterations() {
+		return this._password ? this._passwordIterations : null;
+	}
+
+	/**
+	 * This instance's stream-metadata `kek` block (see `streamMeta.js`'s own doc on why a
+	 * password KEK's salt/iterations need to be public at all) — or `null` when there isn't
+	 * one to publish: an unencrypted stream, a signer-based one (owner-bound, so it needs
+	 * no published salt/iterations — the wallet itself is the "salt"), or a password-based
+	 * one whose salt doesn't exist yet.
+	 *
+	 * That last case matters: on a fresh instance constructed with a password but no
+	 * explicit `passwordSalt`, one is only generated lazily on first `wrapAesKey()`/
+	 * `unwrapAesKey()` call. Reading this getter never generates one as a side effect — it
+	 * reports what's actually in hand right now, which is why `Mnemonad.create()` reads it
+	 * only *after* `wrapAesKey()` has already run once for the stream being created.
+	 *
+	 * @returns {?{method: 'password', salt: string, iterations: number}}
+	 */
+	getPasswordKek() {
+		if (!this._password || !this._passwordSalt) return null;
+		return {
+			method: 'password',
+			salt: MnemonadCrypto.saltToHex(this._passwordSalt),
+			iterations: this._passwordIterations,
+		};
+	}
+
+	/**
 	 * Wraps a data key so it can be stored on-chain. The caller stores the result via
 	 * `setEncKeyWrapped` (or passes it to `create()`).
 	 *

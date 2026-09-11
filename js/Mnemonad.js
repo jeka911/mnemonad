@@ -8,6 +8,8 @@ import MnemonadChunkCache from './MnemonadChunkCache.js';
 import MnemonadUploadGateway from './MnemonadUploadGateway.js';
 import { mnemonadAbi } from './abi.js';
 import ids from './ids.js';
+import { encodeStreamMeta, decodeStreamMeta } from './streamMeta.js';
+import { encodeItemMeta } from './itemMeta.js';
 
 /**
  * @typedef {import('viem').PublicClient} PublicClient
@@ -344,6 +346,21 @@ export default class Mnemonad {
 	}
 
 	/**
+	 * The stream's own metadata (`{name, kek}`), decoded from raw `this.meta` on every
+	 * access — see `streamMeta.js`'s own doc for the wire format. A getter rather than a
+	 * cached field: `meta` is set once during `initialize()` and never changes afterward
+	 * for a given instance, so there's no staleness to worry about, and decoding a payload
+	 * this small costs nothing worth caching for. Requires `initialize()` to have already
+	 * run (same as `encKeyWrapped`/`length`/every other field `initialize()` populates) —
+	 * unlike those, reading this before then doesn't throw, it just decodes an empty
+	 * `this.meta` into `{ name: null, kek: null }`.
+	 * @returns {{name: ?string, kek: ?{method: string, salt: string, iterations: number}}}
+	 */
+	get streamMeta() {
+		return decodeStreamMeta(this.meta);
+	}
+
+	/**
 	 * @returns {Promise<boolean>} Whether the stream carries an encryption key on-chain.
 	 */
 	async isEncrypted() {
@@ -353,42 +370,60 @@ export default class Mnemonad {
 
 	/**
 	 * Unlocks a password-encrypted stream in place: derives the key-encryption key from
-	 * `password` (plus `passwordSalt`/`passwordIterations`, which the caller must already
-	 * know — a password KEK is never owner-bound, so these have to be public for *any*
-	 * reader to reproduce it; a typical caller keeps them alongside the stream's own
-	 * cleartext metadata), unwraps `encKeyWrapped`, and adopts the resulting data key on
-	 * `this.crypto` — every read through this instance decrypts from this point on, with
-	 * no separate `setAesKey` call needed.
+	 * `password` plus `passwordSalt`/`passwordIterations`, unwraps `encKeyWrapped`, and
+	 * adopts the resulting data key on `this.crypto` — every read through this instance
+	 * decrypts from this point on, with no separate `setAesKey` call needed.
+	 *
+	 * The salt/iterations default to this stream's own `streamMeta.kek` (see that getter's
+	 * own doc) — the metadata `create()` already publishes them into for exactly this
+	 * reason — so the common case is just the password, nothing else:
+	 *
+	 * ```js
+	 * await ev.unlockWithPassword(userTypedPassword);
+	 * ```
+	 *
+	 * `params.passwordSalt`/`params.passwordIterations` are still there as an override, for
+	 * a caller keeping those two values somewhere other than this stream's own metadata
+	 * (a database, a URL fragment — the SDK stays agnostic about where, same as before);
+	 * an explicit value always wins over whatever `streamMeta.kek` reports.
 	 *
 	 * A wrong password is caught here, not left to surface confusingly later:
 	 * `unwrapAesKey`'s AES-GCM tag check is itself the validity check (see its own doc), so
 	 * a bad password throws immediately rather than silently adopting garbage.
 	 *
 	 * Not a client concern: this exists so a caller (a UI's "enter password" dialog, most
-	 * commonly) never has to construct its own throwaway `MnemonadCrypto` or reach into
-	 * `this.crypto` directly just to unlock — same reasoning `push()` owns encryption
-	 * rather than leaving it to the caller (see that method's own doc).
+	 * commonly) never has to read back `streamMeta.kek` itself, construct its own throwaway
+	 * `MnemonadCrypto`, or reach into `this.crypto` directly just to unlock — same
+	 * reasoning `push()` owns encryption rather than leaving it to the caller (see that
+	 * method's own doc).
 	 *
 	 * @param {string} password
 	 * @param {Object} [params={}]
-	 * @param {(string|Uint8Array)} params.passwordSalt
-	 * @param {?number} [params.passwordIterations]
+	 * @param {(string|Uint8Array)} [params.passwordSalt] - overrides `streamMeta.kek.salt`
+	 * @param {?number} [params.passwordIterations] - overrides `streamMeta.kek.iterations`
 	 * @returns {Promise<Uint8Array>} the unwrapped data key — the same value
 	 *   `this.crypto.getAesKey()` returns from now on, handed back so a caller can also
 	 *   cache it (e.g. a per-session key store) without a second read.
-	 * @throws {Error} If this stream has no wrapped key at all, or the password is wrong.
+	 * @throws {Error} If this stream has no wrapped key at all, if neither an explicit
+	 *   `passwordSalt` nor a `streamMeta.kek` block is available, or if the password is
+	 *   wrong.
 	 */
 	async unlockWithPassword(password, params = {}) {
 		await this.initialize();
 		if (!this.encKeyWrapped || !this.encKeyWrapped.length) {
 			throw new Error('unlockWithPassword: this stream has no wrapped key to unlock');
 		}
-		const crypto = new MnemonadCrypto({
-			mnemonad: this,
-			password,
-			passwordSalt: params.passwordSalt,
-			passwordIterations: params.passwordIterations,
-		});
+		const kek = this.streamMeta.kek;
+		const passwordSalt = params.passwordSalt ?? kek?.salt;
+		const passwordIterations = params.passwordIterations ?? kek?.iterations;
+		if (!passwordSalt) {
+			throw new Error(
+				'unlockWithPassword: no passwordSalt given, and this stream\'s own metadata ' +
+				'has no kek block to read one from — pass passwordSalt explicitly if it\'s ' +
+				'kept somewhere else.'
+			);
+		}
+		const crypto = new MnemonadCrypto({ mnemonad: this, password, passwordSalt, passwordIterations });
 		const aesKey = await crypto.unwrapAesKey(this.encKeyWrapped);
 		this.crypto.setAesKey(aesKey);
 		return aesKey;
@@ -498,7 +533,15 @@ export default class Mnemonad {
 	 * @param {Object} params - every constructor param, plus:
 	 * @param {?Uint8Array|Uint8Array[]} [params.array] - initial item(s) to push
 	 * @param {?string} [params.salt] - 0x-prefixed 32-byte hex; random if omitted
-	 * @param {?Uint8Array} [params.meta] - stream-level metadata
+	 * @param {?Uint8Array} [params.meta] - raw stream-level metadata bytes, for a caller
+	 *   that wants full control over the on-chain format. Wins outright over `name` below
+	 *   when given. Most callers want `name` instead — see `streamMeta.js`'s own doc for
+	 *   the format this builds automatically when `meta` is omitted.
+	 * @param {?string} [params.name] - optional stream name, encoded (via `encodeStreamMeta`,
+	 *   gzipped on-chain when that's smaller) into `meta` automatically alongside this
+	 *   stream's own password KEK block, if it has one (see `MnemonadCrypto.getPasswordKek`)
+	 *   — a caller using `password` below never has to build or encode that block itself.
+	 *   Ignored when `meta` is given directly.
 	 * @param {boolean} [params.encrypt=false] - create an encrypted stream. Requires either
 	 *   `signer` or `password` (see the constructor's params, and `MnemonadCrypto`'s own doc
 	 *   for what each KEK method means for transferability and recovery).
@@ -544,6 +587,15 @@ export default class Mnemonad {
 			encKeyWrapped = bytesToHex(wrapped);
 		}
 
+		// Built here, not by the caller: `getPasswordKek()` only has a real answer once
+		// `wrapAesKey()` above has actually run (that's what derives/generates the salt),
+		// which is exactly why this can't happen any earlier. `params.meta` (raw bytes)
+		// always wins outright when given — this only ever fills in for a caller that
+		// didn't hand over pre-built bytes itself.
+		const meta = params.meta !== undefined
+			? params.meta
+			: encodeStreamMeta({ name: params.name, kek: ev.crypto.getPasswordKek() });
+
 		// Only items that fit a single chunk can ride along with creation; anything larger
 		// needs the staged path, so it is pushed separately afterwards.
 		const initial = normalizeArray(array);
@@ -562,7 +614,7 @@ export default class Mnemonad {
 
 		await ev._write(
 			'create',
-			[salt, bytesToHex(params.meta || new Uint8Array()), encKeyWrapped, inline.map(bytesToHex)],
+			[salt, bytesToHex(meta || new Uint8Array()), encKeyWrapped, inline.map(bytesToHex)],
 			{ value: fee, ...options }
 		);
 
@@ -1386,7 +1438,13 @@ export default class Mnemonad {
 	 * @param {Uint8Array|Uint8Array[]} arr
 	 * @param {Object} [params={}]
 	 * @param {boolean} [params.onChain=false] - force large items on-chain via staging
-	 * @param {?Uint8Array} [params.itemMeta] - per-item metadata (single items only)
+	 * @param {?Uint8Array} [params.itemMeta] - raw per-item metadata bytes (single items
+	 *   only), for a caller that wants full control over the on-chain format. Wins outright
+	 *   over `name`/`type` below when given.
+	 * @param {?string} [params.name] - optional item name/label, encoded (via
+	 *   `encodeItemMeta`, gzipped on-chain when that's smaller) into `itemMeta`
+	 *   automatically when it isn't given directly — see `itemMeta.js`'s own doc.
+	 * @param {?string} [params.type] - optional MIME type, encoded the same way.
 	 * @param {boolean} [params.payGateway=true] - set `false` to skip prepaying through a
 	 *   wired gateway even for an off-chain item — see `_pushExternalAuto`'s own doc for
 	 *   when a caller would want that.
@@ -1410,8 +1468,10 @@ export default class Mnemonad {
 		// Encrypt first, then route: the 28-byte AES overhead can push an item across the
 		// chunk threshold, so routing on plaintext size would occasionally be wrong.
 		const items = await this._maybeEncrypt(normalizeArray(arr), params);
-		// Mark the payloads as already-ciphertext so the delegates below don't re-encrypt.
-		params = { ...params, alreadyEncrypted: true };
+		// Mark the payloads as already-ciphertext so the delegates below don't re-encrypt,
+		// and resolve name/type sugar into raw itemMeta bytes once here — _pushStaged and
+		// _pushExternalAuto below both receive this same already-resolved params object.
+		params = this._resolveItemMeta({ ...params, alreadyEncrypted: true });
 
 		if (items.length === 1) {
 			const data = items[0];
@@ -1484,11 +1544,14 @@ export default class Mnemonad {
 	 *   see `offloadCommitment`'s own doc for the full sequence — since the exact bytes
 	 *   committed to the gateway have to be the exact bytes uploaded here, and encrypting
 	 *   twice (once per call) would draw two different nonces and break that.
+	 * @param {?Uint8Array} [params.itemMeta] - raw per-item metadata bytes; see `push()`'s
+	 *   own doc — `name`/`type` sugar works here too.
 	 * @returns {Promise<boolean>}
 	 */
 	async pushExternal(data, params = {}) {
 		if (!this.isWritable) throw new Error('Mnemonad is not writable');
 		await this.initialize();
+		params = this._resolveItemMeta(params);
 
 		const [payload] = await this._maybeEncrypt([data], params);
 		const pointer = await this.offloadingProvider.putBytes(payload);
@@ -1768,10 +1831,13 @@ export default class Mnemonad {
 	 *   oversized item instead of IPFS
 	 * @param {boolean} [params.alreadyEncrypted] - see `_maybeEncrypt`; `data` is already
 	 *   ciphertext, so skip encrypting it a second time
+	 * @param {?Uint8Array} [params.itemMeta] - see `push()`'s own doc — `name`/`type` sugar
+	 *   works here too, and affects the staged path's modeled `beginItem` gas.
 	 * @returns {Promise<{gas: bigint, gasCost: bigint, fee: bigint, total: bigint, transactionCount: number}>}
 	 */
 	async estimatePushCost(data, params = {}) {
 		await this.initialize();
+		params = this._resolveItemMeta(params);
 		const buffer = params.bufferPercent ?? 10;
 		const gasPrice = await this.publicClient.getGasPrice();
 		const account = this._requireSender();
@@ -1790,7 +1856,11 @@ export default class Mnemonad {
 				address: this._contractAddress,
 				abi: mnemonadAbi,
 				functionName: 'push',
-				args: [this.id, BigInt(this.length), bytesToHex(payload), '0x'],
+				// itemMeta, not a hardcoded '0x': omitting it here would silently
+				// underestimate gas for any push carrying real itemMeta bytes (a real,
+				// latent bug this fixes, not just an oversight introduced by name/type
+				// sugar above — `params.itemMeta` was already resolved by then either way).
+				args: [this.id, BigInt(this.length), bytesToHex(payload), bytesToHex(params.itemMeta || new Uint8Array())],
 				account,
 				value: fee,
 			});
@@ -2099,6 +2169,26 @@ export default class Mnemonad {
 		const out = [];
 		for (const item of items) out.push(await this.crypto.encryptItem(item));
 		return out;
+	}
+
+	/**
+	 * Resolves the effective `itemMeta` bytes for a write: explicit raw `params.itemMeta`
+	 * wins outright (still the low-level escape hatch for a caller that wants full control
+	 * over the on-chain format), otherwise builds it from `params.name`/`params.type` via
+	 * `encodeItemMeta` — so a caller labeling an item never has to call that itself. Called
+	 * once, at each public entry point that reads `itemMeta` (`push`, `pushExternal`,
+	 * `estimatePushCost`) rather than at every internal call site that reads it afterward
+	 * (`_pushStaged`, `_pushExternalAuto` both receive the already-resolved `params` from
+	 * `push()`, same as they already receive `alreadyEncrypted`).
+	 *
+	 * @param {Object} params
+	 * @returns {Object} `params` unchanged (same reference) when there's nothing to resolve
+	 *   — no raw bytes and no name/type — so a plain push with nothing to label costs
+	 *   nothing extra.
+	 */
+	_resolveItemMeta(params) {
+		if (params.itemMeta !== undefined || (!params.name && !params.type)) return params;
+		return { ...params, itemMeta: encodeItemMeta({ name: params.name, type: params.type }) };
 	}
 
 	/** @returns {string} */

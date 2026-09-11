@@ -439,12 +439,14 @@ transferred**, because the key is bound to the owner.
 > **Shipped differently:** the encryption that actually landed is password-based (PBKDF2,
 > not a wallet signature), so there's no signature prompt and it's *not* owner-bound — see
 > `js/README.md`'s Encryption section for the full method-vs-method comparison. The
-> unwrapped key is cached the same way this section anticipated, just in a dedicated
-> `streamKeys.js` Pinia store (in-memory only, deliberately not persisted — a reload
-> re-prompts for the password), rather than piggybacking on the wagmi-signer flow described
-> above. `Stream.vue`/`ItemListItem.vue`/`ItemList.vue` carry the locked-state UI and the
-> password-unlock dialog. The "cannot be transferred" restriction still holds, but
-> unconditionally for *any* KEK method — the contract has no way to tell them apart.
+> unwrapped key is cached the same way this section anticipated, just not via a dedicated
+> key store: `stores/mnemonad.js` caches the live `Mnemonad` instance itself, per stream id
+> (in memory only — cleared on wallet disconnect, not persisted, so a reload re-prompts for
+> the password), and `unlockWithPassword` adopts the key directly onto that same cached
+> instance's `crypto` — surviving a later revisit for free, with nothing extra to bridge the
+> two. `Stream.vue`/`AddPanel.vue`/`ItemListItem.vue`/`ItemList.vue` carry the locked-state
+> UI and the password-unlock dialog. The "cannot be transferred" restriction still holds,
+> but unconditionally for *any* KEK method — the contract has no way to tell them apart.
 
 **IPFS writes are the awkward one.** `pinningUrl` + `pinningJwt` in a browser exposes the
 JWT to anyone who opens devtools. A shared demo key would be abuse-bait. So:

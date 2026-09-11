@@ -17,6 +17,8 @@ import {
 import { mnemonadAbi } from './abi.js';
 import { uploadGatewayAbi } from './gatewayAbi.js';
 import ids from './ids.js';
+import { encodeStreamMeta, decodeStreamMeta } from './streamMeta.js';
+import { encodeItemMeta, decodeItemMeta } from './itemMeta.js';
 
 export {
 	Mnemonad as default,
@@ -43,4 +45,8 @@ export {
 	uploadGatewayAbi,
 	ids,
 	EXPECTED_CONTRACT_VERSION,
+	encodeStreamMeta,
+	decodeStreamMeta,
+	encodeItemMeta,
+	decodeItemMeta,
 };

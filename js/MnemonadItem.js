@@ -1,3 +1,5 @@
+import { decodeItemMeta } from './itemMeta.js';
+
 /**
  * Represents a single item stored in a Mnemonad stream.
  *
@@ -80,6 +82,18 @@ export default class MnemonadItem {
 
 	/** @returns {string} The on-chain tier: 'slot', 'code', 'external' or 'none'. */
 	get storeName() { return StoreName[this.store] || 'none'; }
+
+	/**
+	 * This item's own metadata (`{name, type}`), decoded from raw `this.meta` on every
+	 * access — see `itemMeta.js`'s own doc for the wire format. A getter rather than
+	 * decoded once in the constructor: `meta` is immutable for a given item once
+	 * committed on-chain, so there's nothing to invalidate, and decoding a payload this
+	 * small costs nothing worth caching for.
+	 * @returns {{name: ?string, type: ?string}}
+	 */
+	get itemMeta() {
+		return decodeItemMeta(this.meta);
+	}
 
 	/**
 	 * Binary size of this item in bytes. For external items this is the off-chain payload

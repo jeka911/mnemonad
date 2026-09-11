@@ -23,8 +23,8 @@
 							<GradientButton label="Retry" size="sm" @click="load" />
 						</div>
 						<StreamSummary
-							v-else-if="stream"
-							:stream="stream"
+							v-else-if="streamInfo"
+							:stream="streamInfo"
 							:contract-address="mnemonadStore.contractAddress"
 							:chain="activeNetwork.chain"
 							:loaded-items="loadedItemsCount"
@@ -35,7 +35,7 @@
 				<DebugPanel />
 			</div>
 
-			<div v-if="stream" class="stream-layout__main">
+			<div v-if="streamInfo" class="stream-layout__main">
 				<GradientPanel always-expanded dense variant="corner" title="Items">
 					<template #actions>
 						<span
@@ -65,7 +65,7 @@
 					</template>
 				</GradientPanel>
 
-				<AddPanel :stream="_stream" @added="load" @unlock-requested="openUnlock" />
+				<AddPanel :stream="_stream" :unlocked="unlocked" @added="load" @unlock-requested="openUnlock" />
 			</div>
 		</div>
 
@@ -105,17 +105,9 @@
 
 <script>
 import { mapStores } from 'pinia';
-import { getPublicClient } from '@wagmi/core';
-import Mnemonad from '@mnemonad';
-import { config } from '../wagmi';
 import { getActiveNetwork } from '../settings.js';
 import { useWalletStore } from '../stores/wallet.js';
-import { useMnemonadStore, MAX_RPC_REQUESTS_PER_SECOND, RPC_RETRY } from '../stores/mnemonad.js';
-import { useDebugStore } from '../stores/debug.js';
-import { useStreamKeysStore } from '../stores/streamKeys.js';
-import { decodeStreamMeta } from '../mnemonad/streamMeta.js';
-import { decodeItemMeta } from '../mnemonad/itemMeta.js';
-import { createPresignProvider } from '../mnemonad/presignProvider.js';
+import { useMnemonadStore } from '../stores/mnemonad.js';
 import { JPanel } from 'themed_varmory';
 import GradientPanel from '../components/GradientPanel.vue';
 import GradientButton from '../components/GradientButton.vue';
@@ -197,7 +189,7 @@ export default {
 	data() {
 		return {
 			activeNetwork: getActiveNetwork(),
-			stream: null,
+			streamInfo: null,
 			items: [],
 			omitted: 0,
 			loading: false,
@@ -228,19 +220,19 @@ export default {
 			unlockPassword: '',
 			unlockError: null,
 			unlocking: false,
+			// Mirrors whether `this._stream.crypto` actually has a usable key, refreshed at
+			// load time (mnemonadStore.loadStream() may hand back an already-unlocked cached
+			// instance from earlier this session) and flipped true the moment submitUnlock()
+			// succeeds. A plain reactive boolean, not a re-derivation of `_stream.crypto`
+			// state on every read: `_stream` itself is deliberately non-reactive (see
+			// created() below), so isLocked (and AddPanel's own copy, via its `unlocked`
+			// prop) need an actual reactive value to depend on, not a live object it can't
+			// see mutate.
+			unlocked: false,
 		};
 	},
 	computed: {
-		...mapStores(useWalletStore, useMnemonadStore, useDebugStore, useStreamKeysStore),
-		// Passed as every Mnemonad's `cache` param below — `false` disables caching outright
-		// (see MnemonadChunkCache), `undefined` leaves the SDK's own default (the shared
-		// cache) untouched. Never write `!this.debugStore.cachingDisabled` directly as the
-		// param value: that would be `true` when caching is enabled, and `true` isn't one of
-		// the values `Mnemonad`'s constructor treats specially (see its own doc comment) —
-		// only `false`/`null`/an object are.
-		cacheParam: function() {
-			return this.debugStore.cachingDisabled ? false : undefined;
-		},
+		...mapStores(useWalletStore, useMnemonadStore),
 		loadStrategyLabel: function() {
 			const labels = {
 				asc: 'loading in order',
@@ -259,23 +251,21 @@ export default {
 			}
 		},
 		// True when this is a password-encrypted stream (see streamMeta.js's `kek` block)
-		// and no key is cached for it yet this session (see streamKeysStore). A
-		// signer-encrypted stream (no `kek` in metadata — created outside the explorer, or
-		// before this feature existed) has no unlock affordance here either way; that isn't
-		// a regression, since the explorer never had one for that method to begin with.
-		// Also read by AddPanel's own `isLocked` (it computes its own copy from the raw SDK
-		// instance rather than taking this as a prop — see that component's own doc) for
-		// its "Unlock" button's visibility; the two are computed differently (this one from
-		// the decoded `stream` metadata object, that one from the live instance directly)
-		// but describe the same thing and can never disagree in practice.
+		// and this session doesn't have a usable key for it yet (see `unlocked` in data()).
+		// A signer-encrypted stream (no `kek` in metadata — created outside the explorer,
+		// or before this feature existed) has no unlock affordance here either way; that
+		// isn't a regression, since the explorer never had one for that method to begin
+		// with.
+		//
+		// `this.streamInfo.encrypted` and `this.unlocked` are both reactive data (also what
+		// makes this computed re-run at all on load/unload/unlock — `this._stream` alone is
+		// deliberately non-reactive, see created() below); `kek` itself is read straight off
+		// the live instance rather than a copy kept on `streamInfo`, same as AddPanel's own
+		// `kek` computed already does off its own `stream` prop.
 		isLocked: function() {
-			return !!(
-				this.stream &&
-				this.stream.encrypted &&
-				this.stream.kek &&
-				this.stream.kek.method === 'password' &&
-				!this.streamKeysStore.hasKey(this.stream.id)
-			);
+			if (!this.streamInfo?.encrypted || this.unlocked) return false;
+			const kek = this._stream.streamMeta.kek;
+			return !!(kek && kek.method === 'password');
 		},
 	},
 	created() {
@@ -302,34 +292,17 @@ export default {
 			this.itemsLoading = true;
 			this.error = null;
 			try {
-				const publicClient = getPublicClient(config);
 				const id = BigInt(this.$route.params.id);
-				// If this stream was already unlocked this session (created just now, or
-				// visited and unlocked earlier), the key is in streamKeysStore — pass it
-				// straight in so this fresh instance decrypts from the start, with no
-				// re-prompt. Harmless to pass speculatively on an unencrypted stream: nothing
-				// ever consults it unless encKeyWrapped is actually present.
-				const cachedKey = this.streamKeysStore.getKey(id);
-				const v = new Mnemonad({
-					publicClient,
-					contractAddress: this.mnemonadStore.contractAddress,
-					id,
-					maxRPCRequestsPerSecond: MAX_RPC_REQUESTS_PER_SECOND,
-					rpcRetry: RPC_RETRY,
-					offloadingProvider: createPresignProvider({}),
-					cache: this.cacheParam,
-					debug: true,
-					aesKey: cachedKey || undefined,
-				});
-				// Run together, not sequentially — owner() doesn't depend on initialize()'s
-				// result, and firing both in the same tick lets the transport's JSON-RPC
-				// batching (see wagmi.js) fold owner() into the same HTTP request as
-				// initialize()'s own reads instead of a separate round trip for it alone.
-				const [, owner] = await Promise.all([v.initialize(), v.owner()]);
+				// The store owns the live instance now — cached across visits (and across
+				// the refresh-after-push this same method triggers via AddPanel's `added`
+				// event), so revisiting an already-loaded stream costs no RPC calls at all,
+				// and an already-unlocked key (this session's, or from just having created
+				// it) survives right along with the instance — see loadStream's own doc.
+				const { stream: v, owner } = await this.mnemonadStore.loadStream(id);
 				this._stream = v;
+				this.unlocked = !!v.crypto.getAesKey();
 
-				const meta = decodeStreamMeta(v.meta);
-				this.stream = {
+				this.streamInfo = {
 					id: v.id,
 					owner,
 					length: v.length,
@@ -338,27 +311,30 @@ export default {
 					madeWithVersion: v.madeWithVersion,
 					firstAvailableIndex: v.firstAvailableIndex,
 					maxChunkBytes: v.maxChunkBytes,
-					name: meta.name,
-					kek: meta.kek,
+					name: v.streamMeta.name,
+					// kek deliberately not copied here — nothing reads it off streamInfo
+					// anymore (see isLocked/submitUnlock below), both read the live
+					// `this._stream.streamMeta.kek` directly instead, same as AddPanel's own
+					// `kek` computed already does off its own `stream` prop.
 				};
 
 				// Deliberately not awaited — see loadItems()'s own comment on why it streams
 				// items in one at a time instead of loading them all before returning. This
-				// means this.items gets its placeholders in the same tick `this.stream` is
+				// means this.items gets its placeholders in the same tick `this.streamInfo` is
 				// set, with no gap where the Items panel has mounted but doesn't yet know
 				// whether there's anything to show — see `itemsLoading`.
 				this.loadItems();
 				this.startLoadedPoll();
 			} catch (e) {
 				this.error = e?.shortMessage || e?.message || 'Failed to load stream';
-				this.stream = null;
+				this.streamInfo = null;
 			} finally {
 				this.loading = false;
 			}
 		},
 		async loadItems() {
-			if (!this._stream || !this.stream) return;
-			const total = this.stream.length;
+			if (!this._stream || !this.streamInfo) return;
+			const total = this.streamInfo.length;
 			const cap = Math.min(total, ITEM_DISPLAY_CAP);
 			this.omitted = total - cap;
 
@@ -437,7 +413,7 @@ export default {
 			}
 		},
 		async loadOneItem(index) {
-			if (index < this.stream.firstAvailableIndex) {
+			if (index < this.streamInfo.firstAvailableIndex) {
 				return { index, tier: 'truncated', size: 0, locator: null, hash: null, name: null, chunkAddress: null };
 			}
 			// Tier/size/pointer only — no payload fetch here. Content is hidden by default
@@ -455,7 +431,7 @@ export default {
 				// nothing extra. null for anything not pushed with itemMeta (every tab but
 				// File) or pushed before this format existed; ItemListItem falls back to a
 				// generic label either way.
-				name: decodeItemMeta(item.meta).name,
+				name: item.itemMeta.name,
 				// The deployed chunk this item's bytes live in — only CODE items have one at
 				// all (SLOT is packed into the Item struct's own slot; EXTERNAL lives off
 				// -chain), and only this one matters for "does this item share a chunk with
@@ -482,7 +458,7 @@ export default {
 			const rows = {};
 			const toFetch = [];
 			for (const index of indices) {
-				if (index < this.stream.firstAvailableIndex) {
+				if (index < this.streamInfo.firstAvailableIndex) {
 					rows[index] = { index, tier: 'truncated', size: 0, locator: null, hash: null, name: null, chunkAddress: null };
 				} else {
 					toFetch.push(index);
@@ -503,7 +479,7 @@ export default {
 						size: item.size,
 						locator: pointer?.locator ?? null,
 						hash: pointer?.hash ?? null,
-						name: decodeItemMeta(item.meta).name,
+						name: item.itemMeta.name,
 						chunkAddress: item.storeName === 'code' ? (refs[k].chunks[0] ?? null) : null,
 					};
 				});
@@ -560,7 +536,7 @@ export default {
 			this.unlockError = null;
 		},
 		async submitUnlock() {
-			if (this.unlocking || !this._stream || !this.stream?.kek) return;
+			if (this.unlocking || !this._stream || !this._stream.streamMeta.kek) return;
 			if (!this.unlockPassword) {
 				this.unlockError = 'Password is required.';
 				return;
@@ -568,15 +544,15 @@ export default {
 			this.unlocking = true;
 			this.unlockError = null;
 			try {
-				// unlockWithPassword owns the derive/verify/adopt sequence — a wrong password
-				// throws (its unwrap's GCM tag check is itself the validity check) rather than
-				// silently adopting garbage, so a bad attempt never reaches setKey below.
-				const kek = this.stream.kek;
-				const aesKey = await this._stream.unlockWithPassword(this.unlockPassword, {
-					passwordSalt: kek.salt,
-					passwordIterations: kek.iterations,
-				});
-				this.streamKeysStore.setKey(this.stream.id, aesKey);
+				// unlockWithPassword owns the whole sequence now, salt/iterations included —
+				// it reads those off this stream's own streamMeta.kek itself (the exact block
+				// create() published when this stream was made), derives, verifies (a wrong
+				// password throws — its unwrap's GCM tag check is itself the validity check —
+				// so a bad attempt never reaches the line below), and adopts the key directly
+				// onto `this._stream.crypto` — the same cached instance mnemonadStore hands
+				// back for this id from now on, so nothing else needs to remember this key.
+				await this._stream.unlockWithPassword(this.unlockPassword);
+				this.unlocked = true;
 				this.unlockDialog = false;
 			} catch {
 				this.unlockError = 'Incorrect password.';

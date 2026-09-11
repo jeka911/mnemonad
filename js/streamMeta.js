@@ -1,3 +1,5 @@
+import { encodeMetaJson, decodeMetaJson } from './metaCodec.js';
+
 /**
  * Stream-level metadata format.
  *
@@ -8,11 +10,12 @@
  *
  *   { name?: string, kek?: { method: 'password', salt: string, iterations: number } }
  *
+ * gzip-compressed on-chain when that's actually smaller (see `metaCodec.js`'s own doc for
+ * why a bare name usually isn't, but a name alongside a `kek` block usually is).
+ *
  * `decodeStreamMeta` falls back to treating the whole decoded string as a legacy plain-text
  * name when it isn't valid JSON (or decodes to something that isn't a plain object) — no
- * migration needed for any stream created before this format existed, and nothing in this
- * app reads `meta` back today anyway (verified before introducing this format), so there is
- * no existing display path this could break.
+ * migration needed for any stream created before this format (or gzip) existed.
  */
 
 /**
@@ -27,8 +30,7 @@ export function encodeStreamMeta(fields = {}) {
 	const out = {};
 	if (fields.name) out.name = fields.name;
 	if (fields.kek) out.kek = fields.kek;
-	if (Object.keys(out).length === 0) return undefined;
-	return new TextEncoder().encode(JSON.stringify(out));
+	return encodeMetaJson(out);
 }
 
 /**
@@ -36,20 +38,7 @@ export function encodeStreamMeta(fields = {}) {
  * @returns {{name: ?string, kek: ?{method: string, salt: string, iterations: number}}}
  */
 export function decodeStreamMeta(bytes) {
-	if (!bytes || bytes.length === 0) return { name: null, kek: null };
-	let text;
-	try {
-		text = new TextDecoder().decode(bytes);
-	} catch {
-		return { name: null, kek: null };
-	}
-	try {
-		const parsed = JSON.parse(text);
-		if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
-			return { name: parsed.name || null, kek: parsed.kek || null };
-		}
-	} catch {
-		// Not JSON — a legacy plain-text name, or something this format doesn't recognize.
-	}
-	return { name: text || null, kek: null };
+	const { parsed, legacyText } = decodeMetaJson(bytes);
+	if (parsed) return { name: parsed.name || null, kek: parsed.kek || null };
+	return { name: legacyText || null, kek: null };
 }
