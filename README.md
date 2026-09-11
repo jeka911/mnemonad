@@ -16,6 +16,7 @@ It ships as smart contracts, an SDK, a dApp, and a set of supporting tools — n
 | [`js/`](js/) | The JavaScript/TypeScript SDK |
 | [`explorer/`](explorer/README.md) | Vue 3 + Quasar block explorer / demo app |
 | [`presign-server/`](presign-server/) | Issues Pinata upload URLs against paid on-chain escrow |
+| [`monadsync/`](monadsync/README.md) | DoubleSync + Mnemonad: versioned folder-tree sync on-chain |
 | [`scripts/`](scripts/) | Deployment and ABI-sync tooling |
 
 ## Paid off-chain uploads
@@ -77,8 +78,8 @@ Single quotes for strings, semicolons, in JS/TS/Vue — see any existing file in
 
 ## Status
 
-Test MVP, **live on Monad testnet** (not mainnet). 113 Solidity + 330 SDK + 15 server tests
-passing. Current deployment is recorded in [`js/ids.js`](js/ids.js) — the deploy scripts
+Test MVP, **live on Monad testnet** (not mainnet). 113 Solidity + 330 SDK + 15 server +
+31 monadsync tests passing. Current deployment is recorded in [`js/ids.js`](js/ids.js) — the deploy scripts
 write it there, and the gateway address is read from the registry rather than recorded, so
 the two cannot disagree.
 
