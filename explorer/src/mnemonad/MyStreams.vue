@@ -20,13 +20,25 @@
 					:chain="activeNetwork.chain"
 					label="View registry"
 				/>
-				<GradientButton
-					label="New stream"
-					icon="add"
-					size="sm"
-					:disable="walletStore.wrongNetwork"
-					@click="showCreate = true"
-				/>
+				<div class="my-streams__toolbar-actions">
+					<!-- fetchOwnedStreams caches by owner — a plain reconnect/account-switch
+					     never re-fetches for nothing, but it also has no way to notice a
+					     stream created/transferred/burned outside this session, hence this. -->
+					<GradientButton
+						label="Refresh"
+						icon="refresh"
+						size="sm"
+						:loading="mnemonadStore.loading"
+						@click="refresh"
+					/>
+					<GradientButton
+						label="New stream"
+						icon="add"
+						size="sm"
+						:disable="walletStore.wrongNetwork"
+						@click="showCreate = true"
+					/>
+				</div>
 			</div>
 
 			<!-- Loading: skeleton rows shaped like the real ones, not a spinner. -->
@@ -113,6 +125,26 @@ export default {
 				this.mnemonadStore.fetchOwnedStreams(this.walletStore.address);
 			}
 		},
+		/**
+		 * The "Refresh" button — bypasses fetchOwnedStreams' own by-owner cache, for
+		 * whatever it has no way to notice on its own (a stream created/transferred/burned
+		 * outside this session). Unlike `load()`, this can throw: the store deliberately
+		 * re-throws rather than clobbering an already-good list with a blocking `error`
+		 * state just because one refresh attempt hit a blip — surfaced here as a toast
+		 * instead, non-blocking, so the still-good list underneath stays visible.
+		 */
+		async refresh() {
+			if (!this.walletStore.isConnected) return;
+			try {
+				await this.mnemonadStore.fetchOwnedStreams(this.walletStore.address, { force: true });
+			} catch (e) {
+				this.$q.notify({
+					type: 'negative',
+					message: e?.message || 'Failed to refresh streams',
+					position: 'top',
+				});
+			}
+		},
 		formatId: function(id) {
 			const hex = BigInt(id).toString(16).padStart(64, '0');
 			return `0x${hex.slice(0, 6)}...${hex.slice(-4)}`;
@@ -143,6 +175,12 @@ export default {
 	align-items: center;
 	justify-content: space-between;
 	gap: 12px;
+}
+
+.my-streams__toolbar-actions {
+	display: flex;
+	align-items: center;
+	gap: 8px;
 }
 
 .my-streams__list {

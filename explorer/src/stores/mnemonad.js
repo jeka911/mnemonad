@@ -48,6 +48,12 @@ export const RPC_RETRY = { attempts: 8, maxDelayMs: 8000 };
 export const useMnemonadStore = defineStore('mnemonad', {
 	state: () => ({
 		streams: [],
+		// Which owner `streams` currently reflects, or `null` before the first successful
+		// fetch — lets fetchOwnedStreams tell "never fetched" apart from "fetched and
+		// genuinely empty", and a same-owner refetch (skippable unless `force`) apart from
+		// a different-owner one (always fetched — a different owner is always a cache
+		// miss on its own, no explicit invalidation needed for an account switch).
+		streamsOwner: null,
 		loading: false,
 		creating: false,
 		error: null,
@@ -70,14 +76,35 @@ export const useMnemonadStore = defineStore('mnemonad', {
 		 * Lists the given owner's streams and hydrates just enough per stream to render a
 		 * row (item count, encrypted flag) — cheap for a personal list, which is what this
 		 * is; a global "browse all streams" view would need to page instead.
+		 *
+		 * Cached by owner: a second call for the same owner reuses `this.streams` with no
+		 * RPC calls at all, unless `force` is set. The cache has no way to notice a change
+		 * from outside this session (a stream created elsewhere, a transfer, a burn) — that
+		 * is exactly what `force` is for; `MyStreams.vue`'s own "Refresh" button is that
+		 * escape hatch. The `walletStore.connectionId` watcher that calls this on every
+		 * connect/account-switch/chain-switch never needs `force` itself, since a different
+		 * owner always misses the cache on its own.
+		 *
+		 * @param {string} owner
+		 * @param {Object} [options={}]
+		 * @param {boolean} [options.force=false] - bypass the cache and re-fetch regardless
+		 * @throws {Error} Only when `force` refetches an owner this already has a good list
+		 *   for and the refetch itself fails — deliberately, so a transient failure never
+		 *   wipes out perfectly good existing data behind a blocking `error` state; the
+		 *   caller decides how to surface that (a toast, typically). A first-ever fetch (or
+		 *   one for a different/new owner) failing never throws — it sets `error` instead,
+		 *   the existing blocking behavior, since there is no good data to protect.
 		 */
-		async fetchOwnedStreams(owner) {
+		async fetchOwnedStreams(owner, { force = false } = {}) {
 			if (!MNEMONAD_ADDRESS || !owner) {
 				this.streams = [];
+				this.streamsOwner = null;
 				return;
 			}
+			if (!force && this.streamsOwner === owner) return;
+			const hadGoodData = this.streamsOwner === owner;
+			if (!hadGoodData) this.error = null;
 			this.loading = true;
-			this.error = null;
 			try {
 				const publicClient = getPublicClient(config);
 				const ids = await Mnemonad.listOwned(
@@ -110,8 +137,11 @@ export const useMnemonadStore = defineStore('mnemonad', {
 						};
 					})
 				);
+				this.streamsOwner = owner;
 			} catch (e) {
-				this.error = e?.shortMessage || e?.message || 'Failed to load streams';
+				const message = e?.shortMessage || e?.message || 'Failed to load streams';
+				if (hadGoodData) throw new Error(message);
+				this.error = message;
 				this.streams = [];
 			} finally {
 				this.loading = false;
