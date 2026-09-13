@@ -64,7 +64,7 @@
 				<router-link
 					v-for="v in mnemonadStore.streams"
 					:key="String(v.id)"
-					:to="`/stream/${v.id}`"
+					:to="`/stream/${v.id}/files`"
 					class="stream-row"
 				>
 					<span class="stream-row__id">{{ formatId(v.id) }}</span>

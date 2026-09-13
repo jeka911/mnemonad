@@ -10,6 +10,7 @@
     "clean:cache": "rm -rf node_modules/.vite"
   },
   "dependencies": {
+    "@fizzyflow/doublesync": "^0.1.1",
     "@noble/ciphers": "^2.4.0",
     "@noble/hashes": "^2.4.0",
     "@quasar/extras": "^2.0.2",
