@@ -1597,6 +1597,15 @@ export default class Mnemonad {
 	 * only actually working if the offloading provider doesn't itself demand a pre-paid
 	 * escrow — when no gateway is wired to this registry, or `params.payGateway` opts out.
 	 *
+	 * Idempotent across retries of the same payload: the contract keys an escrow on
+	 * `(payer, contentHash)` and allows only one open request per pair, so paying twice for
+	 * identical bytes would revert with `RequestExists` — exactly what happens if an
+	 * earlier attempt's `payForUpload` succeeded but `pushExternal`/settlement never landed
+	 * (e.g. the upload step failed or was interrupted). Before paying, this checks for a
+	 * live escrow already covering `hash` and reuses it instead of paying again; an expired
+	 * but never-consumed one is refunded first so a fresh `payForUpload` doesn't hit the
+	 * same revert.
+	 *
 	 * @param {Uint8Array} data - already encrypted, if applicable (`push()` calls this with
 	 *   `params.alreadyEncrypted` already set from its own `_maybeEncrypt` step, so this
 	 *   never encrypts a second time).
@@ -1624,7 +1633,32 @@ export default class Mnemonad {
 		// _maybeEncrypt step by the time this runs, so this commits to and later uploads
 		// the exact same bytes — never re-encrypting, never drawing a second nonce.
 		const { hash, size } = await this.offloadCommitment(data, params);
-		await gw.payForUpload(hash, size);
+
+		// The contract allows only one open escrow per (payer, contentHash) — a retry of
+		// this exact payload (same bytes -> same sha256 -> same requestId), after an
+		// earlier payForUpload succeeded but the upload/settle step below never landed
+		// (e.g. the presign server or pinning call failed, or the caller was interrupted
+		// mid-push), would otherwise revert with RequestExists instead of resuming. Check
+		// for that live escrow first rather than paying blind.
+		const payer = this._walletClient.account?.address ?? this._senderAddress;
+		const existing = payer ? await gw.requestFor(payer, hash) : { exists: false };
+		// The chain's own clock, not the host's: `expiry` is compared on-chain against
+		// `block.timestamp`, and the two can diverge (most obviously in a test that
+		// fast-forwards chain time) — using Date.now() here would silently disagree with
+		// what consumeUpload/refund will themselves decide.
+		const { timestamp: nowSec } = await this.publicClient.getBlock();
+		if (existing.exists && existing.expiry > nowSec) {
+			// Same content, already paid for, still live — nothing new to pay for. Paying
+			// again would revert; the existing escrow already covers this exact upload.
+		} else {
+			if (existing.exists) {
+				// Expired but never consumed or refunded (the contract only clears a
+				// request on refund/consume, never on expiry alone) — clear it first, or
+				// the fresh payForUpload below hits the same RequestExists revert.
+				await gw.refund(payer, hash);
+			}
+			await gw.payForUpload(hash, size);
+		}
 		this._reportProgress(params, { phase: 'gateway-upload', chunkIndex: 1, chunkCount: 1 });
 		return await this.pushExternal(data, params);
 	}

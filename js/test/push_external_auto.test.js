@@ -138,6 +138,72 @@ describe('push() auto-pays a wired gateway for an off-chain item', () => {
 		expect(new Uint8Array(await ev.at(0))).toEqual(data);
 	});
 
+	it('resumes an already-paid, still-live escrow instead of paying (and reverting) again', async () => {
+		// Simulates the exact failure this test guards against: an earlier push()
+		// attempt's payForUpload succeeded, but the upload/settle step never landed (a
+		// dropped connection, a failed presign call, whatever) — leaving a live,
+		// unconsumed escrow for this exact content sitting on-chain. A naive retry that
+		// pays again reverts with RequestExists; _pushExternalAuto must detect the live
+		// escrow and skip straight to the upload/settle step instead.
+		const ipfsClient = makeMockIpfs();
+		const ev = await Mnemonad.create(baseParams({ ipfsClient }));
+		const data = makeBytes(MAX_CHUNK * 2, 7);
+
+		const gw = gatewayClient();
+		const hash = contentHashHex(data);
+		await gw.payForUpload(hash, data.length); // pre-pay, standing in for the earlier attempt
+
+		const before = await gw.balances();
+		const preExisting = await gw.requestFor(clients.account.address, hash);
+		expect(preExisting.exists).toBe(true); // sanity: the escrow really is there first
+
+		await ev.push(data); // must not revert with RequestExists
+
+		expect(new Uint8Array(await ev.at(0))).toEqual(data);
+
+		const after = await gw.balances();
+		expect(after.revenue).toBeGreaterThan(before.revenue); // settled via the pre-existing escrow
+
+		const settled = await gw.requestFor(clients.account.address, hash);
+		expect(settled.exists).toBe(false); // consumed and cleared, not left dangling
+	});
+
+	it('refunds an expired, unconsumed escrow before paying fresh', async () => {
+		// A request the contract never auto-clears on expiry (only refund/consume does)
+		// would otherwise block a fresh payForUpload with the same RequestExists revert,
+		// forever, until someone calls refund() out of band. _pushExternalAuto must do
+		// that itself rather than leaving the caller stuck.
+		const ipfsClient = makeMockIpfs();
+		const ev = await Mnemonad.create(baseParams({ ipfsClient }));
+		const data = makeBytes(MAX_CHUNK * 2, 8);
+
+		const gw = gatewayClient();
+		const hash = contentHashHex(data);
+		await gw.payForUpload(hash, data.length);
+
+		const beforeRefund = await gw.balances();
+
+		// Advance past the gateway's default 1-hour requestTtl so the escrow is expired
+		// but still on-chain (nothing has consumed or refunded it yet).
+		await clients.publicClient.request({ method: 'evm_increaseTime', params: [3601] });
+		await clients.publicClient.request({ method: 'evm_mine', params: [] });
+
+		const expired = await gw.requestFor(clients.account.address, hash);
+		expect(expired.exists).toBe(true); // still there — expiry alone doesn't clear it
+
+		await ev.push(data); // must refund the stale escrow, then pay+push fresh — no revert
+
+		expect(new Uint8Array(await ev.at(0))).toEqual(data);
+
+		const after = await gw.balances();
+		// The stale escrow was refunded (escrowed decreases, revenue untouched by it) and a
+		// fresh one was paid and settled (revenue increases) — net revenue still goes up.
+		expect(after.revenue).toBeGreaterThan(beforeRefund.revenue);
+
+		const settled = await gw.requestFor(clients.account.address, hash);
+		expect(settled.exists).toBe(false);
+	});
+
 	it('payGateway: false skips payment even though a gateway is wired', async () => {
 		const ipfsClient = makeMockIpfs();
 		const ev = await Mnemonad.create(baseParams({ ipfsClient }));
