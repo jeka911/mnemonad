@@ -90,8 +90,8 @@ export default {
       default:
         'Mnemonad lets you upload, append, and manage any binary data on the Monad blockchain — with flexible storage, encryption, and a simple developer experience.'
     },
-    primaryLabel: { type: String, default: 'Start Building' },
-    primaryHref: { type: String, default: '#build' },
+    primaryLabel: { type: String, default: 'Launch dApp' },
+    primaryHref: { type: String, default: '/select' },
     secondaryLabel: { type: String, default: 'Explore' },
     secondaryHref: { type: String, default: '#explorer' },
     networkLabel: { type: String, default: 'Monad Testnet' },
@@ -141,11 +141,22 @@ export default {
     // navigate manually so primaryHref/secondaryHref keep doing something.
     onPrimaryClick(event) {
       this.$emit('primary-click', event)
-      if (this.primaryHref) window.location.href = this.primaryHref
+      this._navigate(this.primaryHref)
     },
     onSecondaryClick(event) {
       this.$emit('secondary-click', event)
-      if (this.secondaryHref) window.location.href = this.secondaryHref
+      this._navigate(this.secondaryHref)
+    },
+    // primaryHref/secondaryHref now point at real in-app routes by default (e.g.
+    // `/select`), not just the placeholder `#anchor`s this shipped with originally — a
+    // plain `window.location.href` assignment would still "work" for those but forces a
+    // full page reload, throwing away SPA state (the connected wallet included). Anything
+    // starting with `/` goes through the router instead; anything else (an external URL,
+    // a bare hash) falls back to a real navigation, same as before.
+    _navigate(href) {
+      if (!href) return
+      if (href.startsWith('/')) this.$router.push(href)
+      else window.location.href = href
     }
   }
 }
