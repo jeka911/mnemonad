@@ -41,6 +41,17 @@ export default {
    .app-container itself (the previous approach) forced a scroll unconditionally, since
    the footer could then never start above the fold. */
 .overall_layout {
+	/* No descendant here is positioned, so without this, a `position: fixed; z-index: -1`
+	   element anywhere inside (e.g. HomeVideoBackground) ends up painted *above* `body`'s
+	   own background, not below it: with no intermediate stacking context, that negative
+	   z-index competes directly against body's plain background at the document root,
+	   and a non-positioned box's own background always paints before — i.e. underneath —
+	   its own descendants, negative z-index or not. `isolation: isolate` gives this
+	   subtree its own stacking context with zero layout side effects, so z-index here is
+	   only ever judged against these siblings (header/page/footer), never against body's
+	   background again. Confirmed live: without this, a full-viewport video background
+	   played correctly but was entirely invisible, hidden behind body's opaque bg. */
+	isolation: isolate;
 	display: flex;
 	flex-direction: column;
 	min-height: 100vh;

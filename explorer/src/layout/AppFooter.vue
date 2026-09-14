@@ -9,11 +9,11 @@
 
 			<!-- nav -->
 			<nav class="appFooter_nav">
-				<router-link to="/" class="appFooter_link">Home</router-link>
-				<router-link to="/showcase" class="appFooter_link">Components</router-link>
-				<router-link to="/docs" class="appFooter_link">Docs</router-link>
-				<a :href="explorerUrl" class="appFooter_link">Explorer<q-icon name="north_east" size="14px" class="appFooter_ext" /></a>
-				<a v-if="faucetUrl" :href="faucetUrl" class="appFooter_link">Faucet<q-icon name="north_east" size="14px" class="appFooter_ext" /></a>
+				<router-link to="/" class="appFooter_link" @mouseenter="scramble('home')"><ScrambleText ref="home" text="Home" /></router-link>
+				<router-link to="/showcase" class="appFooter_link" @mouseenter="scramble('components')"><ScrambleText ref="components" text="Components" /></router-link>
+				<router-link to="/docs" class="appFooter_link" @mouseenter="scramble('docs')"><ScrambleText ref="docs" text="Docs" /></router-link>
+				<a :href="explorerUrl" class="appFooter_link" @mouseenter="scramble('explorer')"><ScrambleText ref="explorer" text="Explorer" /><q-icon name="north_east" size="14px" class="appFooter_ext" /></a>
+				<a v-if="faucetUrl" :href="faucetUrl" class="appFooter_link" @mouseenter="scramble('faucet')"><ScrambleText ref="faucet" text="Faucet" /><q-icon name="north_east" size="14px" class="appFooter_ext" /></a>
 				<a href="https://x.com/suidouble" class="appFooter_link appFooter_link--x">𝕏<q-icon name="north_east" size="14px" class="appFooter_ext" /></a>
 
 			</nav>
@@ -32,12 +32,14 @@
 
 <script>
 import Logo from './Logo.vue';
+import ScrambleText from '../components/ScrambleText.vue';
 import { getActiveNetwork } from '../settings.js';
 
 export default {
 	name: 'AppFooter',
 	components: {
 		Logo,
+		ScrambleText,
 	},
 	data() {
 		const network = getActiveNetwork();
@@ -49,6 +51,13 @@ export default {
 	computed: {
 		currentYear: function() {
 			return new Date().getFullYear();
+		},
+	},
+	methods: {
+		// ScrambleText drives its own tick loop (and its own prefers-reduced-motion
+		// check) internally — this just fires it off, no state to track here.
+		scramble(ref) {
+			this.$refs[ref]?.start();
 		},
 	},
 };

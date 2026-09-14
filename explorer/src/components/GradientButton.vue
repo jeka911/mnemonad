@@ -5,6 +5,7 @@
 			'gradient-btn--no-caps': noCaps,
 			'gradient-btn--rounded': rounded,
 			'gradient-btn--round': round,
+			'gradient-btn--outline': outline,
 		}"
 		type="button"
 		:style="buttonStyle"
@@ -90,6 +91,13 @@ export default {
 			type: Boolean,
 			default: false,
 		},
+		// A secondary/ghost treatment: subtle bordered fill instead of the solid
+		// gradient — for a lower-emphasis action sitting next to a primary
+		// GradientButton (e.g. "Explore" next to "Start Building").
+		outline: {
+			type: Boolean,
+			default: false,
+		},
 	},
 
 	emits: ['click'],
@@ -171,6 +179,53 @@ export default {
 	padding: 0;
 	min-width: 3em;
 	min-height: 3em;
+}
+
+/* Ghost/secondary treatment: a plain translucent dark fill and a soft solid border
+   instead of the primary's gradient fill + glow — sits quietly next to a primary
+   GradientButton rather than competing with it. Selectors combine both classes
+   (.gradient-btn.gradient-btn--outline, not just .gradient-btn--outline alone) so they
+   reliably outrank .gradient-btn's own same-state rules on specificity — a bare single
+   class here ties with .gradient-btn's own :hover rule and loses the tie to whichever one
+   happens to sit later in the file, which is exactly how this went wrong the first time
+   (hover background silently stayed the gradient because the plain-.gradient-btn hover
+   rule was declared later and won the tie). */
+.gradient-btn.gradient-btn--outline {
+	background: rgba(10, 8, 24, 0.55);
+	backdrop-filter: blur(12px);
+	border-color: rgba(147, 127, 255, 0.48);
+	box-shadow: none;
+}
+
+.gradient-btn--outline .gradient-btn__shine {
+	display: none;
+}
+
+.gradient-btn.gradient-btn--outline:hover:not(:disabled) {
+	background: rgba(0, 0, 0, 0.85);
+	border-color: rgba(179, 162, 255, 0.8);
+	box-shadow: none;
+	filter: none;
+}
+
+.gradient-btn.gradient-btn--outline:active:not(:disabled) {
+	box-shadow: none;
+}
+
+body.body--light .gradient-btn.gradient-btn--outline {
+	/* The base .gradient-btn rule hardcodes white text (fine on a filled gradient in
+	   either theme) — never overridden for light mode until now, which left this
+	   variant's white text sitting on its own near-white background, unreadable. */
+	color: var(--q-primary);
+	background: rgba(255, 255, 255, 0.55);
+	border-color: var(--q-primary);
+	box-shadow: none;
+}
+
+body.body--light .gradient-btn.gradient-btn--outline:hover:not(:disabled) {
+	background: rgba(255, 255, 255, 0.7);
+	border-color: var(--q-primary);
+	box-shadow: none;
 }
 
 .gradient-btn:not(.gradient-btn--no-caps) {
