@@ -88,7 +88,7 @@ export default {
     description: {
       type: String,
       default:
-        'Mnemonad lets you upload, append, and manage any binary data on the Monad blockchain — with flexible storage, encryption, and a simple developer experience.'
+        'Mnemonad is a storage layer for Monad, giving users and AI agents persistent storage for arbitrary binary data, filesystems, and filesystem-like state — with flexible, optimized decentralized storage options, encryption, and a simple developer experience.'
     },
     primaryLabel: { type: String, default: 'Launch dApp' },
     primaryHref: { type: String, default: '/select' },

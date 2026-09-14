@@ -2,7 +2,7 @@
 import { monad, monadTestnet } from 'viem/chains';
 
 // Product name — shown in the logo and used as the base document title.
-export const APP_TITLE = 'MnemonadExplorer';
+export const APP_TITLE = 'Mnemonad';
 
 // Networks the app can run on. Contract addresses are added per feature as it
 // gets deployed; a null address means that feature shows a "not deployed" state
