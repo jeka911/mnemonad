@@ -80,7 +80,7 @@ export default {
      * `eyebrow` text) once past the demo stage. */
     eyebrowWords: {
       type: Array,
-      default: () => ['PERSISTENT', 'PERMISSIONLESS', 'PROGRAMMABLE', 'VERIFIABLE', 'PORTABLE'],
+      default: () => ['PERSISTENT', 'PERMISSIONLESS', 'PROGRAMMABLE', 'VERIFIABLE', 'PORTABLE', 'ENCRYPTABLE', 'DECENTRALIZED', 'EFFICIENT', 'SCALABLE', 'COMPOSABLE'],
     },
     titleLine1: { type: String, default: 'Your data.' },
     titleLine2: { type: String, default: 'On Monad.' },
@@ -571,7 +571,7 @@ body.body--light .mn-bottom-fade {
 }
 
 @media (max-width: 820px) {
-  .mn-hero { min-height: 980px; }
+  .mn-hero {  }
   .mn-nav { width: calc(100% - 32px); height: 78px; }
   .mn-network { display: none; }
   .mn-wallet { height: 44px; padding: 0 14px; }
@@ -581,7 +581,6 @@ body.body--light .mn-bottom-fade {
   .mn-hero-inner {
     width: calc(100% - 40px);
     padding-top: 68px;
-    padding-bottom: 410px;
   }
 
   .mn-copy { width: min(620px, 100%); }
@@ -598,6 +597,7 @@ body.body--light .mn-bottom-fade {
     width: 142%;
     height: 520px;
     opacity: .93;
+    display: none;
   }
 
   .mn-art::before {
