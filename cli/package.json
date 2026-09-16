@@ -1,0 +1,28 @@
+{
+    "name": "mnemonad-cli",
+    "version": "0.1.0",
+    "description": "CLI to sync local folders to versioned, diffed on-chain streams on Monad, backed by Mnemonad + monadsync.",
+    "type": "module",
+    "license": "AGPL-3.0",
+    "bin": {
+        "mnemonad": "./bin/mnemonad.js"
+    },
+    "files": [
+        "bin/",
+        "lib/",
+        "mnemonad.config.js",
+        "README.md"
+    ],
+    "scripts": {
+        "test": "vitest run ./test/*.test.js",
+        "push-sample": "node bin/mnemonad.js push ./sample --chain testnet --key 0x824a2655575b64746c94a2db7c6b2d39e21d533491534073d5a2b39a1d051677"
+    },
+    "dependencies": {
+        "mnemonad": "file:../js",
+        "monadsync": "file:../monadsync",
+        "viem": "^2.56.3"
+    },
+    "devDependencies": {
+        "vitest": "^4.1.11"
+    }
+}

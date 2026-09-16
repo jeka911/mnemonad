@@ -1,0 +1,5 @@
+This is a sample text file, used to demonstrate the file browser's "Fill Samples" button.
+
+Every file and folder you see here — this one included — lives entirely on-chain, appended one item at a time to a Mnemonad stream on Monad. Editing this file and pushing again only sends the changed bytes: the sync layer diffs the new folder tree against the last snapshot it stored, so a one-line edit costs a small incremental patch, not a full re-upload.
+
+Feel free to edit this file, add new ones, or delete it outright — none of it is special, it is just a regular file in the tree like any other.
