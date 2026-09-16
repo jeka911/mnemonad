@@ -1,13 +1,6 @@
 <template>
 	<div>
-		<!-- <HomeVideoBackground /> -->
 		<MnemonadHero />
-<!--
-		<GradientPanel always-expanded dense variant="fill" title="My streams">
-			<template #body>
-				<MyStreams />
-			</template>
-		</GradientPanel> -->
 	</div>
 </template>
 

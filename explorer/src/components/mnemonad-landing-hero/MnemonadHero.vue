@@ -1,17 +1,16 @@
 <template>
   <section class="mn-hero" :style="sectionStyle">
 
-    <div class="mn-art" aria-hidden="true">
+    <div class="mn-art" aria-hidden="true" :style="artStyle">
       <img class="mn-art-img mn-art-img--dark" :src="resolvedBackground" alt="" />
       <img class="mn-art-img mn-art-img--light" :src="resolvedBackgroundLight" alt="" />
-      <div class="mn-art-glow"></div>
     </div>
 
     <div class="mn-hero-inner">
-      <div class="mn-copy">
-        <p class="mn-eyebrow"><ScrambleCycler :words="eyebrowWords" :interval-ms="2200" /> {{ eyebrowRest }}</p>
+      <div class="mn-copy" ref="copyCol">
+        <p class="mn-eyebrow" style="user-select: none; position: absolute;"><ScrambleCycler :words="eyebrowWords" :interval-ms="2200" /> {{ eyebrowRest }}</p>
 
-        <h1>
+        <h1 style="padding-top: 30px;">
           <span>{{ titleLine1 }}</span>
           <span>{{ titleLine2 }}</span>
           <span class="mn-gradient-text">{{ titleLine3 }}</span>
@@ -44,8 +43,6 @@
         </div>
       </div>
     </div>
-
-    <div class="mn-bottom-fade" aria-hidden="true"></div>
   </section>
 </template>
 
@@ -74,7 +71,7 @@ export default {
     brandHref: { type: String, default: '/' },
     backgroundImage: { type: String, default: '' },
     backgroundImageLight: { type: String, default: '' },
-    eyebrow: { type: String, default: 'PERSISTENT DATA LAYER FOR THE OPEN INTERNET' },
+    eyebrow: { type: String, default: 'PERSISTENT DATA LAYER FOR THE NEXT INTERNET' },
     /** Demo of ScrambleCycler: rotates in place of `eyebrow`'s first word, the rest of
      * `eyebrow` renders as static text after it. Swap this out (or drop back to plain
      * `eyebrow` text) once past the demo stage. */
@@ -117,6 +114,15 @@ export default {
     }
   },
 
+  data() {
+    return {
+      // Left edge of the art panel, in px relative to the section — null until measured
+      // (or below the breakpoint where CSS takes over entirely, see measureArtLeft()), so
+      // artStyle() falls back to the plain CSS-positioned default with no inline override.
+      artLeftPx: null
+    }
+  },
+
   computed: {
     resolvedBackground() {
       return this.backgroundImage || defaultBackground
@@ -132,10 +138,55 @@ export default {
     },
     sectionStyle() {
       return { '--mn-min-height': this.minHeight }
+    },
+    // Pins the art panel's left edge to exactly where the copy column ends, so it takes
+    // up exactly the remaining width to the right edge — rather than the CSS default's
+    // fixed min(820px, 70vw) guess, which doesn't track that column's actual rendered
+    // width across fonts/viewports. Measuring the copy column itself (not just the
+    // headline) matters: the headline is often narrower than the column — the
+    // description, or the other h1 lines, can reach further right than it does — so
+    // anchoring to the headline alone left the art panel overlapping whichever of those
+    // was actually widest. `right` stays the CSS default (0), so left+right together let
+    // the browser compute the exact width.
+    artStyle() {
+      return this.artLeftPx != null ? { left: this.artLeftPx + 'px', width: 'auto' } : {}
     }
   },
 
+  mounted() {
+    this._onResize = () => this.measureArtLeft()
+    window.addEventListener('resize', this._onResize)
+    // Measured once after this render settles, and again once webfonts finish loading —
+    // a measurement taken against a fallback font would freeze the art panel's left edge
+    // at that font's (usually different) text width instead of the real one.
+    this.$nextTick(() => this.measureArtLeft())
+    if (document.fonts && document.fonts.ready) {
+      document.fonts.ready.then(() => this.measureArtLeft())
+    }
+  },
+
+  beforeUnmount() {
+    window.removeEventListener('resize', this._onResize)
+  },
+
   methods: {
+    // Below the breakpoint where the art panel's CSS switches to its mobile layout
+    // (repositioned near the bottom, then hidden entirely — see the max-width: 820px
+    // rule), this measurement has nothing meaningful to say — resets to null so
+    // artStyle() stops overriding left/width and CSS fully takes over. Above that, this
+    // is the ONLY thing that positions the art panel's left edge (the CSS default is
+    // just a pre-measurement fallback) — a fixed vw-based breakpoint here previously
+    // caused it to overlap the copy column at some widths, since neither side's box
+    // model accounted for the other's actual size.
+    measureArtLeft() {
+      if (window.innerWidth <= 820 || !this.$refs.copyCol) {
+        this.artLeftPx = null
+        return
+      }
+      const copyRect = this.$refs.copyCol.getBoundingClientRect()
+      const heroRect = this.$el.getBoundingClientRect()
+      this.artLeftPx = Math.round(copyRect.right - heroRect.left)
+    },
     // GradientButton is a plain <button> (no href), unlike the <a> tags these replaced —
     // emit the same events as before (back-compat for anyone already listening) and
     // navigate manually so primaryHref/secondaryHref keep doing something.
@@ -171,6 +222,11 @@ export default {
   --mn-purple: #8d6bff;
   --mn-pink: #d665ff;
   --mn-cyan: #73e3ff;
+  /* Shared by .mn-hero-inner's padding-top and .mn-art's top below, so the art panel
+     starts at exactly the same Y as the eyebrow line above it ("PERMISSIONLESS DATA
+     LAYER...") — one value instead of two that would otherwise have to be kept in sync
+     by hand. */
+  --mn-copy-top: clamp(40px, 6vh, 100px);
 
   position: relative;
   min-height: var(--mn-min-height);
@@ -187,17 +243,6 @@ export default {
 body.body--light .mn-hero {
   --mn-text: #2a2440;
   --mn-muted: #5b5570;
-}
-
-.mn-hero::before {
-  content: '';
-  position: absolute;
-  inset: 0;
-  z-index: -1;
-  pointer-events: none;
-  background:
-    radial-gradient(circle at 16% 36%, rgba(99, 72, 255, 0.08), transparent 28%),
-    radial-gradient(circle at 73% 58%, rgba(95, 172, 255, 0.07), transparent 23%);
 }
 
 .mn-nav {
@@ -340,10 +385,10 @@ body.body--light .mn-hero {
 .mn-art {
   position: absolute;
   z-index: -2;
-  top: 28px;
+  top: var(--mn-copy-top);
   right: 0px;
-  width: min(1120px, 70vw);
-  height: calc(100% - 28px);
+  width: min(820px, 70vw);
+  height: calc(100% - var(--mn-copy-top));
   pointer-events: none;
 }
 
@@ -354,16 +399,10 @@ body.body--light .mn-hero {
   height: 100%;
   object-fit: contain;
   object-position: top right;
-  filter: saturate(1.03) contrast(1.02);
+  /* No filter here — even a subtle contrast/saturate push shifts the image's own
+     background pixels (recolored to match the page background exactly, see
+     assets/mnemonad-hero-bg*.jpg) away from that match, which reads as a faint edge. */
   transform: scale(1.03);
-  /* The mn-breathe animation below only ever touches `transform`, but `filter` sitting on
-     this same (large, full-hero-sized) image is expensive to recomposite — without a
-     promoted layer to animate instead, the browser can end up re-rendering the filtered
-     image on every frame rather than just transforming a cached one, which reads as
-     stepping/jank rather than a smooth 9s ease. will-change hints the layer promotion
-     ahead of time so the animation only ever moves that cached layer. */
-  will-change: transform;
-  backface-visibility: hidden;
 }
 
 /* Light/dark switched purely via body.body--light (not a JS $q.dark computed) — a
@@ -383,49 +422,25 @@ body.body--light .mn-art-img--light {
   display: block;
 }
 
-.mn-art::before {
-  content: '';
-  position: absolute;
-  z-index: 2;
-  inset: 0;
-}
-
-.mn-art::after {
-  content: '';
-  position: absolute;
-  z-index: 2;
-  inset: 0;
-  /* Trailing stop matches the app's own #121212 body background (not this hero's own
-     #03030a), so the bottom of the art panel blends into the page around it instead of
-     fading to a subtly different near-black that reads as a seam. */
-    /* background: linear-gradient(180deg, transparent 54%, rgba(3,3,10,.12) 76%, #03030a 100%); */
-}
-
-.mn-art-glow {
-  position: absolute;
-  z-index: 1;
-  right: 5%;
-  bottom: 12%;
-  width: 48%;
-  aspect-ratio: 1;
-  border-radius: 50%;
-  background: radial-gradient(circle, rgba(85, 114, 255, 0.2), rgba(151, 70, 255, 0.08) 48%, transparent 70%);
-  filter: blur(45px);
-}
-
 .mn-hero-inner {
   position: relative;
   z-index: 3;
   width: min(1480px, calc(100% - 56px));
-  padding-top: clamp(40px, 6vh, 100px);
+  padding-top: var(--mn-copy-top);
   padding-bottom: 94px;
 }
 
 .mn-copy {
-  width: min(620px, 45vw);
+  width: min(620px, 35vw);
+  /* Makes this the containing block for .mn-eyebrow's `width: 100%` below — without it,
+     that absolutely positioned line's containing block is a wider ancestor further up,
+     and its text (with no width to wrap against) can overflow straight past this column
+     into the art panel beside it at some viewport widths. */
+  position: relative;
 }
 
 .mn-eyebrow {
+  width: 100%;
   margin: 0 0 24px;
   color: #9c8aff;
   font-size: 12px;
@@ -446,7 +461,7 @@ body.body--light .mn-eyebrow {
   margin: 0;
   display: flex;
   flex-direction: column;
-  font-size: clamp(58px, 5.5vw, 88px);
+  font-size: clamp(38px, 4.5vw, 58px);
   line-height: 0.98;
   letter-spacing: -0.055em;
   font-weight: 780;
@@ -542,31 +557,14 @@ body.body--light .mn-feature-icon {
   stroke-linejoin: round;
 }
 
-.mn-bottom-fade {
-  position: absolute;
-  z-index: 2;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  height: 130px;
-  pointer-events: none;
-  /* This is the seam between the hero and whatever page content follows it — fading to
-     the app's actual #121212 body background rather than this hero's own #03030a so the
-     two don't read as two subtly different near-blacks butted together. */
-  background: linear-gradient(180deg, transparent, rgba(18, 18, 18, .55) 48%, #121212 100%);
-}
-
-/* Same seam, but the page behind it is light in this theme — fading to a near-black here
-   would paint a dark bar across an otherwise white page instead of blending in. */
-body.body--light .mn-bottom-fade {
-  background: linear-gradient(180deg, transparent, rgba(251, 250, 249, .65) 48%, #fbfaf9 100%);
-}
-
 @media (max-width: 1180px) {
   .mn-nav { grid-template-columns: 1fr auto; }
   .mn-nav-links { display: none; }
   .mn-copy { width: min(610px, 54vw); }
-  .mn-art { right: -17vw; width: 86vw; }
+  /* No .mn-art override here anymore — its left edge (and therefore its width, via the
+     base rule's right: 0) is measured in JS from the actual end of the headline text
+     down to the 820px breakpoint below, so it can never overlap .mn-copy regardless of
+     how wide that column is at a given viewport width. See measureArtLeft(). */
   .mn-features { grid-template-columns: repeat(2, max-content); }
 }
 
@@ -599,21 +597,6 @@ body.body--light .mn-bottom-fade {
     opacity: .93;
     display: none;
   }
-
-  .mn-art::before {
-    background: linear-gradient(180deg, #03030a 0%, rgba(3,3,10,.42) 16%, transparent 42%);
-  }
-
-  .mn-art::after {
-    /* Same #121212 seam-match as the desktop rule above — the art panel sits near the
-       bottom of the hero on this breakpoint, so this fade is the one closest to the
-       actual page boundary here. */
-    background: linear-gradient(180deg, transparent 54%, rgba(18, 18, 18, .12) 76%, #121212 100%);
-  }
-
-  body.body--light .mn-art::after {
-    background: linear-gradient(180deg, transparent 54%, rgba(251, 250, 249, .12) 76%, #fbfaf9 100%);
-  }
 }
 
 @media (max-width: 520px) {
@@ -625,16 +608,5 @@ body.body--light .mn-bottom-fade {
   .mn-actions { display: grid; grid-template-columns: 1fr 1fr; }
   .mn-features { margin-top: 38px; }
   .mn-art { right: -55%; width: 175%; height: 450px; }
-}
-
-@media (prefers-reduced-motion: no-preference) {
-  .mn-art-img {
-    animation: mn-breathe 9s ease-in-out infinite alternate;
-  }
-
-  @keyframes mn-breathe {
-    from { transform: scale(1.025) translate3d(0, 0, 0); }
-    to { transform: scale(1.055) translate3d(-8px, -3px, 0); }
-  }
 }
 </style>

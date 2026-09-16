@@ -29,6 +29,13 @@ const KEYS = [
 	'0x5de4111afa1a4b94908f83103eb1f1706367c2e68ca870fc3fb9a804cdab365a',
 ];
 
+/**
+ * Exposed (unlike CHAIN/RPC_URL) because a couple of consumers — namely `cli/test/fixture.js`
+ * — need the raw private key strings themselves rather than an account/client already built
+ * from them, e.g. to pass through `--key` to a CLI command function under test.
+ */
+export const DEV_KEYS = KEYS;
+
 /** The chain the current run is talking to. Valid only after `startNode()`. */
 export function getChain() {
 	if (!CHAIN) throw new Error('fixture: call startNode() first');
