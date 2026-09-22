@@ -1,0 +1,3 @@
+small diffs cost little
+a full snapshot costs the day
+choose your pushes well

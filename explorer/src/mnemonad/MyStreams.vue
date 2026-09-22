@@ -61,18 +61,13 @@
 			</div>
 
 			<div v-else class="my-streams__list">
-				<router-link
+				<StreamRow
 					v-for="v in mnemonadStore.streams"
 					:key="String(v.id)"
-					:to="`/stream/${v.id}/files`"
-					class="stream-row"
-				>
-					<span class="stream-row__id">{{ formatId(v.id) }}</span>
-					<span class="stream-row__meta">
-						<q-icon v-if="v.encrypted" name="lock" size="14px" class="stream-row__lock" />
-						{{ v.length }} {{ v.length === 1 ? 'item' : 'items' }}
-					</span>
-				</router-link>
+					:id="String(v.id)"
+					:count="v.length"
+					:encrypted="v.encrypted"
+				/>
 			</div>
 		</template>
 
@@ -83,6 +78,7 @@
 <script>
 import { mapStores } from 'pinia';
 import GradientButton from '../components/GradientButton.vue';
+import StreamRow from './StreamRow.vue';
 import ExplorerLink from './ExplorerLink.vue';
 import CreateStreamDialog from './CreateStreamDialog.vue';
 import WalletConnect from '../WalletConnect.vue';
@@ -94,6 +90,7 @@ export default {
 	name: 'MyStreams',
 	components: {
 		GradientButton,
+		StreamRow,
 		ExplorerLink,
 		CreateStreamDialog,
 		WalletConnect,
@@ -145,10 +142,6 @@ export default {
 				});
 			}
 		},
-		formatId: function(id) {
-			const hex = BigInt(id).toString(16).padStart(64, '0');
-			return `0x${hex.slice(0, 6)}...${hex.slice(-4)}`;
-		},
 	},
 };
 </script>
@@ -189,58 +182,19 @@ export default {
 	gap: 6px;
 }
 
-.stream-row {
+.stream-row--skeleton {
 	display: flex;
 	align-items: center;
 	justify-content: space-between;
 	gap: 12px;
 	padding: 10px 14px;
 	border-radius: 8px;
-	background: rgba(140, 120, 200, 0.06);
-	border: 1px solid rgba(140, 120, 200, 0.12);
-	font-family: var(--font-mono, monospace);
-	font-size: 0.9em;
-	text-decoration: none;
-	cursor: pointer;
-	transition: background var(--q-transition-fast, 0.15s), border-color var(--q-transition-fast, 0.15s);
-}
-
-.stream-row:hover {
-	background: rgba(140, 120, 200, 0.12);
-	border-color: rgba(140, 120, 200, 0.24);
-}
-
-.stream-row--skeleton {
 	background: rgba(140, 120, 200, 0.04);
+	border: 1px solid rgba(140, 120, 200, 0.12);
 }
 
-.stream-row__id {
-	color: var(--q-text-bright, #ffffff);
-}
-
-.stream-row__meta {
-	display: flex;
-	align-items: center;
-	gap: 4px;
-	color: var(--q-text-muted, #8a94a6);
-	font-family: var(--font-body, system-ui, sans-serif);
-}
-
-.stream-row__lock {
-	opacity: 0.8;
-}
-
-body.body--light .stream-row {
+body.body--light .stream-row--skeleton {
 	background: rgba(60, 40, 110, 0.04);
 	border-color: rgba(60, 40, 110, 0.1);
-}
-
-body.body--light .stream-row:hover {
-	background: rgba(60, 40, 110, 0.08);
-	border-color: rgba(60, 40, 110, 0.2);
-}
-
-body.body--light .stream-row__id {
-	color: #2a2440;
 }
 </style>
