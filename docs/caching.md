@@ -10,7 +10,9 @@ in a single call at all, so it's paged instead and isn't cached (see "What's out
 
 Implemented in [`js/MnemonadChunkCache.js`](../js/MnemonadChunkCache.js); wired into
 [`js/Mnemonad.js`](../js/Mnemonad.js) and
-[`js/offloading/MnemonadIpfs.js`](../js/offloading/MnemonadIpfs.js).
+[`js/offloading/MnemonadIpfs.js`](../js/offloading/MnemonadIpfs.js). See
+[`encryption/encryption.md`](encryption/encryption.md) for how a stream gets encrypted in
+the first place.
 
 ## The one rule that decides the whole design
 

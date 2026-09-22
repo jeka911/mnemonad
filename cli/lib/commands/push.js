@@ -15,6 +15,8 @@ import {
     unlockStream,
     resolveEncryptMethod,
     resolveOffloadParams,
+    formatStreamId,
+    streamIdsEqual,
 } from './shared.js';
 
 export async function push(args) {
@@ -29,7 +31,7 @@ export async function push(args) {
     if (args.manifest) {
         const manifest = await readManifest(destPath);
         const localFiles = await hashLocalTree(fsFolder);
-        if (streamId && manifest && manifest.streamId === streamId && manifest.files) {
+        if (streamId && manifest && streamIdsEqual(manifest.streamId, streamId) && manifest.files) {
             if (hashMapsEqual(localFiles, manifest.files)) {
                 console.log('  no changes since last pull, nothing to push');
                 return;
@@ -73,7 +75,7 @@ export async function push(args) {
         console.log('creating new stream on', args.chain, how, '...');
         mn = await Mnemonad.create(createParams);
         streamId = mn.id.toString();
-        console.log('  created:', streamId);
+        console.log('  created:', formatStreamId(streamId));
     } else {
         mn = new Mnemonad({ ...baseParams, id: streamId });
         await assertStreamOwner(mn, client.account.address);
@@ -83,7 +85,7 @@ export async function push(args) {
         }
     }
 
-    console.log('syncing ./ →', streamId);
+    console.log('syncing ./ →', formatStreamId(streamId));
 
     const monadSync = new MonadSync({ mnemonad: mn, compress: args.compress || 'gzip' });
 
@@ -118,10 +120,13 @@ export async function push(args) {
     const patchType = args.forceSnapshot || existingVersions === 0 ? 'full snapshot' : 'diff';
     const compressedNote = args.compress !== false ? ', gzip compressed' : '';
     console.log('  version', result.version, 'pushed (' + patchType + compressedNote + ')');
-    console.log('  stream:', streamId);
+    console.log('  stream:', formatStreamId(streamId));
 
     if (args.manifest) {
         const localFiles = await hashLocalTree(fsFolder);
-        await writeManifest(destPath, { streamId, version: result.version, files: localFiles });
+        // Stored canonical (see formatStreamId) rather than whatever form the caller typed —
+        // so a manifest written by a hex-id push and read back by a decimal-id one (or vice
+        // versa) still matches; streamIdsEqual() above is the belt to this suspenders.
+        await writeManifest(destPath, { streamId: formatStreamId(streamId), version: result.version, files: localFiles });
     }
 }

@@ -32,7 +32,7 @@ describe('push', () => {
 		await expect(push(args)).rejects.toThrow(/folder path is required/);
 	}, TX_TIMEOUT);
 
-	it('creates a new stream from a folder and prints its id', async () => {
+	it('creates a new stream from a folder and prints its id as 0x + 64 hex digits', async () => {
 		await writeTestFile(srcDir, 'readme.md', 'hello world\n');
 		await writeTestFile(srcDir, 'src/index.js', 'console.log(1);\n');
 
@@ -42,7 +42,25 @@ describe('push', () => {
 		const createdLine = lines.find((l) => l.includes('created:'));
 		expect(createdLine).toBeTruthy();
 		const streamId = createdLine.split('created:')[1].trim();
-		expect(/^\d+$/.test(streamId)).toBe(true);
+		expect(/^0x[0-9a-f]{64}$/.test(streamId)).toBe(true);
+	}, TX_TIMEOUT);
+
+	it('accepts a decimal id where a hex one was printed — both forms name the same stream', async () => {
+		await writeTestFile(srcDir, 'a.txt', 'version 1\n');
+		const baseArgs = await makeBaseArgs();
+
+		const first = { ...baseArgs, path: srcDir };
+		const { lines: firstLines } = await captureLogs(() => push(first));
+		const hexId = firstLines.find((l) => l.includes('created:')).split('created:')[1].trim();
+		const decimalId = BigInt(hexId).toString(10);
+
+		await writeTestFile(srcDir, 'a.txt', 'version 2, now longer\n');
+		const second = { ...baseArgs, path: srcDir, streamId: decimalId };
+		const { lines: secondLines } = await captureLogs(() => push(second));
+
+		expect(secondLines.some((l) => l.includes('version 2 pushed'))).toBe(true);
+		// The confirmation line still prints hex regardless of which form was passed in.
+		expect(secondLines.some((l) => l.includes('stream:') && l.includes(hexId))).toBe(true);
 	}, TX_TIMEOUT);
 
 	it('pushes a diff on the second push to an existing stream', async () => {

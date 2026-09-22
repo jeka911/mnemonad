@@ -172,8 +172,8 @@ export default {
                 await this.stream.initialize();
                 this.checkCanWrite();
 
-                // this._monadSync is cheap to build fresh (its own CDCStore/lastSnapshot
-                // rebuild from chain on initialize() below) — kept as one instance per
+                // Construction only (no chain I/O — see MonadSync's own initialize() for
+                // what actually reads/replays) — kept as one instance per
                 // FileManagerBrowserSync so a later push()/poll reuses the CDC state
                 // instead of replaying the whole chain again. Always built around the
                 // read-only `stream` prop here, regardless of wallet connection — a real
@@ -184,18 +184,33 @@ export default {
                 // live). Every read operation (initialize/restore/at) works identically on
                 // a read-only instance; only push() itself needs write capability, and it
                 // swaps `_mn` in for itself when that moment actually comes.
+                //
+                // Built unconditionally, *before* the lock check below can return early —
+                // _continueWithSync() (reached either right below, or later via the
+                // `unlocked` watcher once a credential shows up) assumes it already exists.
                 if (!this._monadSync) {
                     this._monadSync = new MonadSync({ mnemonad: this.stream });
                 }
-                const mn = this._monadSync._mn;
-                await this._monadSync.initialize();
 
-                const isEncrypted = !!(mn.encKeyWrapped && mn.encKeyWrapped.length);
+                // `this.stream.encKeyWrapped` is already populated by `stream.initialize()`
+                // above — no need to touch MonadSync to know this.
+                const isEncrypted = !!(this.stream.encKeyWrapped && this.stream.encKeyWrapped.length);
                 if (isEncrypted && !this.unlocked) {
+                    // Deliberately returns *before* `this._monadSync.initialize()` — that
+                    // call replays every existing item through `_mn.at()`, and pre-unlock
+                    // `crypto.isEnabled` is false, so `at()` skips decryption and hands back
+                    // raw ciphertext. `DoubleSyncFormat.detect()` then rejects it as an
+                    // unrecognized patch — the exact "unknown patch type" this locked branch
+                    // exists to head off, previously thrown here before this check ever ran
+                    // (confirmed live: reopening an encrypted filesystem stream without
+                    // unlocking first redirected to the raw stream page with that error,
+                    // even though the data on chain was perfectly good). See
+                    // _continueWithSync() for the call that actually replays, once a
+                    // credential is in hand.
                     this.status = 'locked';
                     this.$emit('ready', {
-                        patchCount: mn.length,
-                        totalBytes: mn.binaryLength,
+                        patchCount: this.stream.length,
+                        totalBytes: this.stream.binaryLength,
                         isEncrypted: true,
                     });
                     return;
@@ -226,6 +241,15 @@ export default {
         },
         async _continueWithSync() {
             const mn = this._monadSync._mn;
+            // Populates `_monadSync`'s own CDC state (senderStore/lastSnapshot) by replaying
+            // every existing item — safe to do here specifically because reaching this
+            // method means the stream is either unencrypted or already unlocked (see
+            // initialize()'s own doc on why this can't run any earlier). Needed for a later
+            // push() to know whether to build a full snapshot or a diff; `restore()` right
+            // below doesn't depend on it (it does its own independent read), but running
+            // this first means a push right after opening a freshly-unlocked stream doesn't
+            // redundantly replay the chain a second time.
+            await this._monadSync.initialize();
             const memFolder = await this._monadSync.restore();
             const folder = FileManagerDoubleSyncFolder.fromMemoryFolder(memFolder);
             await folder.load();

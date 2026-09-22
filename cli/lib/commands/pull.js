@@ -8,6 +8,7 @@ import {
     syncMemoryFolderToDisk,
     writeManifest,
     unlockStream,
+    formatStreamId,
 } from './shared.js';
 
 export async function pull(args) {
@@ -35,7 +36,7 @@ export async function pull(args) {
     await unlockStream(mn, { password: args.password, signer: client.walletClient });
 
     const version = args.version != null ? Number(args.version) : undefined;
-    console.log('restoring', args.streamId, version != null ? 'at version ' + version : '(latest)', '...');
+    console.log('restoring', formatStreamId(args.streamId), version != null ? 'at version ' + version : '(latest)', '...');
 
     let folder;
     try {
@@ -56,7 +57,8 @@ export async function pull(args) {
     if (args.manifest) {
         await mn.initialize();
         const pulledVersion = version ?? mn.length;
-        await writeManifest(destPath, { streamId: args.streamId, version: pulledVersion, files: newFiles });
+        // Canonical form stored — see push.js's own writeManifest call for why.
+        await writeManifest(destPath, { streamId: formatStreamId(args.streamId), version: pulledVersion, files: newFiles });
     }
 
     console.log(' ', stats.written, 'written,', stats.skipped, 'unchanged,',

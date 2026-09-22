@@ -67,6 +67,34 @@ export function resolvePath(p) {
     return resolve(p);
 }
 
+/**
+ * Canonical display form for a stream id: `0x` + the full 32-byte token id, zero-padded,
+ * lowercase. Matches the dApp's own formatting (explorer/src/includes/formatStreamId.js),
+ * unelided — a CLI command needs the whole id to actually reuse, where the dApp's UI only
+ * needs enough of it to recognize at a glance.
+ *
+ * Takes whatever a stream id shows up as in this codebase — a bigint (`mn.id`), or a raw
+ * CLI arg that's either a decimal or a `0x`-hex string — since `BigInt()` parses all three
+ * natively; see bin/mnemonad.js's own `isStreamId` for why both string forms are accepted
+ * as input in the first place.
+ *
+ * @param {bigint|string} id
+ * @returns {string}
+ */
+export function formatStreamId(id) {
+    return '0x' + BigInt(id).toString(16).padStart(64, '0');
+}
+
+/**
+ * Whether two stream ids refer to the same token, regardless of which form either was
+ * written in (decimal, hex, differently-padded hex) — a plain `===` on the raw strings
+ * would wrongly call `123` and `0x7b` different streams.
+ */
+export function streamIdsEqual(a, b) {
+    if (a == null || b == null) return a === b;
+    return BigInt(a) === BigInt(b);
+}
+
 export function formatBytes(bytes) {
     if (bytes < 1024) return bytes + ' B';
     if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
@@ -107,9 +135,10 @@ export async function assertStreamOwner(mn, signerAddress) {
     if (getAddress(owner) === getAddress(signerAddress)) return;
 
     const err = new Error(
-        `stream ${mn.id} is owned by ${owner}\n` +
+        `stream ${formatStreamId(mn.id)} is owned by ${owner}\n` +
         `  but you are signing as ${signerAddress}.\n` +
-        `  Nothing was uploaded. Use the owner's key (--key / --phrase / MNEMONAD_KEY),\n` +
+        `  Nothing was uploaded. Use the owner's key (--key, --phrase, or the MNEMONAD_KEY\n` +
+        `  env var, set to the private key),\n` +
         `  or run push without a stream id to create your own stream.`
     );
     err._isUserError = true;
@@ -199,7 +228,7 @@ export async function unlockStream(mn, credentials = {}) {
     if (!signer) {
         throw userError(
             'This stream is encrypted to its owner\'s wallet. Provide the owner\'s key with\n' +
-            '  --key / --phrase / MNEMONAD_KEY to decrypt it.'
+            '  --key, --phrase, or the MNEMONAD_KEY env var (set it to the private key) to decrypt it.'
         );
     }
     await mn.unlockWithSignature(signer);

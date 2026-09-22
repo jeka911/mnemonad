@@ -8,6 +8,7 @@ import {
     formatPath,
     hashLocalTree,
     unlockStream,
+    formatStreamId,
 } from './shared.js';
 
 export function compareFileMaps(localFiles, remoteFiles) {
@@ -61,7 +62,7 @@ export async function diff(args) {
     const totalVersions = mn.length;
 
     if (totalVersions === 0) {
-        console.log('stream', args.streamId, 'has no versions yet — nothing to diff');
+        console.log('stream', formatStreamId(args.streamId), 'has no versions yet — nothing to diff');
         return;
     }
 
@@ -70,7 +71,7 @@ export async function diff(args) {
         throw new Error('version must be between 1 and ' + totalVersions);
     }
 
-    console.log('diff:', formatPath(destPath), 'vs', args.streamId, '(version ' + version + ' of ' + totalVersions + ')');
+    console.log('diff:', formatPath(destPath), 'vs', formatStreamId(args.streamId), '(version ' + version + ' of ' + totalVersions + ')');
     console.log('  restoring chain version...');
 
     let remoteFolder;

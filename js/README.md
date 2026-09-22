@@ -184,6 +184,9 @@ doc), but `create()`/`streamMeta` make it the path of least resistance.
 
 ## Encryption
 
+See [`../docs/encryption/encryption.md`](../docs/encryption/encryption.md) for a shorter,
+non-API overview of both methods below; this section is the fuller SDK reference.
+
 A random AES-256-GCM data key is always generated at `create()` time and stored, wrapped,
 on-chain in `encKeyWrapped`. What differs is only *how it gets wrapped* — the
 key-encryption key (KEK). Two methods exist:

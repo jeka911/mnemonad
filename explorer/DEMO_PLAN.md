@@ -446,7 +446,10 @@ transferred**, because the key is bound to the owner.
 >
 > **Shipped differently:** the encryption that actually landed is password-based (PBKDF2,
 > not a wallet signature), so there's no signature prompt and it's *not* owner-bound — see
-> `js/README.md`'s Encryption section for the full method-vs-method comparison. The
+> [`../docs/encryption/encryption.md`](../docs/encryption/encryption.md) or `js/README.md`'s
+> Encryption section for the full method-vs-method comparison. Wallet-signature encryption
+> has since shipped too (`Mnemonad.unlockWithSignature`) — see
+> [`../docs/encryption/signature.md`](../docs/encryption/signature.md). The
 > unwrapped key is cached the same way this section anticipated, just not via a dedicated
 > key store: `stores/mnemonad.js` caches the live `Mnemonad` instance itself, per stream id
 > (in memory only — cleared on wallet disconnect, not persisted, so a reload re-prompts for

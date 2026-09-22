@@ -14,6 +14,7 @@ import {
     assertStreamOwner,
     unlockStream,
     resolveOffloadParams,
+    formatStreamId,
 } from './shared.js';
 
 function timestamp() {
@@ -70,7 +71,7 @@ export async function watch(args) {
     let debounceTimer = null;
 
     console.log(`watching ${formatPath(cwd)}`);
-    console.log(`  stream:        ${args.streamId}`);
+    console.log(`  stream:        ${formatStreamId(args.streamId)}`);
     console.log(`  remote version: ${remoteVersion}`);
     console.log(`  push:          ${pushEnabled ? `enabled (debounce ${debounceMs}ms)` : 'disabled'}`);
     console.log(`  pull:          ${pullEnabled ? `enabled (poll every ${pollIntervalMs / 1000}s)` : 'disabled'}`);

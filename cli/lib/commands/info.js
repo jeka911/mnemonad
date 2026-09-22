@@ -6,6 +6,7 @@ import {
     formatBytes,
     localTreeHash,
     unlockStream,
+    formatStreamId,
 } from './shared.js';
 
 export async function info(args) {
@@ -33,7 +34,7 @@ export async function info(args) {
 
     const totalVersions = mn.length;
 
-    console.log('\nstream:', args.streamId);
+    console.log('\nstream:', formatStreamId(args.streamId));
 
     const owner = await mn.owner().catch(() => null) || '(unknown)';
     const isOwner = client.account && owner !== '(unknown)' && client.account.address.toLowerCase() === owner.toLowerCase();

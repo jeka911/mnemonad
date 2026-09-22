@@ -53,6 +53,14 @@
 						size="sm"
 						@click.stop="$router.push(streamPath(streamId))"
 					/>
+					<GradientButton
+						v-if="browserReady"
+						class="head-btn"
+						label="Clone"
+						icon="terminal"
+						size="sm"
+						@click.stop="cloneDialog = true"
+					/>
 				</div>
 			</template>
 
@@ -96,6 +104,15 @@
 				/>
 			</template>
 		</GradientPanel>
+
+		<CloneStreamDialog
+			v-if="validId"
+			v-model="cloneDialog"
+			:stream-id="streamId"
+			:network-id="activeNetwork.id"
+			:encrypted="cloneEncrypted"
+			:kek-method="cloneKekMethod"
+		/>
 
 		<q-dialog v-model="unlockDialog">
 			<JPanel accent="header" icon="lock" iconColor="var(--q-primary)" title="Unlock stream" style="min-width: 360px;">
@@ -146,13 +163,14 @@ import { mapStores } from 'pinia';
 import { getActiveNetwork } from '../settings.js';
 import { useWalletStore } from '../stores/wallet.js';
 import { useMnemonadStore } from '../stores/mnemonad.js';
-import { methodOf } from '../mnemonad/kek.js';
+import { methodOf, isEncrypted } from '../mnemonad/kek.js';
 import { formatStreamId } from '../includes/formatStreamId.js';
 import { parseStreamRouteId, streamPath, syncStreamRouteNetwork } from '../includes/streamRoute.js';
 import { JPanel } from 'themed_varmory';
 import GradientPanel from '../components/GradientPanel.vue';
 import GradientButton from '../components/GradientButton.vue';
 import ExplorerLink from '../mnemonad/ExplorerLink.vue';
+import CloneStreamDialog from '../mnemonad/CloneStreamDialog.vue';
 import FileManagerBrowserSync from '../components/filemanager/FileManagerBrowserSync.vue';
 
 export default {
@@ -163,7 +181,7 @@ export default {
 	path: '/stream/:id/files',
 	title: 'File Browser',
 	components: {
-		JPanel, GradientPanel, GradientButton, ExplorerLink, FileManagerBrowserSync,
+		JPanel, GradientPanel, GradientButton, ExplorerLink, FileManagerBrowserSync, CloneStreamDialog,
 	},
 	data() {
 		return {
@@ -198,6 +216,8 @@ export default {
 			// about a stream it hasn't read yet. Re-read after every sync (see onSyncState) —
 			// a push appends items, and this is the one number on the page that changes.
 			versionCount: null,
+
+			cloneDialog: false,
 		};
 	},
 	computed: {
@@ -208,6 +228,17 @@ export default {
 		// exactly when this answer is needed — when the dialog opens, and after it succeeds.
 		kekMethod: function() {
 			if (!this.unlockDialog && !this.unlocked) return null;
+			return methodOf(this._stream);
+		},
+		// Same pattern as `kekMethod` above, gated on `cloneDialog` instead: only read
+		// `_stream` (deliberately non-reactive, see created()) at the one moment its answer
+		// is needed, off a flag that's guaranteed to flip when it is.
+		cloneEncrypted: function() {
+			if (!this.cloneDialog) return false;
+			return isEncrypted(this._stream);
+		},
+		cloneKekMethod: function() {
+			if (!this.cloneDialog) return null;
 			return methodOf(this._stream);
 		},
 		// `{networkId, id}` for the `<network>-0x…` param this page's URL carries, or null

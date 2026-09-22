@@ -158,7 +158,8 @@ less (5 + 26 = 31) still land as SLOT; everything else routes to CODE purely fro
 Framing is identical regardless of *how* the underlying data key got wrapped — two KEK
 (key-encryption-key) methods exist: signer-based (owner-bound, derived from a wallet
 signature) and password-based (PBKDF2-derived, not owner-bound — anyone with the password
-can unwrap). See `js/README.md`'s Encryption section for the full comparison.
+can unwrap). See [`encryption/encryption.md`](encryption/encryption.md) for the full
+comparison, or `../js/README.md`'s Encryption section for the SDK API each unlocks with.
 
 ## Everything else
 

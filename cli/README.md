@@ -70,7 +70,9 @@ directory: an omitted or mistyped path fails fast with an error rather than sile
 operating on wherever the CLI happened to be run from. The only command that can run with
 no path at all is `mnemonad info` with no stream id either (it just checks your configured
 chain/wallet). A stream id is recognized as a bare decimal number (`123`) or a
-`0x`-prefixed hex string; anything else in that position is treated as a path.
+`0x`-prefixed hex string; anything else in that position is treated as a path. Either form
+works as input — every command's own output always prints the id in hex (`0x` + the full
+32-byte token id), matching the [explorer dApp](https://mnemonad.vercel.app)'s own display.
 
 Every command prints the installed CLI version as its first line of output.
 
@@ -131,13 +133,19 @@ chain.
 ```bash
 mnemonad push ~/my-data
 
-# prints the new stream id, e.g.:
-#   created: 123
+# prints the new stream id in hex, e.g.:
+#   created: 0x68d9736257f0d2da3c848666a4b36c4b9f18eda7e4dfba655599c47560d8a4b5
 #   version 1 pushed (full snapshot, gzip compressed)
+
+# examples below use `123` as a stand-in for whatever id you actually got back —
+# decimal or hex both work as input, see "Usage" above
 ```
 
 By default a new stream is public (unencrypted). Encrypting one takes a method — the CLI
-never picks for you, since both are reachable from the same invocation:
+never picks for you, since both are reachable from the same invocation. See
+[`../docs/encryption/encryption.md`](../docs/encryption/encryption.md) (and its
+[password](../docs/encryption/password.md)/[signature](../docs/encryption/signature.md)
+pages) for how each actually works and the trade-off each makes:
 
 ```bash
 # Keyed by a password: anyone who knows it can read the stream, from any machine.
@@ -187,7 +195,7 @@ mnemonad info 123 ~/my-data
   chain:           testnet
   your wallet:     0x06bc6420b37a4898424429dcfa236f0065e12279
 
-stream: 123
+stream: 0x68d9736257f0d2da3c848666a4b36c4b9f18eda7e4dfba655599c47560d8a4b5
   owner:           0x06bc6420b37a4898424429dcfa236f0065e12279 (you)
   encrypted:       no
   versions:        3
@@ -281,8 +289,10 @@ export MNEMONAD_KEY=0xabc123...
 
 # 1. first push — creates the stream
 mnemonad push ~/my-data
-#   created: 123
+#   created: 0x68d9736257f0d2da3c848666a4b36c4b9f18eda7e4dfba655599c47560d8a4b5
 #   version 1 pushed (full snapshot, gzip compressed)
+# (the rest of this walkthrough keeps using 123 as a stand-in for that id — both
+# forms work as input, see "Usage" above)
 
 # 2. verify: restore into a scratch folder and compare against the original
 mnemonad pull 123 ~/verify-tmp
