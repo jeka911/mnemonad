@@ -42,6 +42,7 @@ import { useWalletStore } from '../../stores/wallet.js';
 import { useMnemonadStore, MAX_RPC_REQUESTS_PER_SECOND, RPC_RETRY } from '../../stores/mnemonad.js';
 import { useDebugStore } from '../../stores/debug.js';
 import { createPresignProvider } from '../../mnemonad/presignProvider.js';
+import { streamPath } from '../../includes/streamRoute.js';
 import FileManagerBrowser from './FileManagerBrowser.vue';
 import FileManagerDoubleSyncFolder from './includes/FileManagerDoubleSyncFolder.js';
 import Spinner from './helpers/Spinner.vue';
@@ -221,7 +222,7 @@ export default {
          * someone who hits this.
          */
         debugStream() {
-            this.$router.push(`/stream/${this.stream.id}`);
+            this.$router.push(streamPath(this.stream.id));
         },
         async _continueWithSync() {
             const mn = this._monadSync._mn;

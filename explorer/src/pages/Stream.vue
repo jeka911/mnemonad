@@ -1,8 +1,12 @@
 <template>
 	<div>
-		<router-link to="/" class="back-link">
+		<!-- /select, not / — the streams list moved there when the landing page became the
+		     marketing hero, and this link kept pointing at a page that no longer lists
+		     anything. "Streams" rather than "My streams" because that page now shows the
+		     sample streams alongside the connected wallet's own. -->
+		<router-link to="/select" class="back-link">
 			<q-icon name="arrow_back" size="16px" />
-			My streams
+			Streams
 		</router-link>
 
 		<div class="stream-layout">
@@ -119,6 +123,7 @@ import { getActiveNetwork } from '../settings.js';
 import { useWalletStore } from '../stores/wallet.js';
 import { useMnemonadStore } from '../stores/mnemonad.js';
 import { methodOf } from '../mnemonad/kek.js';
+import { parseStreamRouteId, syncStreamRouteNetwork } from '../includes/streamRoute.js';
 import { JPanel } from 'themed_varmory';
 import GradientPanel from '../components/GradientPanel.vue';
 import GradientButton from '../components/GradientButton.vue';
@@ -253,13 +258,17 @@ export default {
 			};
 			return this.loadStrategy ? labels[this.loadStrategy] : '';
 		},
+		// `{networkId, id}` for the `<network>-0x…` param in this page's URL, or null when the
+		// param isn't a stream id at all. The network half is acted on in load() — see
+		// syncStreamRouteNetwork.
+		routeStream: function() {
+			return parseStreamRouteId(this.$route.params.id);
+		},
 		validId: function() {
-			try {
-				BigInt(this.$route.params.id);
-				return true;
-			} catch {
-				return false;
-			}
+			return !!this.routeStream;
+		},
+		streamId: function() {
+			return this.routeStream?.id ?? null;
 		},
 		// True when this stream is encrypted and this session doesn't have a usable key for
 		// it yet (see `unlocked` in data()) — method-agnostic, because both methods have an
@@ -298,11 +307,15 @@ export default {
 	methods: {
 		async load() {
 			if (!this.mnemonadStore.isDeployed || !this.validId) return;
+			// The URL names a network as well as a stream. If it disagrees with the app's,
+			// this rewrites or reloads and the page renders again against the corrected URL —
+			// nothing to load in this pass.
+			if (syncStreamRouteNetwork(this.$route, this.$router, this.routeStream)) return;
 			this.loading = true;
 			this.itemsLoading = true;
 			this.error = null;
 			try {
-				const id = BigInt(this.$route.params.id);
+				const id = this.streamId;
 				// The store owns the live instance now — cached across visits (and across
 				// the refresh-after-push this same method triggers via AddPanel's `added`
 				// event), so revisiting an already-loaded stream costs no RPC calls at all,

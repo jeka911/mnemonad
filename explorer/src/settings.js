@@ -36,10 +36,22 @@ export function getActiveNetwork() {
 	return NETWORKS[getActiveNetworkId()];
 }
 
-export function setActiveNetworkId(id) {
+/**
+ * @param {string} id
+ * @param {{redirectTo?: string}} [options] Where to land instead of the current URL. For a
+ *   page whose URL names a specific stream on the old network (see includes/streamRoute.js),
+ *   reloading in place would just show that stream failing to exist on the new one.
+ */
+export function setActiveNetworkId(id, { redirectTo = null } = {}) {
 	if (!NETWORKS[id] || id === getActiveNetworkId()) {
 		return;
 	}
 	localStorage.setItem(NETWORK_STORAGE_KEY, id);
-	window.location.reload();
+	// Either way this is a full document load, not a route change: the new network has to be
+	// read at module-load time, before wagmi's config is built.
+	if (redirectTo) {
+		window.location.assign(redirectTo);
+	} else {
+		window.location.reload();
+	}
 }

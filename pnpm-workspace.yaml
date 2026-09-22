@@ -1,0 +1,12 @@
+packages:
+  - js
+  - monadsync
+  - cli
+
+# Merged from js/pnpm-workspace.yaml and monadsync/pnpm-workspace.yaml (both agreed on this
+# entry, cli had none of its own) now that all three share one workspace root. explorer/ and
+# contracts/ keep their own pnpm-workspace.yaml and stay outside this workspace deliberately —
+# see explorer/vite.config.js's resolveSdkDeps doc for why explorer in particular can't join
+# without risking its Vercel deploy (root directory = explorer).
+minimumReleaseAgeExclude:
+  - osv-guard@0.2.1

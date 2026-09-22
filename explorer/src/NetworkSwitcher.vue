@@ -48,7 +48,13 @@ export default {
 			// Persists the choice and reloads the page so the whole app (wagmi
 			// config, contract addresses, cached chain state) boots fresh on the new
 			// network — see settings.js.
-			setActiveNetworkId(id);
+			//
+			// Except on a stream page: its URL names one stream on the network being left,
+			// and that id won't exist on the one being switched to, so reloading in place
+			// lands on a revert. The stream list is where you'd pick the equivalent stream,
+			// so that's where switching networks goes from here.
+			const onStreamPage = this.$route.path.startsWith('/stream/');
+			setActiveNetworkId(id, { redirectTo: onStreamPage ? '/select' : null });
 		},
 	},
 };

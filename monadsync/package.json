@@ -39,7 +39,7 @@
 		"viem": "^2.0.0"
 	},
 	"dependencies": {
-		"mnemonad": "file:../js",
+		"mnemonad": "workspace:^",
 		"@fizzyflow/doublesync": "^0.1.1"
 	},
 	"devDependencies": {

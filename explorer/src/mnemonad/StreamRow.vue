@@ -1,5 +1,5 @@
 <template>
-	<router-link :to="`/stream/${id}/files`" class="stream-row">
+	<router-link :to="href" class="stream-row">
 		<span class="stream-row__main">
 			<span class="stream-row__title">{{ title || formattedId }}</span>
 			<span v-if="title && subtitle" class="stream-row__sub">{{ subtitle }}</span>
@@ -25,6 +25,9 @@
  * took that place — a sample is still a real stream, and its id is what you'd hand to
  * `mnemonad pull`, so it shouldn't vanish just because there's something friendlier to show.
  */
+import { formatStreamId } from '../includes/formatStreamId.js';
+import { streamPath } from '../includes/streamRoute.js';
+
 export default {
 	name: 'StreamRow',
 	props: {
@@ -50,14 +53,16 @@ export default {
 		encrypted: { type: Boolean, default: false },
 	},
 	computed: {
+		// Both lists this row appears in are lists of the network the app is on, which is
+		// what streamPath() defaults to — no list has to pass one in.
+		href: function() {
+			return streamPath(this.id, { files: true });
+		},
 		countLabel: function() {
 			return this.count === 1 ? this.unit : `${this.unit}s`;
 		},
-		// Ids are 77 digits of decimal — unreadable, and impossible to tell apart at a
-		// glance. Hex-padded and elided keeps them scannable while staying the actual id.
 		formattedId: function() {
-			const hex = BigInt(this.id).toString(16).padStart(64, '0');
-			return `0x${hex.slice(0, 6)}...${hex.slice(-4)}`;
+			return formatStreamId(this.id);
 		},
 	},
 };

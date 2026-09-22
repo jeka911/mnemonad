@@ -14,12 +14,11 @@
         "README.md"
     ],
     "scripts": {
-        "test": "vitest run ./test/*.test.js",
-        "push-sample": "node bin/mnemonad.js push ./sample --chain testnet --key 0x824a2655575b64746c94a2db7c6b2d39e21d533491534073d5a2b39a1d051677"
+        "test": "vitest run ./test/*.test.js"
     },
     "dependencies": {
-        "mnemonad": "file:../js",
-        "monadsync": "file:../monadsync",
+        "mnemonad": "workspace:^",
+        "monadsync": "workspace:^",
         "viem": "^2.56.3"
     },
     "devDependencies": {

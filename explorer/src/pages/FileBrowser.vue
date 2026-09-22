@@ -1,17 +1,65 @@
 <template>
 	<div>
+		<GradientPanel always-expanded dense variant="corner">
+			<!-- The panel's own `title` prop can't hold this, so the header's default slot
+			     takes over rendering it: back control, then what this page actually is —
+			     one named stream, read as a filesystem. Every `.stop` is because the header
+			     row owns a click handler of its own (a no-op while always-expanded, but not
+			     something to navigate or open a new tab through). -->
+			<template #default>
+				<div class="panel-head">
+					<router-link
+						to="/select"
+						class="panel-head__back"
+						title="Back to streams"
+						aria-label="Back to streams"
+						draggable="false"
+						@click.stop
+					>
+						<q-icon name="arrow_back" size="16px" />
+					</router-link>
+					<span class="panel-head__title">
+						<strong>Stream</strong>
+						<!-- The id itself is the link out: it's the one token of this header
+						     a reader would want to follow or copy. -->
+						<ExplorerLink
+							v-if="validId"
+							type="token"
+							:value="String(streamId)"
+							:contract-address="mnemonadStore.contractAddress"
+							:chain="activeNetwork.chain"
+							class="panel-head__id"
+							:title="String(streamId)"
+							draggable="false"
+							@click.stop
+						>
+							{{ formattedId }}
+						</ExplorerLink>
+						<!-- Nothing to link to for a param that isn't an id: show it as-is, so
+						     the header still says which URL the "not a valid stream id" body
+						     below is talking about. -->
+						<span v-else class="panel-head__id">{{ formattedId }}</span>
+						<span class="panel-head__note">
+							as a filesystem<template v-if="versionCount !== null"> • {{ versionCount }} {{ versionLabel }}</template>
+						</span>
+					</span>
+					<!-- Same destination as the raw on-chain view this page links out to
+					     everywhere else: the items behind the files. -->
+					<GradientButton
+						v-if="browserReady"
+						class="head-btn"
+						label="Details"
+						icon="bug_report"
+						size="sm"
+						@click.stop="$router.push(streamPath(streamId))"
+					/>
+				</div>
+			</template>
 
-		<GradientPanel always-expanded dense variant="corner" title="File browser">
 			<template #actions>
 				<GradientButton
 					v-if="browserReady"
-					label="Stream on-chain details"
-					icon="bug_report"
-					size="sm"
-					@click="$router.push(`/stream/${$route.params.id}`)"
-				/>
-				<GradientButton
-					v-if="browserReady"
+					class="head-btn"
 					label="Sync to chain"
 					loading-label="Syncing..."
 					icon="cloud_upload"
@@ -99,9 +147,12 @@ import { getActiveNetwork } from '../settings.js';
 import { useWalletStore } from '../stores/wallet.js';
 import { useMnemonadStore } from '../stores/mnemonad.js';
 import { methodOf } from '../mnemonad/kek.js';
+import { formatStreamId } from '../includes/formatStreamId.js';
+import { parseStreamRouteId, streamPath, syncStreamRouteNetwork } from '../includes/streamRoute.js';
 import { JPanel } from 'themed_varmory';
 import GradientPanel from '../components/GradientPanel.vue';
 import GradientButton from '../components/GradientButton.vue';
+import ExplorerLink from '../mnemonad/ExplorerLink.vue';
 import FileManagerBrowserSync from '../components/filemanager/FileManagerBrowserSync.vue';
 
 export default {
@@ -112,7 +163,7 @@ export default {
 	path: '/stream/:id/files',
 	title: 'File Browser',
 	components: {
-		JPanel, GradientPanel, GradientButton, FileManagerBrowserSync,
+		JPanel, GradientPanel, GradientButton, ExplorerLink, FileManagerBrowserSync,
 	},
 	data() {
 		return {
@@ -139,6 +190,14 @@ export default {
 			// the reliable way to keep this in sync.
 			pendingChangesCount: 0,
 			isSyncing: false,
+
+			// The header's version count. A reactive mirror of `_stream.length` for the same
+			// reason `unlocked` mirrors the key: `_stream` is deliberately non-reactive, so a
+			// template reading its `length` directly would render once and never update. Null
+			// until the stream is loaded, so the header says nothing rather than "0 versions"
+			// about a stream it hasn't read yet. Re-read after every sync (see onSyncState) —
+			// a push appends items, and this is the one number on the page that changes.
+			versionCount: null,
 		};
 	},
 	computed: {
@@ -151,13 +210,27 @@ export default {
 			if (!this.unlockDialog && !this.unlocked) return null;
 			return methodOf(this._stream);
 		},
+		// `{networkId, id}` for the `<network>-0x…` param this page's URL carries, or null
+		// when it isn't a stream id at all. The network half is acted on in load() — see
+		// syncStreamRouteNetwork — not here.
+		routeStream: function() {
+			return parseStreamRouteId(this.$route.params.id);
+		},
 		validId: function() {
-			try {
-				BigInt(this.$route.params.id);
-				return true;
-			} catch {
-				return false;
-			}
+			return !!this.routeStream;
+		},
+		streamId: function() {
+			return this.routeStream?.id ?? null;
+		},
+		// Guarded on `validId` because the route param reaches here unvalidated: the invalid-id
+		// branch renders the header too, and the raw param is all there is to show for it.
+		formattedId: function() {
+			return this.validId ? formatStreamId(this.streamId) : String(this.$route.params.id);
+		},
+		// Every item in a filesystem stream is a patch, so the count is a version history —
+		// the same word StreamRow is told to use for both lists on /select.
+		versionLabel: function() {
+			return this.versionCount === 1 ? 'version' : 'versions';
 		},
 		// Mirrors the #body slot's own `v-else-if="_stream"` branch, but expressed only in
 		// terms of reactive data (`loading`/`error`, `mnemonadStore.isDeployed`, `validId`)
@@ -187,17 +260,24 @@ export default {
 		},
 	},
 	methods: {
+		// Exposed for the template: an Options-API render function can't see module imports.
+		streamPath,
 		async load() {
 			if (!this.mnemonadStore.isDeployed || !this.validId) return;
+			// The URL names a network as well as a stream. If it disagrees with the app's,
+			// this rewrites or reloads and the page renders again against the corrected URL —
+			// nothing to load in this pass.
+			if (syncStreamRouteNetwork(this.$route, this.$router, this.routeStream)) return;
 			this.loading = true;
 			this.error = null;
 			try {
-				const id = BigInt(this.$route.params.id);
+				const id = this.streamId;
 				// Same store action Stream.vue calls — a stream already open there (or in
 				// another FileBrowser tab) costs zero extra RPC here.
 				const { stream: v } = await this.mnemonadStore.loadStream(id);
 				this._stream = v;
 				this.unlocked = !!v.crypto.getAesKey();
+				this.versionCount = v.length;
 				// A route change to a different id destroys/recreates FileManagerBrowserSync
 				// (it's gated by v-else-if in the same chain as _stream) — reset rather than
 				// wait for its first @sync-state, so a stale count from the previous stream
@@ -207,6 +287,7 @@ export default {
 			} catch (e) {
 				this.error = e?.shortMessage || e?.message || 'Failed to load stream';
 				this._stream = null;
+				this.versionCount = null;
 			} finally {
 				this.loading = false;
 			}
@@ -255,6 +336,11 @@ export default {
 		onSyncState({ pendingChangesCount, isSaving }) {
 			this.pendingChangesCount = pendingChangesCount;
 			this.isSyncing = isSaving;
+			// A sync appends items to the live instance, so the header's count is stale the
+			// moment one lands. This event fires on either side of a push (pending → 0,
+			// isSaving → false), which is exactly when to re-read it — free, it's a field
+			// on an object already in hand.
+			if (this._stream) this.versionCount = this._stream.length;
 		},
 		/** The "Sync to chain" button — flushes pending changes via the same path the
 		 * file manager's own upload chip uses. A failure surfaces through the existing
@@ -279,7 +365,7 @@ export default {
 					message: "There's no Mnemonad filesystem detected in this stream — showing its raw details instead.",
 					position: 'top',
 				});
-				this.$router.replace(`/stream/${this.$route.params.id}`);
+				this.$router.replace(streamPath(this.streamId));
 				return;
 			}
 			this.$q.notify({
@@ -301,19 +387,118 @@ export default {
 	color: var(--q-negative);
 }
 
-.back-link {
-	display: inline-flex;
+/* Strictly one line: the panel's dense header is a fixed 40px row with `overflow: hidden`,
+   so a second line isn't shortened, it's cut off mid-glyph (seen live at 375px before this
+   was pinned to nowrap). Everything here either fits, ellipsises, or drops out at a
+   breakpoint below. */
+.panel-head {
+	display: flex;
 	align-items: center;
-	gap: 6px;
-	margin-bottom: 12px;
-	color: var(--q-text-muted, #8a94a6);
-	text-decoration: none;
-	font-size: 0.9em;
-	transition: color var(--q-transition-fast, 0.15s);
+	gap: 10px;
+	flex-wrap: nowrap;
+	min-width: 0;
+	/* The row gets whatever width the actions column leaves it and no more, so without this
+	   its contents simply draw over that column (seen live at 375px). Clipped here, then
+	   ellipsised below, so a squeezed header degrades instead of colliding. */
+	overflow: hidden;
+	/* Chrome/label, not text: the header is a control strip, and a drag across it that leaves
+	   half a sentence highlighted is never what the drag was for. */
+	-webkit-user-select: none;
+	user-select: none;
 }
 
-.back-link:hover {
+/* Both links in here (back, and the id) are anchors, which browsers make draggable by
+   default — grabbing the id would peel a link ghost off the header. The CSS covers
+   Chrome/Safari; the `draggable="false"` attribute in the template is what Firefox reads. */
+.panel-head a {
+	-webkit-user-drag: none;
+}
+
+.panel-head__title {
+	display: inline-flex;
+	align-items: center;
+	flex-wrap: nowrap;
+	gap: 6px;
+	min-width: 0;
+	overflow: hidden;
+	white-space: nowrap;
+}
+
+/* The id keeps the monospace it has everywhere else — it's a hash, and it reads as one. */
+.panel-head__id {
+	font-family: var(--font-mono, monospace);
+	font-size: 1em;
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+
+/* The prose around the id is context, not the label: it recedes so the id stays the thing
+   the eye lands on, and it's the one part allowed to shrink. */
+.panel-head__note {
+	color: var(--q-text-muted, #8a94a6);
+	font-weight: 400;
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+
+.panel-head :deep(.gradient-btn) {
+	flex: 0 0 auto;
+}
+
+/* The actions column sits outside .panel-head but is the same strip to a reader — its labels
+   shouldn't highlight either. */
+.head-btn {
+	-webkit-user-select: none;
+	user-select: none;
+}
+
+/* Below this the row is competing with the actions column for a 375px-wide line. The prose
+   is what goes: the id identifies the stream, the button acts on it, and "as a filesystem"
+   is the one part the page itself already demonstrates. */
+@media (max-width: 720px) {
+	.panel-head__note {
+		display: none;
+	}
+
+	/* Every header button drops to its icon — both the one in the title row and the actions
+	   column opposite it, which is what was leaving the id about 18px to render in. Neither
+	   button goes away: this row is the only route to the on-chain view and the only way to
+	   push pending changes. Direct child only: the icon is an <i> holding a <span> of its own
+	   (the material-icons ligature), and a descendant selector blanks the button entirely. */
+	.head-btn :deep(.gradient-btn__content > span) {
+		display: none;
+	}
+}
+
+/* Narrower still, the word "Stream" goes too — the id is unmistakably a stream id. */
+@media (max-width: 480px) {
+	.panel-head__title strong {
+		display: none;
+	}
+}
+
+/* Sized to the title's own line rather than to a button: this sits inside the header, so
+   anything with real padding would push the row taller than every other panel's. */
+.panel-head__back {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	width: 24px;
+	height: 24px;
+	flex: 0 0 auto;
+	border-radius: 6px;
+	color: var(--q-text-muted, #8a94a6);
+	text-decoration: none;
+	background: rgba(140, 120, 200, 0.1);
+	border: 1px solid rgba(140, 120, 200, 0.18);
+	transition: color var(--q-transition-fast, 0.15s), background var(--q-transition-fast, 0.15s);
+}
+
+.panel-head__back:hover {
 	color: var(--q-text-bright, #ffffff);
+	background: rgba(140, 120, 200, 0.2);
 }
 
 .state {
@@ -326,7 +511,13 @@ export default {
 	color: var(--q-text-muted, #8a94a6);
 }
 
-body.body--light .back-link:hover {
+body.body--light .panel-head__back {
+	background: rgba(60, 40, 110, 0.06);
+	border-color: rgba(60, 40, 110, 0.14);
+}
+
+body.body--light .panel-head__back:hover {
 	color: #2a2440;
+	background: rgba(60, 40, 110, 0.12);
 }
 </style>
