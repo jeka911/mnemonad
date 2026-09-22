@@ -76,6 +76,8 @@ Options:
   --exclude <p1,p2>         Extra exclude patterns (comma-separated)
   --no-compress             Disable gzip compression
   --encrypt                 Create a new stream encrypted; only applies on creation
+  --encrypt-with <method>   How to key it: password, or wallet (the --key/--phrase account
+                            signs for it). Implied by --password; required otherwise
   --password <pw>           Password to encrypt a new stream with, or decrypt an existing one
   --pinata-jwt <jwt>        Pinata JWT for IPFS offload of large files (or PINATA_JWT env var)
   --manifest                Write/use .mnemonad manifest for faster change detection
@@ -105,6 +107,7 @@ function parseArgs(argv) {
         exclude: null,
         compress: 'gzip',
         encrypt: false,
+        encryptWith: null,
         password: null,
         pinataJwt: process.env.PINATA_JWT || null,
         manifest: false,
@@ -172,6 +175,8 @@ function parseArgs(argv) {
             args.compress = false;
         } else if (flag === '--encrypt') {
             args.encrypt = true;
+        } else if (flag === '--encrypt-with' && i + 1 < raw.length) {
+            args.encryptWith = raw[++i];
         } else if (flag === '--password' && i + 1 < raw.length) {
             args.password = raw[++i];
         } else if (flag === '--pinata-jwt' && i + 1 < raw.length) {

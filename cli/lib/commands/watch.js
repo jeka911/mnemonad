@@ -54,7 +54,7 @@ export async function watch(args) {
         ...offloadParams,
     });
 
-    await unlockStream(mn, args.password);
+    await unlockStream(mn, { password: args.password, signer: client.walletClient });
 
     // Fail now rather than on the first local change, hours into a watch session.
     if (pushEnabled) {

@@ -118,6 +118,92 @@ describe('creation and key material', () => {
 		await expect(asOther.at(0)).rejects.toThrow();
 	});
 
+	it('publishes {method:"signature"} in the stream metadata', async () => {
+		const ev = await createEncrypted();
+		// `create()` marks the instance stale, and `streamMeta` reads the `meta` bytes that
+		// only `initialize()` fetches back — so this reads what actually landed on chain,
+		// not what was passed in.
+		await ev.initialize();
+
+		// The marker is what lets a reader know *which* credential to ask for before it has
+		// any of them. A password stream publishes salt/iterations too; this one has nothing
+		// to publish beyond the method, since the wallet is the whole secret.
+		expect(ev.streamMeta.kek).toEqual({ method: 'signature' });
+	});
+
+	it('leaves the kek block off a plaintext stream created by a signer-carrying instance', async () => {
+		// The wallet client that sends the transaction is a perfectly good signer, so an
+		// unencrypted create must not be marked as signature-encrypted just because one was
+		// in reach.
+		const ev = await Mnemonad.create(baseParams({ signer: clients.walletClient, name: 'plain' }));
+
+		expect(await ev.isEncrypted()).toBe(false);
+		expect(ev.streamMeta.kek).toBe(null);
+		expect(ev.streamMeta.name).toBe('plain');
+	});
+
+	it('unlocks a fresh read-only instance with a signature', async () => {
+		const created = await createEncrypted();
+		const data = makeBytes(180, 9);
+		await created.push(data);
+
+		// The shape a dApp actually has: an instance built for browsing, with no credential
+		// at all, that later gets handed a wallet on an explicit user action.
+		const reader = new Mnemonad(baseParams({ id: created.id }));
+		await reader.initialize();
+		expect(await reader.isEncrypted()).toBe(true);
+
+		const key = await reader.unlockWithSignature(clients.walletClient);
+		expect(key).toEqual(created.crypto.getAesKey());
+		expect(new Uint8Array(await reader.at(0))).toEqual(data);
+	});
+
+	it('rejects unlockWithSignature by the wrong wallet with a typed error', async () => {
+		const { createWalletClient, http } = await import('viem');
+		const { getChain, getRpcUrl } = await import('./fixture.js');
+
+		const created = await createEncrypted();
+		await created.push(makeBytes(64, 11));
+
+		const otherWallet = createWalletClient({
+			chain: getChain(),
+			transport: http(getRpcUrl()),
+			account: clients.accounts[1],
+		});
+
+		const reader = new Mnemonad(baseParams({ id: created.id }));
+		await expect(reader.unlockWithSignature(otherWallet)).rejects.toMatchObject({
+			code: 'KEK_MISMATCH',
+		});
+		// Nothing was adopted, so the instance is still safe to retry with the right wallet.
+		expect(reader.crypto.getAesKey()).toBe(null);
+		expect(await reader.unlockWithSignature(clients.walletClient)).toBeTruthy();
+	});
+
+	it('unlocks a stream whose metadata carries no kek block at all', async () => {
+		// Two cases at once: streams created before the marker existed, and any created with
+		// caller-supplied raw `meta` (which bypasses the marker permanently). Both must stay
+		// readable, which is why unlock never gates on the kek block.
+		const created = await Mnemonad.create(
+			baseParams({ encrypt: true, signer: clients.walletClient, meta: new Uint8Array() })
+		);
+		const data = makeBytes(90, 12);
+		await created.push(data);
+
+		const reader = new Mnemonad(baseParams({ id: created.id }));
+		await reader.initialize();
+		expect(reader.streamMeta.kek).toBe(null);
+
+		await reader.unlockWithSignature(clients.walletClient);
+		expect(new Uint8Array(await reader.at(0))).toEqual(data);
+	});
+
+	it('refuses a password and a signer together', () => {
+		expect(() =>
+			new Mnemonad(baseParams({ id: 1n, signer: clients.walletClient, password: 'pw' }))
+		).toThrow(/not both/);
+	});
+
 	it('replaces the key on rewrap', async () => {
 		const ev = await Mnemonad.create(baseParams());
 		await ev.setEncKeyWrapped(new Uint8Array([1, 2, 3]));

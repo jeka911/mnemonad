@@ -42,7 +42,7 @@ export async function compact(args) {
     });
 
     await assertStreamOwner(mn, client.account.address);
-    await unlockStream(mn, args.password);
+    await unlockStream(mn, { password: args.password, signer: client.walletClient });
 
     console.log('step 1: truncating existing history...');
     const droppedCount = mn.length - mn.firstAvailableIndex;

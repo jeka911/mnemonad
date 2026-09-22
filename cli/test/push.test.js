@@ -102,10 +102,33 @@ describe('push', () => {
 		await expect(push(intruder)).rejects.toThrow(/owned by/);
 	}, TX_TIMEOUT);
 
-	it('creates an encrypted stream when --encrypt is passed', async () => {
+	it('creates a password-encrypted stream', async () => {
 		await writeTestFile(srcDir, 'secret.txt', 'shh\n');
 		const args = { ...(await makeBaseArgs()), path: srcDir, encrypt: true, password: 'correct horse battery staple' };
 		const { lines } = await captureLogs(() => push(args));
-		expect(lines.some((l) => l.includes('(encrypted)'))).toBe(true);
+		expect(lines.some((l) => l.includes('(encrypted with a password)'))).toBe(true);
+	}, TX_TIMEOUT);
+
+	it('creates a wallet-encrypted stream keyed to the signing account', async () => {
+		await writeTestFile(srcDir, 'secret.txt', 'shh\n');
+		const base = await makeBaseArgs();
+		const args = { ...base, path: srcDir, encrypt: true, encryptWith: 'wallet' };
+		const { lines } = await captureLogs(() => push(args));
+
+		expect(lines.some((l) => l.includes('encrypted to ' + base.accountAddress))).toBe(true);
+	}, TX_TIMEOUT);
+
+	it('refuses --encrypt without a method, and refuses both methods at once', async () => {
+		await writeTestFile(srcDir, 'a.txt', 'x\n');
+		const base = await makeBaseArgs();
+
+		// Which method to use is never guessed: both are reachable from the same invocation.
+		await expect(push({ ...base, path: srcDir, encrypt: true })).rejects.toThrow(/needs a method/);
+		await expect(
+			push({ ...base, path: srcDir, encrypt: true, encryptWith: 'wallet', password: 'pw' })
+		).rejects.toThrow(/takes no --password/);
+		await expect(
+			push({ ...base, path: srcDir, encrypt: true, encryptWith: 'nonsense' })
+		).rejects.toThrow(/expected password or wallet/);
 	}, TX_TIMEOUT);
 });

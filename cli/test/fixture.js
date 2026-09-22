@@ -46,6 +46,7 @@ export async function makeBaseArgs(params = {}) {
 		exclude: null,
 		compress: 'gzip',
 		encrypt: false,
+		encryptWith: null,
 		password: null,
 		pinataJwt: null,
 		manifest: false,

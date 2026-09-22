@@ -121,9 +121,19 @@ export const useWalletStore = defineStore('wallet', {
 			gasTimer = setInterval(() => this.fetchGasPrice(), GAS_POLL_INTERVAL);
 		},
 		sync(account) {
-			this.address = account.address || null;
+			const nextAddress = account.address || null;
+			// Switching accounts has to forget cached stream instances for the same reason
+			// disconnecting does — more so, now that a key can be wallet-derived: a stream
+			// unlocked by the previous account would otherwise stay readable (and writable)
+			// under the new one, which is exactly what "encrypted to the owner's wallet"
+			// promises it isn't.
+			const switched = this.address !== null && nextAddress !== this.address;
+
+			this.address = nextAddress;
 			this.chainId = account.chainId || null;
 			this.connectorName = account.connector ? account.connector.name : null;
+
+			if (switched) useMnemonadStore().clearStreamCache();
 		},
 		// Force a fresh read of the connector's account/chain rather than waiting
 		// on wagmi's account watcher — used right after switchChain() resolves,

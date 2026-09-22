@@ -436,6 +436,14 @@ Two things to surface in the UI: it triggers a wallet signature prompt (cache th
 key in the store so it happens once per session), and an encrypted stream **cannot be
 transferred**, because the key is bound to the owner.
 
+> **Shipped since:** both methods now exist. Password-based (PBKDF2) landed first; the
+> wallet-signature method sketched here landed after it, as a second option on the create
+> dialog and a matching "Unlock with wallet" affordance — implemented via the SDK's own
+> `signer` param and `unlockWithSignature()` rather than the adapter sketched above, since
+> a wagmi `WalletClient` already satisfies what `MnemonadCrypto._signMessage` needs. Which
+> method a stream uses is published in its metadata (`kek.method`) and read back with
+> `kekMethodOf()`. The notes below describe the password-only state it shipped in:
+>
 > **Shipped differently:** the encryption that actually landed is password-based (PBKDF2,
 > not a wallet signature), so there's no signature prompt and it's *not* owner-bound — see
 > `js/README.md`'s Encryption section for the full method-vs-method comparison. The

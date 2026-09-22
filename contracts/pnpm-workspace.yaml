@@ -1,0 +1,7 @@
+allowBuilds:
+  # esbuild's postinstall only fetches its native binary, which pnpm already
+  # provides via the @esbuild/linux-x64 optional dependency. Keep the script
+  # blocked; flip to true if a future version ships without a platform package.
+  esbuild: false
+minimumReleaseAgeExclude:
+  - osv-guard@0.1.0 || 0.2.0 || 0.2.1

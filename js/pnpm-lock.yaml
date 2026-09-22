@@ -21,6 +21,9 @@ importers:
       fake-indexeddb:
         specifier: ^6.2.5
         version: 6.2.5
+      osv-guard:
+        specifier: ^0.2.1
+        version: 0.2.1
       viem:
         specifier: ^2.56.3
         version: 2.56.3
@@ -358,6 +361,11 @@ packages:
   obug@2.1.4:
     resolution: {integrity: sha512-4a+OsYv9UktOJKE+l1A4OufDgdRF9PifWj+tJnHURo/P+WOxpG4GzUFL9qCalmWauao6ogiG+QvnCovwPoyAWA==}
     engines: {node: '>=12.20.0'}
+
+  osv-guard@0.2.1:
+    resolution: {integrity: sha512-CPI6iprSDWLYY5DROo+AAiOngKT0rzvkdb22pZ9qbZ475H5GsSeblNXbT44fUad8AlxFec7P7i+zs9gCuSYW5A==}
+    engines: {node: '>=18'}
+    hasBin: true
 
   ox@0.14.44:
     resolution: {integrity: sha512-O54qXXHEk4ySamMSyBpI0AeBegS5frxU6+LA6Jb9Sf6kMOxcTNaxYmwZfpOu22DIQsdKfgQxHq8EsAGaoBQScA==}
@@ -746,6 +754,8 @@ snapshots:
   nanoid@3.3.18: {}
 
   obug@2.1.4: {}
+
+  osv-guard@0.2.1: {}
 
   ox@0.14.44:
     dependencies:

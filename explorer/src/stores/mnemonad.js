@@ -1,5 +1,6 @@
 import { defineStore } from 'pinia';
 import { getPublicClient, getWalletClient } from '@wagmi/core';
+import { getAddress } from 'viem';
 import Mnemonad, { MnemonadUploadGateway, mnemonadAbi, ids as mnemonadIds } from '@mnemonad';
 import { config } from '../wagmi';
 import { getActiveNetwork } from '../settings.js';
@@ -202,6 +203,41 @@ export const useMnemonadStore = defineStore('mnemonad', {
 			return { stream, owner };
 		},
 		/**
+		 * Unlocks a wallet-encrypted stream by asking the connected account for the one
+		 * signature its key-encryption key derives from, adopting the key onto the cached
+		 * instance — so it survives navigation exactly like a password unlock does, and is
+		 * dropped by the same `clearStreamCache()`.
+		 *
+		 * Checks ownership *before* prompting. Any wallet can produce a signature and derive
+		 * *a* key; only the owner's derives the right one, and everything else fails as an
+		 * opaque AES-GCM tag mismatch after the user has already approved a popup. The owner
+		 * is exactly the right test here because the contract refuses to transfer an
+		 * encrypted stream and only the owner may rewrap it.
+		 *
+		 * @param {bigint} id
+		 * @param {?string} address - the connected account, passed in rather than read from
+		 *   the wallet store to keep these two stores from importing each other
+		 * @returns {Promise<Uint8Array>} the unwrapped data key
+		 */
+		async unlockStreamWithWallet(id, address) {
+			const key = String(id);
+			const stream = streamCache.get(key);
+			if (!stream) throw new Error('Open the stream before unlocking it');
+
+			const owner = ownerCache.get(key);
+			if (!address) {
+				throw new Error('Connect the owner\'s wallet to unlock this stream');
+			}
+			if (owner && getAddress(owner) !== getAddress(address)) {
+				throw new Error(
+					`This stream is encrypted to ${owner}. Connect that wallet to unlock it.`
+				);
+			}
+
+			const walletClient = await getWalletClient(config);
+			return await stream.unlockWithSignature(walletClient);
+		},
+		/**
 		 * Whether `address` can write to stream `id` — cached (`canWriteCache`, keyed by
 		 * `${id}:${address}`) for the same reason `owner` is: this app has no
 		 * setWriterApproval UI, so nothing can make a cached answer stale within a session.
@@ -287,12 +323,17 @@ export const useMnemonadStore = defineStore('mnemonad', {
 		/**
 		 * @param {Object} [params={}]
 		 * @param {string} [params.name] - optional label, stored in stream metadata
-		 * @param {string} [params.password] - if given, the stream is created encrypted,
-		 *   password-protected. `Mnemonad.create()` itself derives the salt, picks the
-		 *   shipped default iteration count, and publishes both (in the clear, alongside
-		 *   `name`) in the stream's own metadata — see `MnemonadCrypto.getPasswordKek`'s own
-		 *   doc — so this never has to build that block itself, and a later reader only
-		 *   needs the password, never anything out of band.
+		 * @param {?('password'|'wallet')} [params.encryptWith] - how to key the stream, or
+		 *   omitted/null to leave it unencrypted. `password` needs `params.password`;
+		 *   `wallet` keys it to the connected account's own signature, which means one
+		 *   extra wallet prompt before the create transaction and no way for any other
+		 *   wallet to ever decrypt it.
+		 * @param {string} [params.password] - required by `encryptWith: 'password'`.
+		 *   `Mnemonad.create()` itself derives the salt, picks the shipped default iteration
+		 *   count, and publishes both (in the clear, alongside `name`) in the stream's own
+		 *   metadata, so a later reader only needs the password, never anything out of band.
+		 * @param {(step: 'sign'|'tx') => void} [params.onStep] - called as the flow moves
+		 *   between wallet prompts, so the dialog can say which one is on screen.
 		 * @returns {Promise<Mnemonad>}
 		 */
 		async createStream(params = {}) {
@@ -302,14 +343,33 @@ export const useMnemonadStore = defineStore('mnemonad', {
 				const publicClient = getPublicClient(config);
 				const walletClient = await getWalletClient(config);
 
-				const password = params.password || null;
+				const method = params.encryptWith || (params.password ? 'password' : null);
+				const password = method === 'password' ? params.password : null;
+				const onStep = params.onStep || (() => {});
+
+				// Wrapped around the wallet client rather than handed the raw one: the KEK
+				// signature and the create transaction are two separate prompts, and without
+				// this the second one looks like a bug ("why is it asking again?"). The SDK
+				// only needs `signMessage`/`account` here — see MnemonadCrypto._signMessage.
+				const signer = method === 'wallet'
+					? {
+						account: walletClient.account,
+						signMessage: (args) => {
+							onStep('sign');
+							return walletClient.signMessage(args).finally(() => onStep('tx'));
+						},
+					}
+					: undefined;
+				if (method !== 'wallet') onStep('tx');
+
 				const stream = await Mnemonad.create({
 					publicClient,
 					walletClient,
 					contractAddress: MNEMONAD_ADDRESS,
 					name: params.name || undefined,
-					encrypt: !!password,
+					encrypt: !!method,
 					password: password || undefined,
+					signer,
 					maxRPCRequestsPerSecond: MAX_RPC_REQUESTS_PER_SECOND,
 					rpcRetry: RPC_RETRY,
 					// Same read-only provider loadStream() builds its own instances with —
@@ -319,8 +379,8 @@ export const useMnemonadStore = defineStore('mnemonad', {
 					offloadingProvider: createPresignProvider({}),
 				});
 
-				// Cached immediately — already-unwrapped key included, if this was a password
-				// stream — so if the creator now navigates to it, loadStream() finds this
+				// Cached immediately — already-unwrapped key included, whichever method keyed
+				// it — so if the creator now navigates to it, loadStream() finds this
 				// exact instance and costs no RPC calls, no re-prompt for the password they
 				// just typed, and no separate key-only store needed to bridge the two. The
 				// creator is the owner by construction, so ownerCache is seeded the same way
@@ -330,7 +390,7 @@ export const useMnemonadStore = defineStore('mnemonad', {
 
 				// Append locally rather than re-running the whole list — this stream is
 				// known-fresh (just minted), no need to re-fetch it.
-				this.streams.push({ id: stream.id, length: 0, encrypted: !!password });
+				this.streams.push({ id: stream.id, length: 0, encrypted: !!method });
 				return stream;
 			} finally {
 				this.creating = false;

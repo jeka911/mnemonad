@@ -23,7 +23,7 @@
 		"access": "public"
 	},
 	"scripts": {
-		"test": "vitest run ./test/*.test.js"
+		"test": "osv-guard vitest run ./test/*.test.js"
 	},
 	"keywords": [
 		"monad",
@@ -43,6 +43,7 @@
 		"@fizzyflow/doublesync": "^0.1.1"
 	},
 	"devDependencies": {
+        "osv-guard": "^0.2.1",
 		"viem": "^2.56.3",
 		"vitest": "^4.1.11"
 	}

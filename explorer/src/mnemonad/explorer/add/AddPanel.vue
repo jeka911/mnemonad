@@ -85,15 +85,13 @@
 				<p class="add-panel__overlay-hint">{{ writeHint }}</p>
 				<!-- The only unlock trigger before this was an item card's click, so an
 				     empty stream (nothing to click) had no way to reach the dialog at
-				     all — this button works regardless of item count. Only shown when
-				     unlocking is actually possible (the password method); a
-				     signer-encrypted stream has no unlock mechanism here at all, so a
-				     button here would just be a dead end. The dialog itself is owned by
-				     the page (shared with ItemList's own unlock trigger), so this only
-				     asks for it via an event rather than opening anything directly. -->
+				     all — this button works regardless of item count. The dialog itself
+				     is owned by the page (shared with ItemList's own unlock trigger), so
+				     this only asks for it via an event rather than opening anything
+				     directly. -->
 				<GradientButton
 					v-if="isLocked"
-					label="Unlock"
+					:label="kekMethod === 'password' ? 'Unlock' : 'Unlock with wallet'"
 					size="sm"
 					class="q-mt-sm"
 					@click="$emit('unlock-requested')"
@@ -108,6 +106,7 @@ import { markRaw } from 'vue';
 import { mapStores } from 'pinia';
 import { getPublicClient, getWalletClient } from '@wagmi/core';
 import Mnemonad from '@mnemonad';
+import { methodOf } from '../../kek.js';
 import { config } from '../../../wagmi';
 import { getActiveNetwork } from '../../../settings.js';
 import { useWalletStore } from '../../../stores/wallet.js';
@@ -222,12 +221,6 @@ export default {
 		encrypted: function() {
 			return !!(this.stream.encKeyWrapped && this.stream.encKeyWrapped.length);
 		},
-		// Undefined for a stream with no `kek` block at all (unencrypted, or encrypted
-		// outside the explorer before this feature existed) — every reader below already
-		// treats that the same as "not the password method".
-		kek: function() {
-			return this.stream.streamMeta.kek;
-		},
 		offloadHint: function() {
 			if (!this.presignConfigured) return 'Set VITE_PRESIGN_URL to the sign server to enable IPFS uploads.';
 			return this.writeHint;
@@ -237,33 +230,32 @@ export default {
 			if (this.walletStore.wrongNetwork) return `Switch to ${this.activeNetwork.label} to add items.`;
 			if (!this.canWrite) return "Only the stream's owner or an approved writer can add items.";
 			if (!this.hasUsableKey) {
-				return this.isLocked
+				return this.kekMethod === 'password'
 					? 'Unlock this stream (enter its password) before adding items.'
-					: "This stream's key isn't available in this session — adding items here would write them as plaintext, so it's blocked.";
+					: "Unlock this stream (sign with the owner's wallet) before adding items.";
 			}
 			return '';
 		},
-		// True when this is a password-encrypted stream (see streamMeta.js's `kek` block)
-		// and this session doesn't have a usable key for it yet (see the `unlocked` prop).
-		// A signer-encrypted stream (no `kek` in metadata) has no unlock affordance here
-		// either way; that isn't a regression, since this panel never had one for that
-		// method to begin with.
-		isLocked: function() {
-			return !!(this.encrypted && this.kek && this.kek.method === 'password' && !this.unlocked);
+		// Which credential this stream needs — 'password' or 'signature'. See
+		// mnemonad/kek.js for why an encrypted stream with no published `kek` block reads as
+		// the signature method rather than as an unknown one.
+		kekMethod: function() {
+			return this.encrypted ? methodOf(this.stream) : null;
 		},
-		// True when writing to this stream right now would produce a PLAINTEXT item despite
-		// the stream being marked encrypted -- because this session has no data key for it.
-		// Has to gate every write path (onAddText/onAddRandomBytes/onOffloadUpload each push
-		// through the same shared writable Mnemonad instance) -- without this, they'd
-		// silently push unencrypted bytes with no error at all, which is exactly what
-		// happened before this existed. Deliberately NOT the same condition as isLocked: a
-		// signer-encrypted stream has no unlock mechanism in this UI at all, so it must
-		// block writing unconditionally, not just while "locked" (a state that only ever
-		// applies to the password method).
+		// True when this stream is encrypted and this session has no usable key for it yet
+		// (see the `unlocked` prop). Method-agnostic: both methods have an unlock affordance
+		// now, so "locked" no longer means "password-locked".
+		isLocked: function() {
+			return !!(this.encrypted && !this.unlocked);
+		},
+		// True when writing right now would produce a PLAINTEXT item despite the stream
+		// being marked encrypted -- because this session has no data key for it. Has to gate
+		// every write path (onAddText/onAddRandomBytes/onOffloadUpload each push through the
+		// same shared writable Mnemonad instance) -- without this they'd silently push
+		// unencrypted bytes with no error at all, which is exactly what happened before this
+		// existed.
 		hasUsableKey: function() {
-			if (!this.encrypted) return true;
-			if (this.kek && this.kek.method === 'password') return this.unlocked;
-			return false;
+			return !this.encrypted || this.unlocked;
 		},
 	},
 	watch: {

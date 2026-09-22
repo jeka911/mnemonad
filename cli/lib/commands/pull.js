@@ -32,7 +32,7 @@ export async function pull(args) {
     // See unlockStream()'s own comment for why `password` isn't passed to the constructor
     // above: reopening an existing encrypted stream needs its own already-published salt,
     // which only unlockWithPassword() (called inside unlockStream) fetches correctly.
-    await unlockStream(mn, args.password);
+    await unlockStream(mn, { password: args.password, signer: client.walletClient });
 
     const version = args.version != null ? Number(args.version) : undefined;
     console.log('restoring', args.streamId, version != null ? 'at version ' + version : '(latest)', '...');
@@ -41,8 +41,10 @@ export async function pull(args) {
     try {
         folder = await monadSync.restore(version);
     } catch (err) {
-        if (err.message?.includes('decrypt') || err.message?.includes('invalid tag')) {
-            throw new Error('This stream is encrypted. Provide --password to decrypt.');
+        if (err.code === 'KEK_MISMATCH' || err.message?.includes('decrypt') || err.message?.includes('invalid tag')) {
+            // unlockStream() above already demanded the right *kind* of credential, so
+            // reaching here means the one supplied didn't actually open this stream.
+            throw new Error('Could not decrypt this stream: ' + err.message);
         }
         throw err;
     }

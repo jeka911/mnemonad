@@ -114,6 +114,15 @@ export default class MnemonadCrypto {
 		if (params.password !== undefined && params.password !== null && params.password.length === 0) {
 			throw new Error('crypto: password must not be empty');
 		}
+		// Rejected rather than resolved by precedence: `_deriveKek` has to pick one, and a
+		// caller who supplied both has no way to know which it picked — the failure would
+		// only show up later as a key that the *other* method can't unwrap.
+		if (params.password && params.signer) {
+			throw new Error(
+				'crypto: pass either a password or a signer, not both — they derive different ' +
+				'key-encryption keys, and a stream can only be wrapped under one of them'
+			);
+		}
 		/** @type {?string} */
 		this._password = params.password || null;
 		/** @type {?Uint8Array} */
@@ -202,11 +211,18 @@ export default class MnemonadCrypto {
 	}
 
 	/**
-	 * This instance's stream-metadata `kek` block (see `streamMeta.js`'s own doc on why a
-	 * password KEK's salt/iterations need to be public at all) — or `null` when there isn't
-	 * one to publish: an unencrypted stream, a signer-based one (owner-bound, so it needs
-	 * no published salt/iterations — the wallet itself is the "salt"), or a password-based
-	 * one whose salt doesn't exist yet.
+	 * This instance's stream-metadata `kek` block — the marker telling a later reader *which*
+	 * method reproduces this stream's KEK, plus (password only) the public parameters needed
+	 * to do it:
+	 *
+	 *   - password → `{method: 'password', salt, iterations}`. Both values have to be public:
+	 *     a reader needs them before it can so much as prompt for a password. See
+	 *     `streamMeta.js`'s own doc on why that's acceptable.
+	 *   - signature → `{method: 'signature'}`. Owner-bound, so there is nothing to publish
+	 *     beyond the method itself — the wallet is the secret, and everything the signed
+	 *     message binds (chain id, contract, stream id) is already on chain.
+	 *   - neither → `null`: an unencrypted stream, an instance holding only a raw `aesKey`,
+	 *     or a password-based one whose salt doesn't exist yet.
 	 *
 	 * That last case matters: on a fresh instance constructed with a password but no
 	 * explicit `passwordSalt`, one is only generated lazily on first `wrapAesKey()`/
@@ -214,15 +230,32 @@ export default class MnemonadCrypto {
 	 * reports what's actually in hand right now, which is why `Mnemonad.create()` reads it
 	 * only *after* `wrapAesKey()` has already run once for the stream being created.
 	 *
+	 * @returns {?{method: 'password'|'signature', salt?: string, iterations?: number}}
+	 */
+	getKekBlock() {
+		// Same precedence `_deriveKek` itself uses, so the published marker can never
+		// disagree with the method that actually wrapped the key.
+		if (this._password) {
+			if (!this._passwordSalt) return null;
+			return {
+				method: 'password',
+				salt: MnemonadCrypto.saltToHex(this._passwordSalt),
+				iterations: this._passwordIterations,
+			};
+		}
+		if (this._signer) return { method: 'signature' };
+		return null;
+	}
+
+	/**
+	 * The password-method half of `getKekBlock()`, kept under its original name because it
+	 * was the published API before signature streams had a marker of their own.
+	 *
 	 * @returns {?{method: 'password', salt: string, iterations: number}}
 	 */
 	getPasswordKek() {
-		if (!this._password || !this._passwordSalt) return null;
-		return {
-			method: 'password',
-			salt: MnemonadCrypto.saltToHex(this._passwordSalt),
-			iterations: this._passwordIterations,
-		};
+		const kek = this.getKekBlock();
+		return kek && kek.method === 'password' ? kek : null;
 	}
 
 	/**
@@ -258,7 +291,23 @@ export default class MnemonadCrypto {
 		const kek = await this._deriveKek(streamId);
 		const nonce = wrapped.subarray(0, AES_NONCE_BYTES);
 		const ct = wrapped.subarray(AES_NONCE_BYTES);
-		return gcm(kek, nonce).decrypt(ct);
+		try {
+			return gcm(kek, nonce).decrypt(ct);
+		} catch (err) {
+			// The GCM tag is the only authority on whether a KEK is the right one, and its
+			// own message ("aes-gcm: invalid tag") says nothing about *why*. Rethrow a
+			// typed, self-explaining error so callers can branch on `err.code` instead of
+			// string-matching, and so the common cases (wrong password, wrong wallet) read
+			// as what they are rather than as a corrupt stream.
+			const mismatch = new Error(
+				'crypto.unwrapAesKey: the derived key-encryption key does not match the one ' +
+				'this stream was wrapped with — wrong ' +
+				(this._password ? 'password (or salt/iterations)' : 'wallet') + '?'
+			);
+			mismatch.code = 'KEK_MISMATCH';
+			mismatch.cause = err;
+			throw mismatch;
+		}
 	}
 
 	/**
@@ -543,11 +592,29 @@ export default class MnemonadCrypto {
 		if (id === null || id === undefined) {
 			throw new Error('crypto: a stream id is required to derive the key-encryption key');
 		}
+		// Every one of these binds into the signed message, so a missing one doesn't fail —
+		// it silently derives a *different* key, which is the worst way for this to go wrong
+		// (wrap succeeds, and the stream is then undecryptable by the very wallet that made
+		// it). Both are populated by `_loadConstants()`, which every real caller runs first:
+		// `Mnemonad.create()` before wrapping, `unlockWithSignature`/`_ensureAesKey` via
+		// `initialize()` before unwrapping.
+		if (ev?.chainId === null || ev?.chainId === undefined) {
+			throw new Error(
+				'crypto: chainId is unknown — initialize() the stream before deriving a ' +
+				'signature-based key, or the derived key will not match the one it was wrapped with'
+			);
+		}
+		if (!ev?.contractAddress) {
+			throw new Error(
+				'crypto: contractAddress is unknown — initialize() the stream before deriving a ' +
+				'signature-based key, or the derived key will not match the one it was wrapped with'
+			);
+		}
 
 		const message = [
 			KEK_DOMAIN,
-			`chainId:${ev?.chainId ?? 0}`,
-			`contract:${(ev?.contractAddress ?? '').toLowerCase()}`,
+			`chainId:${ev.chainId}`,
+			`contract:${ev.contractAddress.toLowerCase()}`,
 			`stream:${id.toString()}`,
 		].join('\n');
 

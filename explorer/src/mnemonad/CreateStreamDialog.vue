@@ -21,7 +21,28 @@
 					/>
 				</div>
 
-				<template v-if="encrypt">
+				<q-option-group
+					v-if="encrypt"
+					v-model="encryptWith"
+					:options="methodOptions"
+					color="primary"
+					dense
+					:disable="mnemonadStore.creating"
+				/>
+
+				<template v-if="encrypt && encryptWith === 'wallet'">
+					<p class="hint hint--warning">
+						Only this wallet can ever decrypt it. There is no recovery: lose the
+						account and the contents are permanently unreadable, and an encrypted
+						stream can never be transferred to another owner.
+					</p>
+					<p class="hint">
+						Creating it asks the wallet twice — once for a free signature that
+						derives the key, then for the create transaction itself.
+					</p>
+				</template>
+
+				<template v-if="encrypt && encryptWith === 'password'">
 					<q-input
 						v-model="password"
 						label="Password"
@@ -66,9 +87,9 @@
 				</p>
 				<GradientButton
 					label="Create"
-					loading-label="Creating..."
+					:loading-label="creatingStep === 'sign' ? 'Check your wallet to sign...' : 'Creating...'"
 					:loading="mnemonadStore.creating"
-					:disable="walletStore.wrongNetwork || (encrypt && !isPasswordValid)"
+					:disable="walletStore.wrongNetwork || (encrypt && encryptWith === 'password' && !isPasswordValid)"
 					@click="submit"
 				/>
 			</div>
@@ -108,10 +129,16 @@ export default {
 			activeNetwork: getActiveNetwork(),
 			name: '',
 			encrypt: false,
+			// Which credential keys the stream. Password is the default because it's the
+			// recoverable-by-anyone-who-knows-it option; wallet trades that for a key nobody
+			// but this account can derive.
+			encryptWith: 'password',
 			password: '',
 			confirmPassword: '',
 			passwordTouched: false,
 			confirmTouched: false,
+			/** 'sign' | 'tx' — which wallet prompt the create flow is waiting on. */
+			creatingStep: null,
 		};
 	},
 	computed: {
@@ -130,11 +157,17 @@ export default {
 		isPasswordValid() {
 			return !this.passwordError && !this.confirmError;
 		},
+		methodOptions() {
+			return [
+				{ label: 'With a password', value: 'password' },
+				{ label: "With this wallet's signature", value: 'wallet' },
+			];
+		},
 	},
 	methods: {
 		async submit() {
 			if (this.walletStore.wrongNetwork || this.mnemonadStore.creating) return;
-			if (this.encrypt) {
+			if (this.encrypt && this.encryptWith === 'password') {
 				this.passwordTouched = true;
 				this.confirmTouched = true;
 				if (!this.isPasswordValid) return;
@@ -142,25 +175,40 @@ export default {
 			try {
 				await this.mnemonadStore.createStream({
 					name: this.name,
-					password: this.encrypt ? this.password : undefined,
+					encryptWith: this.encrypt ? this.encryptWith : null,
+					password: this.encrypt && this.encryptWith === 'password' ? this.password : undefined,
+					// Two wallet prompts for the wallet method (key signature, then the
+					// transaction) — this keeps the button honest about which one is up.
+					onStep: (step) => { this.creatingStep = step; },
 				});
 				this.reset();
 				this.$emit('update:modelValue', false);
 			} catch (error) {
+				// Rejecting either prompt lands here. The signature one leaves nothing
+				// behind at all (no transaction was sent yet), and the derivation is
+				// deterministic, so retrying re-derives the identical key.
+				const rejected = error?.name === 'UserRejectedRequestError'
+					|| /user rejected|denied/i.test(error?.shortMessage || error?.message || '');
 				this.$q.notify({
 					type: 'negative',
-					message: error?.shortMessage || error?.message || 'Failed to create stream',
+					message: rejected
+						? (this.creatingStep === 'sign' ? 'Signature rejected — nothing was created.' : 'Transaction rejected — nothing was created.')
+						: (error?.shortMessage || error?.message || 'Failed to create stream'),
 					position: 'top',
 				});
+			} finally {
+				this.creatingStep = null;
 			}
 		},
 		reset() {
 			this.name = '';
 			this.encrypt = false;
+			this.encryptWith = 'password';
 			this.password = '';
 			this.confirmPassword = '';
 			this.passwordTouched = false;
 			this.confirmTouched = false;
+			this.creatingStep = null;
 		},
 	},
 };

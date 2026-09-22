@@ -13,6 +13,7 @@ import {
     hashMapsEqual,
     assertStreamOwner,
     unlockStream,
+    resolveEncryptMethod,
     resolveOffloadParams,
 } from './shared.js';
 
@@ -46,24 +47,37 @@ export async function push(args) {
         ...resolveOffloadParams(args, client.account),
     };
 
+    // Validated up front, so a bad flag combination fails before any chain work — including
+    // on the push-to-existing path, where the encryption flags don't apply at all.
+    const encryptMethod = resolveEncryptMethod(args);
+
     let mn;
     if (!streamId) {
-        // Encryption is opt-in, password/signer-based. `password` is only ever passed to the
-        // constructor here, on the instance that is itself calling `create()` — it generates
-        // and publishes its own salt, so there's no existing salt to fetch. See
-        // unlockStream()'s own comment for why every other path (including re-pushing to an
-        // already-encrypted stream below) must NOT do this.
+        // The credential is only ever passed to the constructor *here*, on the instance
+        // calling `create()` itself: it generates and publishes whatever a later reader needs
+        // (a password salt, or the method marker), so there's nothing existing to fetch. See
+        // unlockStream()'s own comment for why every other path must NOT do this.
         const createParams = { ...baseParams };
-        if (args.encrypt) createParams.encrypt = true;
-        if (args.password) createParams.password = args.password;
-        console.log('creating new stream on', args.chain, args.encrypt ? '(encrypted)' : '(public)', '...');
+        if (encryptMethod === 'password') {
+            createParams.encrypt = true;
+            createParams.password = args.password;
+        } else if (encryptMethod === 'wallet') {
+            createParams.encrypt = true;
+            // The same account that signs the create transaction also signs for the key —
+            // so this asks the wallet twice, and only this account can ever decrypt it.
+            createParams.signer = client.walletClient;
+        }
+        const how = encryptMethod === 'password' ? '(encrypted with a password)'
+            : encryptMethod === 'wallet' ? '(encrypted to ' + client.account.address + ')'
+            : '(public)';
+        console.log('creating new stream on', args.chain, how, '...');
         mn = await Mnemonad.create(createParams);
         streamId = mn.id.toString();
         console.log('  created:', streamId);
     } else {
         mn = new Mnemonad({ ...baseParams, id: streamId });
         await assertStreamOwner(mn, client.account.address);
-        await unlockStream(mn, args.password);
+        await unlockStream(mn, { password: args.password, signer: client.walletClient });
         if (args.encrypt) {
             console.log('  note: --encrypt only applies when creating a new stream; pushing to an existing stream keeps its current encryption');
         }

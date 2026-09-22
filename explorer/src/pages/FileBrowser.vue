@@ -52,23 +52,33 @@
 		<q-dialog v-model="unlockDialog">
 			<JPanel accent="header" icon="lock" iconColor="var(--q-primary)" title="Unlock stream" style="min-width: 360px;">
 				<div class="unlock-content q-pa-md">
-					<p class="unlock-hint">
-						Enter the password this stream was encrypted with to browse its files.
-					</p>
-					<q-input
-						v-model="unlockPassword"
-						label="Password"
-						type="password"
-						dense
-						outlined
-						autofocus
-						:disable="unlocking"
-						:error="!!unlockError"
-						:error-message="unlockError"
-						@keyup.enter="submitUnlock"
-					/>
+					<template v-if="kekMethod === 'password'">
+						<p class="unlock-hint">
+							Enter the password this stream was encrypted with to browse its files.
+						</p>
+						<q-input
+							v-model="unlockPassword"
+							label="Password"
+							type="password"
+							dense
+							outlined
+							autofocus
+							:disable="unlocking"
+							:error="!!unlockError"
+							:error-message="unlockError"
+							@keyup.enter="submitUnlock"
+						/>
+					</template>
+					<template v-else>
+						<p class="unlock-hint">
+							This stream is encrypted to its owner's wallet. Sign the prompt to
+							derive its key — the signature never leaves your browser, and costs
+							nothing.
+						</p>
+						<p v-if="unlockError" class="unlock-error">{{ unlockError }}</p>
+					</template>
 					<GradientButton
-						label="Unlock"
+						:label="kekMethod === 'password' ? 'Unlock' : 'Unlock with wallet'"
 						loading-label="Unlocking..."
 						:loading="unlocking"
 						@click="submitUnlock"
@@ -88,6 +98,7 @@ import { mapStores } from 'pinia';
 import { getActiveNetwork } from '../settings.js';
 import { useWalletStore } from '../stores/wallet.js';
 import { useMnemonadStore } from '../stores/mnemonad.js';
+import { methodOf } from '../mnemonad/kek.js';
 import { JPanel } from 'themed_varmory';
 import GradientPanel from '../components/GradientPanel.vue';
 import GradientButton from '../components/GradientButton.vue';
@@ -132,6 +143,14 @@ export default {
 	},
 	computed: {
 		...mapStores(useWalletStore, useMnemonadStore),
+		// Which credential the unlock dialog should ask for — 'password' or 'signature'.
+		// Hung off `unlockDialog` (and `unlocked`) rather than `_stream`, which is
+		// deliberately non-reactive (see created()): those are the reactive flags that flip
+		// exactly when this answer is needed — when the dialog opens, and after it succeeds.
+		kekMethod: function() {
+			if (!this.unlockDialog && !this.unlocked) return null;
+			return methodOf(this._stream);
+		},
 		validId: function() {
 			try {
 				BigInt(this.$route.params.id);
@@ -198,19 +217,30 @@ export default {
 			this.unlockError = null;
 		},
 		async submitUnlock() {
-			if (this.unlocking || !this._stream || !this._stream.streamMeta.kek) return;
-			if (!this.unlockPassword) {
+			// Never gated on `streamMeta.kek` existing — see Stream.vue's own copy for why
+			// (a stream encrypted before the method marker existed publishes no block).
+			if (this.unlocking || !this._stream) return;
+			if (this.kekMethod === 'password' && !this.unlockPassword) {
 				this.unlockError = 'Password is required.';
 				return;
 			}
 			this.unlocking = true;
 			this.unlockError = null;
 			try {
-				await this._stream.unlockWithPassword(this.unlockPassword);
+				if (this.kekMethod === 'password') {
+					await this._stream.unlockWithPassword(this.unlockPassword);
+				} else {
+					await this.mnemonadStore.unlockStreamWithWallet(
+						this._stream.id,
+						this.walletStore.address
+					);
+				}
 				this.unlocked = true;
 				this.unlockDialog = false;
-			} catch {
-				this.unlockError = 'Incorrect password.';
+			} catch (error) {
+				this.unlockError = this.kekMethod === 'password'
+					? 'Incorrect password.'
+					: (error?.message || 'Could not unlock with this wallet.');
 			} finally {
 				this.unlocking = false;
 			}
@@ -263,6 +293,14 @@ export default {
 </script>
 
 <style scoped>
+/* The wallet branch of the unlock dialog has no q-input to carry an :error-message, so the
+   failure renders as its own line instead. */
+.unlock-error {
+	margin: 0;
+	font-size: 12px;
+	color: var(--q-negative);
+}
+
 .back-link {
 	display: inline-flex;
 	align-items: center;

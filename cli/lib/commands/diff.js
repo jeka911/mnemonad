@@ -57,7 +57,7 @@ export async function diff(args) {
     // See shared.js's unlockStream() for why `password` isn't passed to the constructor
     // above — this fetches the stream's own already-published salt instead of deriving a
     // key from a fresh one.
-    await unlockStream(mn, args.password);
+    await unlockStream(mn, { password: args.password, signer: client.walletClient });
     const totalVersions = mn.length;
 
     if (totalVersions === 0) {
@@ -77,8 +77,8 @@ export async function diff(args) {
     try {
         remoteFolder = await monadSync.restore(version === totalVersions ? undefined : version);
     } catch (err) {
-        if (err.message?.includes('decrypt') || err.message?.includes('invalid tag')) {
-            throw new Error('This stream is encrypted. Provide --password to decrypt.');
+        if (err.code === 'KEK_MISMATCH' || err.message?.includes('decrypt') || err.message?.includes('invalid tag')) {
+            throw new Error('Could not decrypt this stream: ' + err.message);
         }
         throw err;
     }

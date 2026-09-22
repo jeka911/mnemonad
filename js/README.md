@@ -188,7 +188,10 @@ A random AES-256-GCM data key is always generated at `create()` time and stored,
 on-chain in `encKeyWrapped`. What differs is only *how it gets wrapped* — the
 key-encryption key (KEK). Two methods exist:
 
-**Signer-based** — self-wrapped under a KEK derived from the owner's own signature:
+**Signature-based** — self-wrapped under a KEK derived from the owner's own signature over a
+message binding the chain id, contract and stream id. Nothing to remember and nothing public
+to protect, but strictly owner-bound: lose the wallet and the data is gone, and no other
+wallet can ever read it.
 
 ```javascript
 const ev = await Mnemonad.create({
@@ -196,11 +199,15 @@ const ev = await Mnemonad.create({
     walletClient,
     contractAddress,
     encrypt: true,
-    signer: walletClient,
+    signer: walletClient,     // anything with signMessage(); a viem Account works too
 });
 await ev.push(secret);       // encrypted before it leaves the process
 await ev.at(0);              // decrypted transparently
 ```
+
+Creating one asks the wallet **twice** — first for the key signature, then for the create
+transaction. Rejecting the second leaves nothing behind, and a retry re-derives the identical
+key.
 
 **Password-based** — the KEK is derived via PBKDF2-HMAC-SHA256 from a plaintext password
 plus a per-stream salt, instead of a signature:
@@ -237,9 +244,10 @@ skipping unwrapping entirely. It's how a second party reads without either crede
 is no delegation otherwise in v1) and how a UI caches an already-unlocked key for the rest of
 a session without re-deriving it on every read.
 
-A UI commonly doesn't have the password up front, though — a stream loads read-only first
-(no `password`/`aesKey` at all), and only later does a "enter password" prompt supply one.
-`unlockWithPassword(password)` handles that sequence in place on an already-constructed
+A UI commonly doesn't have either credential up front, though — a stream loads read-only
+first (no `password`/`signer`/`aesKey` at all), and only later does an "enter password"
+prompt or an "unlock with wallet" click supply one. `unlockWithPassword(password)` and
+`unlockWithSignature(signer)` handle that sequence in place on an already-constructed
 instance: derive, verify (a wrong password throws — the wrapped key's GCM tag fails to
 check out, rather than silently unwrapping garbage), and adopt the key, so every read
 through that same instance decrypts from then on:
@@ -256,6 +264,41 @@ await ev.at(0); // plaintext, from here on
 
 Pass `{ passwordSalt, passwordIterations }` explicitly to override, for a caller keeping
 those two values somewhere other than this metadata format.
+
+`unlockWithSignature(signer)` is the same move for a signature-keyed stream — one wallet
+prompt instead of a password, and the key lands on the same instance:
+
+```javascript
+const ev = new Mnemonad({ publicClient, contractAddress, id });
+await ev.unlockWithSignature(walletClient);
+await ev.at(0); // plaintext, from here on
+```
+
+Passing `signer` to the constructor works too, but then the *first read* triggers a wallet
+prompt at whatever moment it happens — while rendering a list, say. Unlocking explicitly
+keeps that an intentional step.
+
+Both unlocks throw with `err.code === 'KEK_MISMATCH'` when the credential doesn't unwrap the
+key — a wrong password, or (for a signature stream) a wallet that isn't the owner. Neither
+gates on the stream's published method: stream metadata is written once at creation and can
+never be corrected, while `setEncKeyWrapped` lets an owner rewrap under a different method
+afterwards, so the GCM tag is the only authority on whether a credential is the right one.
+
+**Which method a stream uses** is published in its metadata as `kek.method`
+(`'password'` | `'signature'`), and read back with `kekMethodOf({ kek, encrypted })` — which
+also covers streams created before that marker existed, where an encrypted stream with no
+`kek` block at all means the signature method:
+
+```javascript
+import { kekMethodOf } from 'mnemonad';
+
+const method = kekMethodOf({ kek: ev.streamMeta.kek, encrypted: await ev.isEncrypted() });
+// → 'password' | 'signature' | null (not encrypted)
+```
+
+A password stream's `kek` block also carries the `salt` and `iterations` a reader needs
+before it can even prompt; a signature stream has nothing to publish beyond the method
+itself.
 
 ### Framed ciphertext
 

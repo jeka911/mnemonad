@@ -1,4 +1,4 @@
-import Mnemonad from 'mnemonad';
+import Mnemonad, { kekMethodOf } from 'mnemonad';
 import { MonadSync } from 'monadsync';
 import { makeChainClient } from '../chainClient.js';
 import {
@@ -39,14 +39,24 @@ export async function info(args) {
     const isOwner = client.account && owner !== '(unknown)' && client.account.address.toLowerCase() === owner.toLowerCase();
 
     const isEncrypted = await mn.isEncrypted();
+    const kekMethod = kekMethodOf({ kek: mn.streamMeta.kek, encrypted: isEncrypted });
     // Unlike pull/diff (which have nothing useful to do at all without decrypting), info
-    // still has metadata worth showing on an encrypted stream with no password — so this
-    // unlocks when it can and otherwise just notes it, rather than throwing.
-    if (isEncrypted && args.password) {
-        await mn.unlockWithPassword(args.password);
+    // still has metadata worth showing on a stream it can't open — so this unlocks when the
+    // right credential happens to be at hand and otherwise just notes it, rather than
+    // throwing. `unlocked` then gates the local-version comparison further down.
+    let unlocked = false;
+    if (isEncrypted) {
+        try {
+            unlocked = await unlockStream(mn, { password: args.password, signer: client.walletClient });
+        } catch {
+            // Missing or wrong credential — reported below, not fatal for `info`.
+        }
     }
     console.log('  owner:          ', isOwner ? owner + ' (you)' : owner);
-    console.log('  encrypted:      ', isEncrypted ? 'yes' : 'no');
+    console.log(
+        '  encrypted:      ',
+        isEncrypted ? (kekMethod === 'password' ? 'yes (password)' : 'yes (owner wallet)') : 'no'
+    );
     console.log('  versions:       ', totalVersions);
     console.log('  binary size:    ', formatBytes(mn.binaryLength));
     if (mn.firstAvailableIndex > 0) {
@@ -61,11 +71,16 @@ export async function info(args) {
         return;
     }
 
-    // Same reasoning as pull.js/diff.js: with no password configured, Mnemonad skips
-    // decryption silently instead of failing, so the tree-hash detection loop below would
-    // only ever compare garbage against garbage — better to say why up front and stop.
-    if (isEncrypted && !args.password) {
-        console.log('\n  (stream is encrypted — provide --password to compare against the local folder)');
+    // Same reasoning as pull.js/diff.js: an un-unlocked stream decrypts to nothing useful,
+    // so the tree-hash detection loop below would only ever compare garbage against garbage
+    // — better to say what's missing up front and stop.
+    if (isEncrypted && !unlocked) {
+        console.log(
+            kekMethod === 'password'
+                ? '\n  (encrypted — provide --password to compare against the local folder)'
+                : '\n  (encrypted to the owner\'s wallet — provide their --key / --phrase to\n' +
+                  '   compare against the local folder)'
+        );
         return;
     }
 
@@ -82,8 +97,8 @@ export async function info(args) {
         try {
             remoteHash = await monadSync.getTreeHash(v);
         } catch (err) {
-            if (err.message?.includes('decrypt') || err.message?.includes('invalid tag')) {
-                throw new Error('This stream is encrypted. Provide --password to decrypt.');
+            if (err.code === 'KEK_MISMATCH' || err.message?.includes('decrypt') || err.message?.includes('invalid tag')) {
+                throw new Error('Could not decrypt this stream: ' + err.message);
             }
             throw err;
         }

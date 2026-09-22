@@ -109,8 +109,12 @@ export interface MnemonadParams {
 	 * their frames are individually authenticated.
 	 */
 	allowUnverifiedRanges?: boolean;
-	/** Signer used to wrap/unwrap the encryption key. */
-	signer?: unknown;
+	/**
+	 * Signer used to wrap/unwrap the encryption key — a viem Account or WalletClient, or
+	 * anything else exposing `signMessage`. Mutually exclusive with `password`: supplying
+	 * both throws, since they derive different key-encryption keys.
+	 */
+	signer?: MnemonadSigner | null;
 	/** Pre-known plaintext data key, skips unwrapping. */
 	aesKey?: Uint8Array | null;
 	/**
@@ -430,8 +434,11 @@ export declare class MnemonadCrypto {
 	/** The iteration count in use for password-based key derivation, or `null` when this
 	 *  instance isn't using the password method at all. */
 	getPasswordIterations(): number | null;
-	/** This instance's stream-metadata `kek` block, or `null` when there isn't one to
-	 *  publish (unencrypted, signer-based, or a password whose salt doesn't exist yet). */
+	/** This instance's stream-metadata `kek` block — `{method:'password', salt, iterations}`,
+	 *  `{method:'signature'}`, or `null` when there is nothing to publish (no credential, or
+	 *  a password whose salt doesn't exist yet). Never generates a salt as a side effect. */
+	getKekBlock(): StreamMetaKek | null;
+	/** The password-method half of `getKekBlock()`, under its original name. */
 	getPasswordKek(): StreamMetaKek | null;
 	wrapAesKey(aesKey: Uint8Array, streamId?: bigint | null): Promise<Uint8Array>;
 	unwrapAesKey(wrapped: Uint8Array, streamId?: bigint | null): Promise<Uint8Array>;
@@ -543,6 +550,14 @@ export declare class Mnemonad {
 		password: string,
 		params?: { passwordSalt?: string | Uint8Array; passwordIterations?: number }
 	): Promise<Uint8Array>;
+	/**
+	 * Unlocks a signature-encrypted stream in place: asks `signer` for the one signature its
+	 * key-encryption key derives from, unwraps `encKeyWrapped`, and adopts the key on
+	 * `this.crypto`. The counterpart to `unlockWithPassword`, for making the wallet prompt an
+	 * explicit step instead of a surprise on first read. Throws with `code === 'KEK_MISMATCH'`
+	 * when the signature doesn't unwrap the key (typically the wrong wallet).
+	 */
+	unlockWithSignature(signer: MnemonadSigner): Promise<Uint8Array>;
 	owner(): Promise<string>;
 	/**
 	 * Whether `address` (default: this instance's configured sender) can append to this
@@ -629,12 +644,23 @@ export declare class Mnemonad {
 	): Promise<CostEstimate>;
 }
 
-/** See `streamMeta.js`'s own doc — a stream's decoded `kek` block, present only for a
- *  password-encrypted stream (a signer-encrypted one has no salt/iterations to publish). */
+/** See `streamMeta.js`'s own doc — a stream's decoded `kek` block: which method reproduces
+ *  its key-encryption key, plus (password only) the public parameters needed to do it. A
+ *  signature-encrypted stream publishes just the method; older ones published nothing at
+ *  all, which is why `kekMethodOf` exists. */
 export interface StreamMetaKek {
-	method: string;
-	salt: string;
-	iterations: number;
+	method: 'password' | 'signature' | string;
+	/** Password method only. */
+	salt?: string;
+	/** Password method only. */
+	iterations?: number;
+}
+
+/** Anything able to produce an EIP-191 (`personal_sign`) signature — a viem Account, a viem
+ *  WalletClient, or a hand-rolled adapter over a wallet's own signing call. */
+export interface MnemonadSigner {
+	signMessage(args: { message: string; account?: unknown }): Promise<string>;
+	account?: unknown;
 }
 
 /**
@@ -653,6 +679,14 @@ export declare function decodeStreamMeta(bytes?: Uint8Array | null): {
 	name: string | null;
 	kek: StreamMetaKek | null;
 };
+
+/** Which KEK method a stream uses, readable without any credential. Falls back to
+ *  `'signature'` for an encrypted stream with no `kek` block — the one method that never
+ *  published one. `null` when the stream isn't encrypted at all. */
+export declare function kekMethodOf(params: {
+	kek?: StreamMetaKek | null;
+	encrypted: boolean;
+}): 'password' | 'signature' | string | null;
 
 /**
  * Encodes an item's `{name, type}` metadata into its opaque on-chain `meta` bytes, gzipped

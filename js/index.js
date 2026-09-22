@@ -17,7 +17,7 @@ import {
 import { mnemonadAbi } from './abi.js';
 import { uploadGatewayAbi } from './gatewayAbi.js';
 import ids from './ids.js';
-import { encodeStreamMeta, decodeStreamMeta } from './streamMeta.js';
+import { encodeStreamMeta, decodeStreamMeta, kekMethodOf } from './streamMeta.js';
 import { encodeItemMeta, decodeItemMeta } from './itemMeta.js';
 
 export {
@@ -47,6 +47,7 @@ export {
 	EXPECTED_CONTRACT_VERSION,
 	encodeStreamMeta,
 	decodeStreamMeta,
+	kekMethodOf,
 	encodeItemMeta,
 	decodeItemMeta,
 };

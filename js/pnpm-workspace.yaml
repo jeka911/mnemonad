@@ -1,0 +1,2 @@
+minimumReleaseAgeExclude:
+  - osv-guard@0.2.1

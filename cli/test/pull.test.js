@@ -4,6 +4,7 @@ import { pull } from '../lib/commands/pull.js';
 import {
 	startNode, makeBaseArgs, makeTempDir, cleanupDir, writeTestFile, readTree, captureLogs,
 } from './fixture.js';
+import { DEV_KEYS } from '../../js/test/fixture.js';
 
 let node;
 let srcDir;
@@ -81,6 +82,28 @@ describe('pull', () => {
 
 		await pull({ ...baseArgs, streamId, path: destDir });
 		expect(Object.keys(await readTree(destDir)).sort()).toEqual(['keep.txt']);
+	}, TX_TIMEOUT);
+
+	it('round-trips a wallet-encrypted stream with the owner\'s key, and refuses another', async () => {
+		await writeTestFile(srcDir, 'secret.txt', 'classified\n');
+		const baseArgs = await makeBaseArgs();
+		const streamId = await pushFolder({ ...baseArgs, encrypt: true, encryptWith: 'wallet' }, srcDir);
+
+		// A different key derives a different key-encryption key, so the wrapped key's GCM
+		// tag fails — the SDK reports that as a typed KEK_MISMATCH rather than a raw tag error.
+		await expect(
+			pull({ ...baseArgs, streamId, path: destDir, key: DEV_KEYS[1] })
+		).rejects.toThrow(/does not match|KEK_MISMATCH/);
+
+		// With no key at all there is nothing to sign with, and the error should say so
+		// rather than asking for a password the stream doesn't use.
+		await expect(
+			pull({ ...baseArgs, streamId, path: destDir, key: null, phrase: null })
+		).rejects.toThrow(/owner's wallet/);
+
+		await pull({ ...baseArgs, streamId, path: destDir });
+		const destTree = await readTree(destDir);
+		expect(destTree['secret.txt'].toString('utf8')).toBe('classified\n');
 	}, TX_TIMEOUT);
 
 	it('requires --password for an encrypted stream and succeeds once given', async () => {

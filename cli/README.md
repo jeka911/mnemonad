@@ -73,6 +73,7 @@ Every command prints the installed CLI version as its first line of output.
 | `--exclude <p1,p2>` | Extra exclude patterns (comma-separated) |
 | `--no-compress` | Disable gzip compression |
 | `--encrypt` | Create a new stream encrypted. Only applies when creating; ignored for existing streams |
+| `--encrypt-with <method>` | How to key it: `password` (needs `--password`), or `wallet` — the `--key`/`--phrase` account signs for it, and only that account can ever decrypt it. Implied by `--password` |
 | `--password <pw>` | Password to encrypt a new stream with, or decrypt an existing one |
 | `--pinata-jwt <jwt>` | Pinata JWT for IPFS offload of large files (or `PINATA_JWT` env var) |
 | `--manifest` | Write/use `.mnemonad` manifest for faster change detection |
@@ -120,11 +121,21 @@ mnemonad push ~/my-data
 #   version 1 pushed (full snapshot, gzip compressed)
 ```
 
-By default a new stream is public (unencrypted). To encrypt it:
+By default a new stream is public (unencrypted). Encrypting one takes a method — the CLI
+never picks for you, since both are reachable from the same invocation:
 
 ```bash
+# Keyed by a password: anyone who knows it can read the stream, from any machine.
 mnemonad push ~/my-data --encrypt --password "correct horse battery staple"
+
+# Keyed by the signing account itself: no password to remember or leak, but ONLY this
+# account can ever decrypt it, and there is no recovery if the key is lost.
+mnemonad push ~/my-data --encrypt --encrypt-with wallet
 ```
+
+Reading one back needs whichever credential it was keyed with — `--password` for the first,
+just the owner's `--key`/`--phrase` for the second. `mnemonad info` reports which:
+`encrypted: yes (password)` or `encrypted: yes (owner wallet)`.
 
 ### Push an update
 

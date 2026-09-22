@@ -429,6 +429,44 @@ export default class Mnemonad {
 		return aesKey;
 	}
 
+	/**
+	 * Unlocks a signature-encrypted stream in place: asks `signer` for the one signature this
+	 * stream's key-encryption key is derived from, unwraps `encKeyWrapped`, and adopts the
+	 * result on `this.crypto` — every read through this instance decrypts from here on, and
+	 * writes re-encrypt under the same key.
+	 *
+	 * The counterpart to `unlockWithPassword`, and it exists for the same reason: a reader
+	 * usually meets a stream long before it has any credential for it. Handing `signer` to
+	 * the constructor works too, but then the *first read* triggers a wallet prompt at
+	 * whatever moment it happens — browsing a list, rendering a preview. This makes the
+	 * prompt an explicit, user-initiated step instead.
+	 *
+	 * Deliberately not gated on `streamMeta.kek.method`: metadata is written once at
+	 * creation and can never be corrected, while `setEncKeyWrapped` lets an owner rewrap
+	 * under a different method afterwards. The kek block is a hint for deciding *which*
+	 * credential to ask for; the GCM tag on the wrapped key is the only authority on whether
+	 * it was the right one.
+	 *
+	 * @param {Object} signer - viem Account or WalletClient (anything with `signMessage`).
+	 *   Must be the wallet that wrapped the key — every other one derives a different KEK.
+	 * @returns {Promise<Uint8Array>} the unwrapped data key, also adopted onto `this.crypto`
+	 * @throws {Error} If this stream has no wrapped key, or if the signature doesn't unwrap
+	 *   it (`err.code === 'KEK_MISMATCH'` — typically the wrong wallet).
+	 */
+	async unlockWithSignature(signer) {
+		await this.initialize();
+		if (!this.encKeyWrapped || !this.encKeyWrapped.length) {
+			throw new Error('unlockWithSignature: this stream has no wrapped key to unlock');
+		}
+		if (!signer) {
+			throw new Error('unlockWithSignature: a signer is required');
+		}
+		const crypto = new MnemonadCrypto({ mnemonad: this, signer });
+		const aesKey = await crypto.unwrapAesKey(this.encKeyWrapped);
+		this.crypto.setAesKey(aesKey);
+		return aesKey;
+	}
+
 	// -----------------------------------------------------------------------------
 	// Creation
 	// -----------------------------------------------------------------------------
@@ -587,14 +625,21 @@ export default class Mnemonad {
 			encKeyWrapped = bytesToHex(wrapped);
 		}
 
-		// Built here, not by the caller: `getPasswordKek()` only has a real answer once
-		// `wrapAesKey()` above has actually run (that's what derives/generates the salt),
-		// which is exactly why this can't happen any earlier. `params.meta` (raw bytes)
-		// always wins outright when given — this only ever fills in for a caller that
+		// Built here, not by the caller: `getKekBlock()` only has a real answer once
+		// `wrapAesKey()` above has actually run (that's what derives/generates a password
+		// salt), which is exactly why this can't happen any earlier. `params.meta` (raw
+		// bytes) always wins outright when given — this only ever fills in for a caller that
 		// didn't hand over pre-built bytes itself.
+		// `params.encrypt` gates the block, not just `getKekBlock()`'s own answer: a caller
+		// can hand a signer to an instance creating a *plaintext* stream (the same wallet
+		// client that sends the transaction), and that must not stamp a kek marker onto a
+		// stream that has no wrapped key at all.
 		const meta = params.meta !== undefined
 			? params.meta
-			: encodeStreamMeta({ name: params.name, kek: ev.crypto.getPasswordKek() });
+			: encodeStreamMeta({
+				name: params.name,
+				kek: params.encrypt ? ev.crypto.getKekBlock() : null,
+			});
 
 		// Only items that fit a single chunk can ride along with creation; anything larger
 		// needs the staged path, so it is pushed separately afterwards.

@@ -5,16 +5,19 @@
     "type": "module",
     "private": true,
     "scripts": {
-        "sync-abi": "node sync_abi.js",
-        "deploy:testnet": "node deploy_testnet.js",
-        "deploy:mainnet": "node deploy_mainnet.js",
-        "deploy:gateway:testnet": "node deploy_gateway_testnet.js",
-        "deploy:gateway:mainnet": "node deploy_gateway_mainnet.js",
-        "collect-fees:testnet": "node collect_fees_testnet.js",
+        "sync-abi": "osv-guard node sync_abi.js",
+        "deploy:testnet": "osv-guard node deploy_testnet.js",
+        "deploy:mainnet": "osv-guard node deploy_mainnet.js",
+        "deploy:gateway:testnet": "osv-guard node deploy_gateway_testnet.js",
+        "deploy:gateway:mainnet": "osv-guard node deploy_gateway_mainnet.js",
+        "collect-fees:testnet": "osv-guard node collect_fees_testnet.js",
         "collect-fees:mainnet": "node collect_fees_mainnet.js"
     },
     "license": "AGPL-3.0",
     "dependencies": {
         "viem": "^2.56.3"
+    },
+    "devDependencies": {
+        "osv-guard": "^0.2.1"
     }
 }

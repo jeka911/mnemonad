@@ -3,7 +3,7 @@ import { join, resolve } from 'node:path';
 import { createHash } from 'node:crypto';
 import { homedir } from 'node:os';
 import { getAddress } from 'viem';
-import { MnemonadPinataProvider } from 'mnemonad';
+import { MnemonadPinataProvider, kekMethodOf } from 'mnemonad';
 
 // monadsync re-exports its whole sync-primitives surface (see monadsync/index.js), so
 // these come from there rather than adding a second, lower-level dependency.
@@ -117,34 +117,99 @@ export async function assertStreamOwner(mn, signerAddress) {
 }
 
 /**
- * Unlocks `mn` for reading/writing an encrypted stream from just a password, correctly
- * fetching that stream's own persisted salt (`streamMeta.kek`) via `Mnemonad.unlockWithPassword`.
+ * Decides how a NEW stream should be keyed, from the encryption flags given.
  *
- * Passing `password` straight to the `Mnemonad` constructor only works when *creating* a
- * new stream (`Mnemonad.create()` generates and publishes the salt itself, so the instance
- * doing the creating already has the matching one). Reopening an *existing* encrypted
- * stream from a separate instance — which is what every read/re-push path here does — needs
- * that already-published salt, and only `unlockWithPassword()` fetches it; passing the
- * password to the constructor instead silently derives a key from a fresh, different salt,
- * and every subsequent read/write then fails deep inside decryption with an opaque
- * "aes-gcm: invalid tag", or (worse, on a write) succeeds but wraps a key nothing else can
- * ever unwrap again.
+ * `--encrypt` alone is rejected rather than guessed at: both methods are reachable from the
+ * same invocation (the `--key` account can always sign), and picking one silently would
+ * decide, unprompted, whether the stream is recoverable by a password or bound forever to
+ * whatever key happened to be in the environment.
  *
- * Throws the same friendly, guaranteed-correct message every command wants when the stream
- * is encrypted and no password was given; does nothing for a public stream.
+ * @param {Object} args - parsed CLI args
+ * @returns {?('password'|'wallet')} `null` when the stream should stay unencrypted
+ */
+export function resolveEncryptMethod(args) {
+    const requested = args.encryptWith || (args.password ? 'password' : null);
+
+    if (!args.encrypt) {
+        if (args.encryptWith) {
+            throw userError('--encrypt-with needs --encrypt (it only applies when creating a stream)');
+        }
+        return null;
+    }
+    if (!requested) {
+        throw userError(
+            '--encrypt needs a method: --encrypt-with password (with --password), or\n' +
+            '  --encrypt-with wallet to key it to the --key/--phrase account\'s signature'
+        );
+    }
+    if (requested !== 'password' && requested !== 'wallet') {
+        throw userError(`unknown --encrypt-with '${requested}', expected password or wallet`);
+    }
+    if (requested === 'password' && !args.password) {
+        throw userError('--encrypt-with password needs --password');
+    }
+    if (requested === 'wallet' && args.password) {
+        throw userError(
+            '--encrypt-with wallet takes no --password — a wallet-keyed stream is unwrapped by\n' +
+            '  the owner\'s signature, and the two methods cannot both key one stream'
+        );
+    }
+    return requested;
+}
+
+/**
+ * Unlocks `mn` for reading/writing an encrypted stream, whichever way it was keyed.
+ *
+ * Which credential to try comes from the stream's own published `kek` block via
+ * `kekMethodOf` — but only as a *hint*: stream metadata is written once at creation and can
+ * never be corrected, while the owner can rewrap under a different method at any time. The
+ * GCM tag on the wrapped key is the authority, and a mismatch surfaces as the SDK's typed
+ * `KEK_MISMATCH` error either way.
+ *
+ * Neither credential is ever passed to the `Mnemonad` constructor here. For a password that
+ * would silently derive a key from a *fresh* salt instead of the stream's published one, and
+ * every later read/write would fail deep inside decryption (or, worse, succeed and wrap a
+ * key nothing else can ever unwrap). `unlockWithPassword`/`unlockWithSignature` are the only
+ * paths that read what the stream actually published.
  *
  * @param {import('mnemonad').default} mn
- * @param {?string} password
+ * @param {Object} [credentials]
+ * @param {?string} [credentials.password]
+ * @param {?Object} [credentials.signer] - viem WalletClient/Account, for a wallet-keyed stream
  * @returns {Promise<boolean>} whether the stream was encrypted (and, if so, is now unlocked)
  */
-export async function unlockStream(mn, password) {
+export async function unlockStream(mn, credentials = {}) {
+    const { password = null, signer = null } = credentials;
+
     await mn.initialize();
     if (!(await mn.isEncrypted())) return false;
-    if (!password) {
-        throw new Error('This stream is encrypted. Provide --password to decrypt.');
+
+    const method = kekMethodOf({ kek: mn.streamMeta.kek, encrypted: true });
+
+    if (method === 'password') {
+        if (!password) {
+            throw userError('This stream is encrypted with a password. Provide --password to decrypt.');
+        }
+        await mn.unlockWithPassword(password);
+        return true;
     }
-    await mn.unlockWithPassword(password);
+
+    // 'signature' — including every stream created before the method marker existed, which
+    // published no kek block at all.
+    if (!signer) {
+        throw userError(
+            'This stream is encrypted to its owner\'s wallet. Provide the owner\'s key with\n' +
+            '  --key / --phrase / MNEMONAD_KEY to decrypt it.'
+        );
+    }
+    await mn.unlockWithSignature(signer);
     return true;
+}
+
+function userError(message) {
+    const err = new Error(message);
+    err._isUserError = true;
+    return err;
 }
 
 export async function countTree(folder) {
