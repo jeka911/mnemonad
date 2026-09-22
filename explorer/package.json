@@ -5,7 +5,7 @@
   "license": "AGPL-3.0",
   "scripts": {
     "dev": "osv-guard vite",
-    "build": "npm run vite build",
+    "build": "vite build",
     "preview": "osv-guard vite preview",
     "clean:cache": "rm -rf node_modules/.vite"
   },
