@@ -170,10 +170,10 @@ mnemonad info 123 ~/my-data
 
 ```
   chain:           testnet
-  your wallet:     0x06bc6420b37a4898424429dcfa236f0065e12279f508337b69f6e965362fadd2
+  your wallet:     0x06bc6420b37a4898424429dcfa236f0065e12279
 
 stream: 123
-  owner:           0x06bc6420b37a4898424429dcfa236f0065e12279f508337b69f6e965362fadd2 (you)
+  owner:           0x06bc6420b37a4898424429dcfa236f0065e12279 (you)
   encrypted:       no
   versions:        3
   binary size:     385.7 KB
