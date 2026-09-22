@@ -9,7 +9,7 @@
 			     stream, and its id is what you'd hand to `mnemonad pull`. -->
 			<span v-if="title" class="stream-row__id">{{ formattedId }}</span>
 			<q-icon v-if="encrypted" name="lock" size="14px" class="stream-row__lock" />
-			<span v-if="count !== null">{{ count }} {{ count === 1 ? 'item' : 'items' }}</span>
+			<span v-if="count !== null">{{ count }} {{ countLabel }}</span>
 			<q-skeleton v-else-if="loading" type="text" width="48px" />
 		</span>
 	</router-link>
@@ -34,13 +34,25 @@ export default {
 		title: { type: String, default: '' },
 		/** Second line under `title`; falls back to the shortened id. */
 		subtitle: { type: String, default: '' },
-		/** Item count, or null while unknown (see `loading`). */
+		/** Appended-item count, or null while unknown (see `loading`). */
 		count: { type: Number, default: null },
+		/**
+		 * What one appended item *means* here: 'version' for a filesystem stream, where
+		 * every item is a patch and the count is a version history, or 'item' for a plain
+		 * one holding whatever was added to it. Nothing on chain distinguishes the two —
+		 * a reader only finds out by trying to decode an item as a patch (see
+		 * FileBrowser.vue's own fallback) — so this is the caller's to state, and both of
+		 * this app's lists say 'version' because that's what the tooling here produces.
+		 */
+		unit: { type: String, default: 'item' },
 		/** Shows a placeholder where the count will land. */
 		loading: { type: Boolean, default: false },
 		encrypted: { type: Boolean, default: false },
 	},
 	computed: {
+		countLabel: function() {
+			return this.count === 1 ? this.unit : `${this.unit}s`;
+		},
 		// Ids are 77 digits of decimal — unreadable, and impossible to tell apart at a
 		// glance. Hex-padded and elided keeps them scannable while staying the actual id.
 		formattedId: function() {

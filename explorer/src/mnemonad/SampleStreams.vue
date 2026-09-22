@@ -22,6 +22,7 @@
 					:subtitle="sample.description"
 					:count="counts[sample.id] ?? null"
 					:loading="loading"
+					:unit="sample.unit || 'item'"
 					:encrypted="encrypted[sample.id] || false"
 				/>
 			</div>

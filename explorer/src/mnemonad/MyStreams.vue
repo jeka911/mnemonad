@@ -66,6 +66,7 @@
 					:key="String(v.id)"
 					:id="String(v.id)"
 					:count="v.length"
+					unit="version"
 					:encrypted="v.encrypted"
 				/>
 			</div>

@@ -18,6 +18,11 @@
  * @property {string} name - short label for the list row
  * @property {string} description - one line on what's inside
  * @property {string} [source] - repo path the contents are pushed from, if any
+ * @property {'item'|'version'} [unit='item'] - what one appended item *means* here, which
+ *   is the difference between a plain stream (each item is a thing someone added) and a
+ *   filesystem one (each item is a patch, so the count is a version history). Nothing on
+ *   chain distinguishes them — a reader only finds out by trying to decode an item as a
+ *   patch, which is why this is recorded per sample rather than detected in a list.
  */
 
 /** @type {Record<string, SampleStream[]>} */
@@ -28,6 +33,7 @@ export const SAMPLE_STREAMS = {
 			name: 'Text dataset',
 			description: 'A small plain-text corpus — haiku and notes, pushed as a versioned folder.',
 			source: 'sample_datasets/text',
+			unit: 'version',
 		},
 	],
 	mainnet: [],
