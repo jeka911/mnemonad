@@ -12,8 +12,23 @@ signer's own wallet key.
 
 ## Installation
 
-This package lives in the monorepo alongside `mnemonad` and `monadsync` and is not yet
-published. From the repo root:
+### From npm (recommended)
+
+```bash
+npm install -g mnemonad-cli
+mnemonad --help
+```
+
+To pick up a new release later:
+
+```bash
+npm update -g mnemonad-cli
+```
+
+### From this repo (for development)
+
+This package lives in the monorepo alongside `mnemonad` and `monadsync`, linked through a
+pnpm workspace at the repo root. From the repo root:
 
 ```bash
 cd cli
@@ -21,7 +36,7 @@ pnpm install
 node bin/mnemonad.js --help
 ```
 
-Or link it for a global `mnemonad` command:
+Or link it for a global `mnemonad` command that tracks your local checkout:
 
 ```bash
 cd cli

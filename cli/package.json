@@ -1,6 +1,6 @@
 {
     "name": "mnemonad-cli",
-    "version": "0.1.0",
+    "version": "0.1.1",
     "description": "CLI to sync local folders to versioned, diffed on-chain streams on Monad, backed by Mnemonad + monadsync.",
     "type": "module",
     "license": "AGPL-3.0",
