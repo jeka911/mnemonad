@@ -137,10 +137,11 @@ mnemonad info ~/my-data</pre>
         different data on each network. A bare decimal or hex id also works and is rewritten to that form.
       </p>
       <p class="boot-about">
-        If a user pastes a link to this app, the stream id (and network) is right there in the URL — pull
-        it out of the <code>/stream/&lt;id&gt;</code> path rather than asking them to retype it. Worth
-        proposing next: look it up (<code>mnemonad info &lt;id&gt;</code>, no key needed for a public
-        stream) or pull it into a local folder (<code>mnemonad pull &lt;id&gt; &lt;path&gt;</code>) — but
+        If a user pastes a link to this app, the CLI accepts that <code>&lt;network&gt;-0x&lt;id&gt;</code>
+        straight from the URL as-is — no need to strip the network prefix by hand, it sets
+        <code>--chain</code> to match. Worth proposing next: look it up
+        (<code>mnemonad info &lt;network&gt;-0x&lt;id&gt;</code>, no key needed for a public stream) or pull
+        it into a local folder (<code>mnemonad pull &lt;network&gt;-0x&lt;id&gt; &lt;path&gt;</code>) — but
         confirm the destination folder first, and remember an encrypted stream still needs the owner's key
         or password to actually read.
       </p>

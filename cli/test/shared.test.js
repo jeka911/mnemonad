@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { resolvePath, formatStreamId, streamIdsEqual, discoverStreamId, writeManifest } from '../lib/commands/shared.js';
+import { resolvePath, formatStreamId, streamIdsEqual, discoverStreamId, writeManifest, parseQualifiedStreamId } from '../lib/commands/shared.js';
 
 describe('resolvePath', () => {
 	it('throws a friendly, actionable error instead of falling back to cwd when path is missing', () => {
@@ -172,5 +172,43 @@ describe('discoverStreamId', () => {
 			expect(id).toBe(formatStreamId('123'));
 			expect(args.streamId).toBe(formatStreamId('123'));
 		});
+	});
+});
+
+describe('parseQualifiedStreamId', () => {
+	it('splits a network-qualified hex id, same shape the explorer\'s URLs use', () => {
+		expect(parseQualifiedStreamId('testnet-0x648f18ea13eaa4640b97a435a30d39d4f7af9c2105adb10217f8a8ae56e73ac8'))
+			.toEqual({ network: 'testnet', id: '0x648f18ea13eaa4640b97a435a30d39d4f7af9c2105adb10217f8a8ae56e73ac8' });
+		expect(parseQualifiedStreamId('mainnet-0x7b')).toEqual({ network: 'mainnet', id: '0x7b' });
+	});
+
+	it('accepts a qualified decimal id too', () => {
+		expect(parseQualifiedStreamId('testnet-123')).toEqual({ network: 'testnet', id: '123' });
+	});
+
+	it('lowercases the network prefix', () => {
+		expect(parseQualifiedStreamId('Testnet-0x7b')).toEqual({ network: 'testnet', id: '0x7b' });
+		expect(parseQualifiedStreamId('MAINNET-0x7b')).toEqual({ network: 'mainnet', id: '0x7b' });
+	});
+
+	it('returns null for an unqualified id — the plain forms parse elsewhere', () => {
+		expect(parseQualifiedStreamId('0x7b')).toBe(null);
+		expect(parseQualifiedStreamId('123')).toBe(null);
+	});
+
+	it('returns null for an unknown network prefix rather than guessing', () => {
+		expect(parseQualifiedStreamId('unknown-0x7b')).toBe(null);
+		expect(parseQualifiedStreamId('local-0x7b')).toBe(null); // real --chain value, but never a URL prefix
+	});
+
+	it('returns null for a malformed id after a valid-looking network prefix', () => {
+		expect(parseQualifiedStreamId('testnet-not-an-id')).toBe(null);
+		expect(parseQualifiedStreamId('testnet-')).toBe(null);
+	});
+
+	it('returns null for non-string input', () => {
+		expect(parseQualifiedStreamId(null)).toBe(null);
+		expect(parseQualifiedStreamId(undefined)).toBe(null);
+		expect(parseQualifiedStreamId(123)).toBe(null);
 	});
 });

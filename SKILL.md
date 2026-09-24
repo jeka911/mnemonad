@@ -109,6 +109,11 @@ the original contents on chain regardless.
 accepts both. Output always prints the hex form (`0x` + 64 digits), which is also what the dApp
 displays.
 
+**A link from the dApp can be pasted straight in, network prefix and all.** The explorer's URLs
+name the id as `testnet-0x648f18…` — paste that whole thing as `<stream-id>` and the CLI sets
+`--chain` to match, no need to strip the prefix by hand. Passing `--chain` too only works if it
+agrees; a mismatch is refused rather than guessed.
+
 **`<path>` is always required** wherever a command touches a folder. There is deliberately no
 fallback to the current directory, so a mistyped path fails immediately instead of quietly
 syncing the wrong folder. The only exceptions are `mnemonad info` with no stream id, and

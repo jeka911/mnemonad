@@ -18,6 +18,7 @@ import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 
 import { push, pull, info, diff, watch, compact, burn } from '../lib/commands/index.js';
+import { parseQualifiedStreamId } from '../lib/commands/shared.js';
 import defaultConfig from '../mnemonad.config.js';
 
 const PKG_ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
@@ -61,6 +62,10 @@ Usage:
 <path> is always required wherever a command touches a folder — the CLI never assumes the
 current directory. The exceptions are \`mnemonad info\` with no stream-id (just checks your
 configured chain/wallet) and \`mnemonad burn\`, which takes no folder at all.
+
+<stream-id> also accepts the network-qualified form shown in the explorer's URLs —
+testnet-0x648f18… — paste it straight out of a /stream/<id> link. It sets --chain to match;
+pass --chain too only if it agrees, or the command refuses rather than guess which one you meant.
 
 Options:
   --chain <name>            Chain: testnet, mainnet, local (default: testnet)
@@ -139,27 +144,48 @@ function parseArgs(argv) {
     // command except a bare `info`) fails fast with a clear error instead of silently
     // operating on whatever directory the CLI happened to be run from.
     // A stream id is a decimal bigint or a 0x-prefixed hex string; anything else is a path.
-    const isStreamId = (s) => /^\d+$/.test(s) || /^0x[0-9a-fA-F]+$/.test(s);
+    //
+    // Also accepted: the network-qualified form the explorer's own URLs use —
+    // `<network>-0x<hex>`, e.g. `testnet-0x648f18…` — since that's what an agent naturally
+    // has in hand after pulling an id straight out of a /stream/<id> link. A qualified id
+    // names the chain the same way the URL does; parseQualifiedStreamId (shared.js, same
+    // split the explorer's own parseStreamRouteId does) records which one (chainFromId,
+    // below) so it can settle --chain once flags are parsed too.
+    const isStreamId = (s) => /^\d+$/.test(s) || /^0x[0-9a-fA-F]+$/.test(s) || !!parseQualifiedStreamId(s);
+
+    let chainFromId = null;
+    // Strips a recognized `<network>-` prefix and records the network it named, so every
+    // downstream command only ever sees the bare id it already knows how to parse
+    // (formatStreamId, `new Mnemonad({id})`, etc. never learn this form exists).
+    const takeStreamId = (arg) => {
+        const qualified = parseQualifiedStreamId(arg);
+        if (!qualified) return arg;
+        chainFromId = qualified.network;
+        return qualified.id;
+    };
+
     const positionals = [];
     while (i < raw.length && !raw[i].startsWith('--')) {
         positionals.push(raw[i]);
         i++;
     }
     if (positionals.length === 2) {
-        args.streamId = positionals[0];
+        args.streamId = takeStreamId(positionals[0]);
         args.path = positionals[1];
     } else if (positionals.length === 1) {
         if (isStreamId(positionals[0])) {
-            args.streamId = positionals[0];
+            args.streamId = takeStreamId(positionals[0]);
         } else {
             args.path = positionals[0];
         }
     }
 
+    let sawChainFlag = false;
     while (i < raw.length) {
         const flag = raw[i];
         if (flag === '--chain' && i + 1 < raw.length) {
             args.chain = raw[++i];
+            sawChainFlag = true;
         } else if (flag === '--rpc-url' && i + 1 < raw.length) {
             args.rpcUrl = raw[++i];
         } else if (flag === '--contract-address' && i + 1 < raw.length) {
@@ -202,6 +228,18 @@ function parseArgs(argv) {
             args.yes = true;
         }
         i++;
+    }
+
+    if (chainFromId) {
+        if (sawChainFlag && args.chain !== chainFromId) {
+            console.error(
+                `Error: the stream id names network '${chainFromId}', but --chain '${args.chain}' was\n` +
+                `  also given — they disagree. Drop --chain to use the id's network, or pass\n` +
+                `  --chain ${chainFromId} to match it.`
+            );
+            _realExit(1);
+        }
+        args.chain = chainFromId;
     }
 
     return args;

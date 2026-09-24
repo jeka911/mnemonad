@@ -134,6 +134,37 @@ export function streamIdsEqual(a, b) {
     return BigInt(a) === BigInt(b);
 }
 
+/** Networks a qualified stream id can name — see `parseQualifiedStreamId` below. Kept in
+ *  sync by hand with `chainClient.js`'s own `CHAINS` map (which also lists `local`, never
+ *  meaningful here — no URL is ever built with it) and with the explorer's
+ *  `src/settings.js` `NETWORKS` map, the source these prefixes actually come from. */
+export const NETWORK_PREFIXES = ['testnet', 'mainnet'];
+
+/**
+ * Splits the network-qualified stream-id form the explorer's URLs use — `<network>-0x<hex>`
+ * (or `<network>-<decimal>`), e.g. `testnet-0x648f18…` — into its network and bare id. Same
+ * split the explorer's own `streamRouteId()`/`parseStreamRouteId()`
+ * (`explorer/src/includes/streamRoute.js`) do, so an id copied straight out of a
+ * `/stream/<id>` link parses here too, instead of failing `BigInt()` on the whole string.
+ *
+ * Returns null for anything that isn't this exact shape — an unqualified id, a malformed
+ * one, or a prefix that isn't a known network (not a stream on some network this build
+ * hasn't heard of, just not this form).
+ *
+ * @param {string} s
+ * @returns {{network: string, id: string}|null}
+ */
+export function parseQualifiedStreamId(s) {
+    if (typeof s !== 'string') return null;
+    const dash = s.indexOf('-');
+    if (dash === -1) return null;
+    const prefix = s.slice(0, dash).toLowerCase();
+    if (!NETWORK_PREFIXES.includes(prefix)) return null;
+    const rest = s.slice(dash + 1);
+    if (!/^0x[0-9a-fA-F]+$/.test(rest) && !/^\d+$/.test(rest)) return null;
+    return { network: prefix, id: rest };
+}
+
 export function formatBytes(bytes) {
     if (bytes < 1024) return bytes + ' B';
     if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';

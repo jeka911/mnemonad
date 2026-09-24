@@ -76,11 +76,12 @@ the folder's own manifest.
 the same token id means different data on each network. A bare decimal or hex id also works
 and is rewritten to that form.
 
-If a user pastes a link to this app, the stream id (and network) is right there in the
-`/stream/<id>` path — pull it out of the URL rather than asking them to retype it. Worth
-proposing next: look it up (`mnemonad info <id>`, no key needed for a public stream) or pull
-it into a local folder (`mnemonad pull <id> <path>`) — but confirm the destination folder
-first, and remember an encrypted stream still needs the owner's key or password to read.
+If a user pastes a link to this app, the CLI accepts that `<network>-0x<id>` straight from
+the URL as-is — no need to strip the network prefix by hand, it sets `--chain` to match.
+Worth proposing next: look it up (`mnemonad info <network>-0x<id>`, no key needed for a
+public stream) or pull it into a local folder (`mnemonad pull <network>-0x<id> <path>`) —
+but confirm the destination folder first, and remember an encrypted stream still needs the
+owner's key or password to read.
 
 ## Networks
 

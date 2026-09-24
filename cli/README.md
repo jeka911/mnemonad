@@ -71,10 +71,13 @@ directory: an omitted or mistyped path fails fast with an error rather than sile
 operating on wherever the CLI happened to be run from. The commands that can run with no
 path at all are `mnemonad info` with no stream id either (it just checks your configured
 chain/wallet) and `mnemonad burn`, which never takes one. A stream id is recognized as a
-bare decimal number (`123`) or a
-`0x`-prefixed hex string; anything else in that position is treated as a path. Either form
-works as input — every command's own output always prints the id in hex (`0x` + the full
-32-byte token id), matching the [explorer dApp](https://mnemonad.vercel.app)'s own display.
+bare decimal number (`123`), a
+`0x`-prefixed hex string, or the network-qualified form the
+[explorer dApp](https://mnemonad.vercel.app)'s own URLs use —
+`testnet-0x648f18…` — pasted straight out of a `/stream/<id>` link. That form also sets
+`--chain` to match; pass `--chain` too only if it agrees, or the command refuses rather than
+guess which one you meant. Every command's own output always prints the bare id in hex
+(`0x` + the full 32-byte token id), matching the explorer's own display.
 
 Every command prints the installed CLI version as its first line of output.
 
