@@ -22,7 +22,7 @@ import {
 export async function push(args) {
     let streamId = args.streamId;
 
-    const destPath = resolvePath(args.path);
+    const destPath = resolvePath(args.path, { mustExist: true });
     const fsFolder = new FSFolder(destPath, makeExcludes(args));
 
     const counts = await countTree(fsFolder);

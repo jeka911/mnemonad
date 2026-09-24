@@ -396,5 +396,40 @@ export const useMnemonadStore = defineStore('mnemonad', {
 				this.creating = false;
 			}
 		},
+		/**
+		 * Permanently destroys stream `id` (`contracts/src/Mnemonad.sol`'s own `burn()` —
+		 * owner-only, irreversible). A throwaway writable instance rather than reusing
+		 * whatever's in `streamCache`: burn touches no crypto/item state at all, so there's
+		 * nothing to carry over from an already-unlocked read instance, and building a
+		 * fresh one keeps this action independent of whether the caller has ever loaded the
+		 * stream in this session.
+		 *
+		 * @param {bigint|string} id
+		 * @returns {Promise<boolean>}
+		 */
+		async burnStream(id) {
+			if (!MNEMONAD_ADDRESS) throw new Error('Mnemonad is not deployed on this network');
+			const publicClient = getPublicClient(config);
+			const walletClient = await getWalletClient(config);
+			const writable = new Mnemonad({
+				publicClient,
+				walletClient,
+				contractAddress: MNEMONAD_ADDRESS,
+				id,
+			});
+			await writable.burn();
+
+			// Every cache entry for this id is now describing a token that no longer
+			// exists — dropped rather than left stale, same reasoning clearStreamCache()
+			// documents for a wallet disconnect. canWriteCache is keyed `${id}:${address}`
+			// (no cheap way to target just this id's entries), so it's cleared in full —
+			// harmless, since nothing here queries canWrite at any real frequency.
+			const key = String(id);
+			streamCache.delete(key);
+			ownerCache.delete(key);
+			canWriteCache.clear();
+			this.streams = this.streams.filter((s) => String(s.id) !== key);
+			return true;
+		},
 	},
 });

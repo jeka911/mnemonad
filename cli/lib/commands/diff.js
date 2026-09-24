@@ -9,6 +9,7 @@ import {
     hashLocalTree,
     unlockStream,
     formatStreamId,
+    folderExists,
 } from './shared.js';
 
 export function compareFileMaps(localFiles, remoteFiles) {
@@ -42,6 +43,12 @@ export async function diff(args) {
     }
     // Resolved up front (throws if missing) so a missing path fails fast, before any chain
     // work — see resolvePath()'s own comment for why this is never defaulted to cwd.
+    //
+    // Deliberately NOT `{ mustExist: true }`, unlike push/compact/watch: diffing a stream
+    // against a folder you haven't pulled yet is a legitimate question ("what would I get?"),
+    // and this command writes nothing either way. It is called out explicitly below though —
+    // "everything deleted" for a folder that never existed reads as data loss rather than as
+    // a wrong path.
     const destPath = resolvePath(args.path);
 
     const client = makeChainClient(args);
@@ -72,6 +79,12 @@ export async function diff(args) {
     }
 
     console.log('diff:', formatPath(destPath), 'vs', formatStreamId(args.streamId), '(version ' + version + ' of ' + totalVersions + ')');
+    // Said up front, before the file list: without it, a mistyped path produces a list of
+    // every file in the stream marked "deleted", which reads as data loss rather than as
+    // a folder that was never there.
+    if (!folderExists(destPath)) {
+        console.log('  note: local folder does not exist — everything below is listed as deleted');
+    }
     console.log('  restoring chain version...');
 
     let remoteFolder;

@@ -30,7 +30,7 @@ function hashesEqual(a, b) {
 export async function watch(args) {
     if (!args.streamId) throw new Error('stream-id is required for watch');
 
-    const cwd = resolvePath(args.path);
+    const cwd = resolvePath(args.path, { mustExist: true });
     const debounceMs = args.debounce ?? 5000;
     const pollIntervalMs = (args.pollInterval ?? 2) * 1000;
     const pushEnabled = !args.pullOnly;

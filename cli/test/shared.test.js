@@ -27,6 +27,62 @@ describe('resolvePath', () => {
 	});
 });
 
+describe('resolvePath({ mustExist: true })', () => {
+	it('accepts a folder that exists', async () => {
+		const { mkdtemp, rm } = await import('node:fs/promises');
+		const { tmpdir } = await import('node:os');
+		const { join } = await import('node:path');
+		const dir = await mkdtemp(join(tmpdir(), 'mnemonad-resolve-'));
+		try {
+			expect(resolvePath(dir, { mustExist: true })).toBe(dir);
+		} finally {
+			await rm(dir, { recursive: true, force: true });
+		}
+	});
+
+	it('rejects a folder that does not exist, instead of a raw ENOENT from readdir', () => {
+		expect(() => resolvePath('/tmp/mnemonad-definitely-not-here-9f3a', { mustExist: true }))
+			.toThrow(/no such folder/);
+	});
+
+	it('points at pull as the way to create one', () => {
+		expect(() => resolvePath('/tmp/mnemonad-definitely-not-here-9f3a', { mustExist: true }))
+			.toThrow(/mnemonad pull/);
+	});
+
+	it('marks a missing folder as a user error (message only, no stack trace)', () => {
+		try {
+			resolvePath('/tmp/mnemonad-definitely-not-here-9f3a', { mustExist: true });
+			expect.unreachable();
+		} catch (err) {
+			expect(err._isUserError).toBe(true);
+		}
+	});
+
+	it('rejects a path that exists but is a file, not a folder', async () => {
+		const { mkdtemp, writeFile, rm } = await import('node:fs/promises');
+		const { tmpdir } = await import('node:os');
+		const { join } = await import('node:path');
+		const dir = await mkdtemp(join(tmpdir(), 'mnemonad-resolve-'));
+		const file = join(dir, 'a.txt');
+		await writeFile(file, 'x');
+		try {
+			expect(() => resolvePath(file, { mustExist: true })).toThrow(/not a folder/);
+		} finally {
+			await rm(dir, { recursive: true, force: true });
+		}
+	});
+
+	it('still refuses a missing path argument before it ever checks the disk', () => {
+		expect(() => resolvePath(null, { mustExist: true })).toThrow(/folder path is required/);
+	});
+
+	it('leaves the default (pull) tolerant of a not-yet-created folder', () => {
+		expect(resolvePath('/tmp/mnemonad-definitely-not-here-9f3a'))
+			.toBe('/tmp/mnemonad-definitely-not-here-9f3a');
+	});
+});
+
 describe('formatStreamId', () => {
 	it('renders a decimal id as 0x + 64 zero-padded lowercase hex digits', () => {
 		expect(formatStreamId('123')).toBe(`0x${'0'.repeat(62)}7b`);

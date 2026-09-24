@@ -17,7 +17,7 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 
-import { push, pull, info, diff, watch, compact } from '../lib/commands/index.js';
+import { push, pull, info, diff, watch, compact, burn } from '../lib/commands/index.js';
 import defaultConfig from '../mnemonad.config.js';
 
 const PKG_ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
@@ -56,10 +56,11 @@ Usage:
   mnemonad diff <stream-id> <path> [options]      List local files added/modified/deleted vs the on-chain version
   mnemonad watch <stream-id> <path> [options]     Watch folder and auto-push/pull
   mnemonad compact <stream-id> <path> [options]   Truncate old history, push a fresh snapshot
+  mnemonad burn <stream-id> --yes [options]       Permanently destroy a stream (irreversible)
 
 <path> is always required wherever a command touches a folder — the CLI never assumes the
-current directory. The only exception is \`mnemonad info\` with no stream-id, which just
-checks your configured chain/wallet and needs no folder at all.
+current directory. The exceptions are \`mnemonad info\` with no stream-id (just checks your
+configured chain/wallet) and \`mnemonad burn\`, which takes no folder at all.
 
 Options:
   --chain <name>            Chain: testnet, mainnet, local (default: testnet)
@@ -86,6 +87,7 @@ Options:
   --debounce <ms>           Watch: ms quiet period before pushing after a change (default: 1000)
   --push-only               Watch: disable auto-pull
   --pull-only               Watch: disable auto-push
+  --yes                     Required by burn — explicit opt-in for an irreversible action
   --help                    Show this help
 `;
 
@@ -116,6 +118,7 @@ function parseArgs(argv) {
         debounce: 1000,
         pushOnly: false,
         pullOnly: false,
+        yes: false,
     };
 
     const raw = argv.slice(2);
@@ -193,6 +196,8 @@ function parseArgs(argv) {
             args.pushOnly = true;
         } else if (flag === '--pull-only') {
             args.pullOnly = true;
+        } else if (flag === '--yes') {
+            args.yes = true;
         }
         i++;
     }
@@ -221,6 +226,8 @@ try {
         await watch(args);
     } else if (args.command === 'compact') {
         await compact(args);
+    } else if (args.command === 'burn') {
+        await burn(args);
     } else {
         console.error('Unknown command:', args.command);
         console.log(USAGE);

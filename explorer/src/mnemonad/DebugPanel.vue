@@ -1,7 +1,38 @@
 <template>
 	<JPanel icon="bug_report" title="Debug" class="q-mt-md debug-panel ">
 		<div class="q-pa-md">
-		<div class="debug-panel__row">
+		<template v-if="streamId">
+			<div class="debug-panel__row debug-panel__row--rpc">
+				<span class="debug-panel__label">Burn this stream</span>
+				<q-btn
+					color="negative"
+					outline
+					dense
+					no-caps
+					size="sm"
+					label="Burn…"
+					:disable="!isOwner"
+					@click="burnDialogOpen = true"
+				/>
+			</div>
+			<p class="debug-panel__hint">
+				<template v-if="isOwner">
+					Permanently destroys the token and its metadata — irreversible, no undo. The
+					confirm dialog spells out the full detail before anything is sent.
+				</template>
+				<template v-else>
+					Only the stream's owner can burn it{{ walletStore.isConnected ? '' : ' — connect the owning wallet' }}.
+				</template>
+			</p>
+			<BurnStreamDialog
+				v-model="burnDialogOpen"
+				:stream-id="streamId"
+				:length="length"
+				:binary-length="binaryLength"
+				@burned="$emit('burned')"
+			/>
+		</template>
+		<div class="debug-panel__row" :class="{ 'debug-panel__row--rpc': streamId }">
 			<span class="debug-panel__label">Disable caching</span>
 			<q-toggle
 				:model-value="debugStore.cachingDisabled"
@@ -65,11 +96,14 @@
 
 <script>
 import { mapStores } from 'pinia';
+import { getAddress } from 'viem';
 import { JPanel } from 'themed_varmory';
 import { getRpcCallCount, subscribeRpcCalls } from '@mnemonad';
 import { useDebugStore } from '../stores/debug.js';
+import { useWalletStore } from '../stores/wallet.js';
 import { presignConfigured, fetchPresignHealth } from './presignProvider.js';
 import RpcCallLogDialog from './RpcCallLogDialog.vue';
+import BurnStreamDialog from './BurnStreamDialog.vue';
 
 /** How often to re-poll the sign server's `/health` while this panel is mounted. */
 const SIGN_SERVER_POLL_MS = 10_000;
@@ -81,9 +115,32 @@ const SIGN_SERVER_POLL_MS = 10_000;
  */
 export default {
 	name: 'DebugPanel',
-	components: { JPanel, RpcCallLogDialog },
+	components: { JPanel, RpcCallLogDialog, BurnStreamDialog },
+	props: {
+		// Stream this panel's burn section applies to — omitted entirely (no burn row at
+		// all) when DebugPanel is shown outside a stream's own page, since every other
+		// control here is session-wide but burning needs one specific stream to act on.
+		streamId: {
+			type: [String, BigInt],
+			default: null,
+		},
+		owner: {
+			type: String,
+			default: null,
+		},
+		length: {
+			type: Number,
+			default: 0,
+		},
+		binaryLength: {
+			type: Number,
+			default: 0,
+		},
+	},
+	emits: ['burned'],
 	data() {
 		return {
+			burnDialogOpen: false,
 			// Local component state, not store state: this mirrors a process-wide SDK counter
 			// (MnemonadRpcRecorder) that every `Mnemonad` instance in the app writes into
 			// regardless of which page/action created it — there's nothing for a Pinia store
@@ -101,7 +158,7 @@ export default {
 		};
 	},
 	computed: {
-		...mapStores(useDebugStore),
+		...mapStores(useDebugStore, useWalletStore),
 		signServerStatusLabel() {
 			return {
 				checking: 'Checking…',
@@ -110,6 +167,18 @@ export default {
 				unreachable: 'Unreachable',
 				unconfigured: 'Not configured',
 			}[this.signServerStatus];
+		},
+		// Ownership, not canWrite: the contract's burn() is `_requireOwner`-gated, stricter
+		// than the writer-approval list canWrite also accounts for elsewhere in this app —
+		// a checksum-normalized compare (same as the CLI's own assertStreamOwner) rather
+		// than a raw string one, since an address can arrive in either case.
+		isOwner() {
+			if (!this.owner || !this.walletStore.isConnected) return false;
+			try {
+				return getAddress(this.owner) === getAddress(this.walletStore.address);
+			} catch {
+				return false;
+			}
 		},
 	},
 	mounted() {

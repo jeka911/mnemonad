@@ -2,13 +2,17 @@
 	<div class="select-layout">
 		<GradientPanel always-expanded dense variant="fill" title="Sample streams">
 			<template #body>
-				<SampleStreams />
+				<div class="q-py-md">
+					<SampleStreams />
+				</div>
 			</template>
 		</GradientPanel>
 
 		<GradientPanel always-expanded dense variant="fill" title="My streams">
 			<template #body>
-				<MyStreams />
+				<div class="q-pb-md">
+					<MyStreams />
+				</div>
 			</template>
 		</GradientPanel>
 	</div>

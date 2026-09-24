@@ -62,14 +62,16 @@ mnemonad info [stream-id] [path] [options]     Show chain/wallet info, or full s
 mnemonad diff <stream-id> <path> [options]     List files added/modified/deleted locally vs the on-chain version
 mnemonad watch <stream-id> <path> [options]    Watch folder: auto-push on changes, auto-pull on remote updates
 mnemonad compact <stream-id> <path> [options]  Truncate old history and push folder as a fresh snapshot
+mnemonad burn <stream-id> --yes [options]      Permanently destroy a stream — irreversible
 ```
 
 `<path>` is always required for any command that touches a folder — there is no need to
 `cd` into the folder first, but there's also no falling back to the current working
 directory: an omitted or mistyped path fails fast with an error rather than silently
-operating on wherever the CLI happened to be run from. The only command that can run with
-no path at all is `mnemonad info` with no stream id either (it just checks your configured
-chain/wallet). A stream id is recognized as a bare decimal number (`123`) or a
+operating on wherever the CLI happened to be run from. The commands that can run with no
+path at all are `mnemonad info` with no stream id either (it just checks your configured
+chain/wallet) and `mnemonad burn`, which never takes one. A stream id is recognized as a
+bare decimal number (`123`) or a
 `0x`-prefixed hex string; anything else in that position is treated as a path. Either form
 works as input — every command's own output always prints the id in hex (`0x` + the full
 32-byte token id), matching the [explorer dApp](https://mnemonad.vercel.app)'s own display.
@@ -99,6 +101,7 @@ Every command prints the installed CLI version as its first line of output.
 | `--debounce <ms>` | `watch`: quiet period in ms before pushing after a local change (default: `1000`) |
 | `--push-only` | `watch`: disable auto-pull |
 | `--pull-only` | `watch`: disable auto-push |
+| `--yes` | Required by `burn` — explicit opt-in for an irreversible action, never assumed |
 | `--help` | Show help |
 
 ### Authentication
@@ -267,6 +270,23 @@ just a faster-replay optimization.
 
 ```bash
 mnemonad compact 123 ~/my-data
+```
+
+### Burn a stream
+
+Permanently destroys the stream: the ERC-721 token and its metadata are gone, and — because
+ids are deterministic — re-creating a stream with the same id afterward does **not** recover
+the old data; the contract deliberately marks a burned id as permanently used. Deployed
+CODE-tier item bytes physically survive on-chain regardless — this removes the stream as a
+usable, readable thing, not necessarily every trace of its bytes. Requires **`--yes`**: run
+without it first to see what would be destroyed (owner, version count, on-chain size) before
+committing.
+
+```bash
+mnemonad burn 123
+# prints stream/chain/versions/size, then refuses to proceed without --yes
+
+mnemonad burn 123 --yes
 ```
 
 ### Repair a corrupt stream with a force snapshot

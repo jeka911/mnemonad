@@ -55,6 +55,7 @@ export async function makeBaseArgs(params = {}) {
 		debounce: 1000,
 		pushOnly: false,
 		pullOnly: false,
+		yes: false,
 		// Not part of the real CLI's args shape — convenience for tests only.
 		accountAddress: clients.account.address,
 	};

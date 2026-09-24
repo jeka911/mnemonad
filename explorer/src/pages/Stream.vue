@@ -36,7 +36,15 @@
 						/>
 					</template>
 				</GradientPanel>
-				<DebugPanel />
+				<DebugPanel
+					v-if="streamInfo"
+					:stream-id="streamInfo.id"
+					:owner="streamInfo.owner"
+					:length="streamInfo.length"
+					:binary-length="streamInfo.binaryLength"
+					@burned="onBurned"
+				/>
+				<DebugPanel v-else />
 			</div>
 
 			<div v-if="streamInfo" class="stream-layout__main">
@@ -305,6 +313,17 @@ export default {
 		clearInterval(this._loadedPollTimer);
 	},
 	methods: {
+		// The stream this page was showing no longer exists — nothing left here to stay
+		// on. /select, same destination the header's own back link already uses, is where
+		// you'd pick a different one.
+		onBurned() {
+			this.$q.notify({
+				type: 'positive',
+				message: 'Stream burned.',
+				position: 'top',
+			});
+			this.$router.push('/select');
+		},
 		async load() {
 			if (!this.mnemonadStore.isDeployed || !this.validId) return;
 			// The URL names a network as well as a stream. If it disagrees with the app's,

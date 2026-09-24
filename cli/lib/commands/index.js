@@ -4,3 +4,4 @@ export { info } from './info.js';
 export { diff } from './diff.js';
 export { watch } from './watch.js';
 export { compact } from './compact.js';
+export { burn } from './burn.js';

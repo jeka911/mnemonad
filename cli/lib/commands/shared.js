@@ -1,4 +1,5 @@
 import { mkdir, writeFile, readFile, readdir, rm } from 'node:fs/promises';
+import { statSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { createHash } from 'node:crypto';
 import { homedir } from 'node:os';
@@ -56,15 +57,53 @@ export function resolveOffloadParams(args, account) {
  * `p` is missing — every command that touches a folder requires the caller to name it
  * explicitly, so a typo'd or omitted `path` never silently operates on whatever directory
  * the CLI happened to be run from.
+ *
+ * `mustExist` additionally requires the folder to be there already. Every command that
+ * *reads* the local folder passes it, because the alternative is worse than an error in
+ * both directions: `push`/`compact` used to surface a raw ENOENT stack trace from deep
+ * inside `readdir`, and `diff` used to treat a missing folder as an empty one and report
+ * every file in the stream as locally deleted — which reads as "your data is gone" rather
+ * than "you typed the wrong path". `pull` is the one command that leaves it off, since
+ * creating the destination is exactly its job.
+ *
+ * @param {?string} p
+ * @param {Object} [options]
+ * @param {boolean} [options.mustExist=false]
  */
-export function resolvePath(p) {
+export function resolvePath(p, { mustExist = false } = {}) {
     if (!p) {
-        const err = new Error('a folder path is required (e.g. `mnemonad <command> ... /path/to/folder`)');
-        err._isUserError = true;
-        throw err;
+        throw userError('a folder path is required (e.g. `mnemonad <command> ... /path/to/folder`)');
     }
-    if (p.startsWith('~')) return join(homedir(), p.slice(1));
-    return resolve(p);
+
+    const resolved = p.startsWith('~') ? join(homedir(), p.slice(1)) : resolve(p);
+    if (!mustExist) return resolved;
+
+    const stat = statOrNull(resolved);
+    if (!stat) {
+        throw userError(
+            `no such folder: ${resolved}\n` +
+            '  Create it first, or use `mnemonad pull <stream-id> <path>` to fetch one into it.'
+        );
+    }
+    if (!stat.isDirectory()) {
+        throw userError(`not a folder: ${resolved}\n  This command syncs a directory, not a single file.`);
+    }
+    return resolved;
+}
+
+/** @returns {?import('node:fs').Stats} null when the path doesn't exist or isn't readable. */
+function statOrNull(path) {
+    try {
+        return statSync(path);
+    } catch {
+        return null;
+    }
+}
+
+/** Whether `path` is an existing directory. For a command that reports on one rather than
+ *  refusing to run without it (see info.js). */
+export function folderExists(path) {
+    return statOrNull(path)?.isDirectory() === true;
 }
 
 /**

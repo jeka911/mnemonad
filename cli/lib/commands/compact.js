@@ -23,7 +23,7 @@ export async function compact(args) {
         throw new Error('stream-id is required for compact');
     }
 
-    const destPath = resolvePath(args.path);
+    const destPath = resolvePath(args.path, { mustExist: true });
     const fsFolder = new FSFolder(destPath, makeExcludes(args));
 
     const counts = await countTree(fsFolder);

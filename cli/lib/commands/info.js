@@ -7,6 +7,7 @@ import {
     localTreeHash,
     unlockStream,
     formatStreamId,
+    folderExists,
 } from './shared.js';
 
 export async function info(args) {
@@ -64,7 +65,16 @@ export async function info(args) {
         console.log('  history starts: ', 'index', mn.firstAvailableIndex, '(earlier history truncated — see `compact`)');
     }
 
+    // Deliberately NOT `{ mustExist: true }` like every other command that reads a folder:
+    // `info` is a read-only report, and "you haven't pulled this anywhere yet" is a state
+    // worth describing rather than refusing over — the stream metadata above is already
+    // printed and still useful on its own.
     const destPath = resolvePath(args.path);
+    if (!folderExists(destPath)) {
+        console.log('\n  local folder:    missing (run `mnemonad pull` to fetch it)');
+        return;
+    }
+
     const localHash = await localTreeHash(destPath);
 
     if (!localHash) {
