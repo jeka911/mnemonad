@@ -107,6 +107,13 @@ export function makeChainClient(args) {
  */
 export function requireWalletClient(client) {
 	if (!client.walletClient) {
-		throw new Error('No signing key. Use --key, --phrase, or MNEMONAD_KEY env var');
+		// Marked as a user error so the CLI boundary prints the message alone: this is the
+		// first thing anyone hits before configuring a key, and a stack trace through
+		// chainClient makes an actionable one-liner look like a crash.
+		const err = new Error(
+			'No signing key. Set the MNEMONAD_KEY env var to a private key, or pass --key / --phrase.'
+		);
+		err._isUserError = true;
+		throw err;
 	}
 }

@@ -1,28 +1,40 @@
 ---
 name: mnemonad
 version: 0.1.1
-description: Agent skill for versioned folder storage and sync on Monad. Push local folders to on-chain append-only streams with content-defined-chunking diffs, pull any past version, encrypt with a password or the owner's wallet, and offload large files to IPFS.
+description: Agent skill for versioned folder storage and sync on Monad. Push local folders to on-chain append-only streams with content-defined-chunking diffs and pull any past version. Streams are created encrypted to the signing wallet by default; password-keyed and public streams are also supported. Large files offload to IPFS.
 keywords: [monad, evm, storage, versioning, sync, ipfs, encryption, blockchain, erc721]
 ---
 
 # mnemonad
 
-Versioned folder storage and sync on **Monad**, with optional **IPFS** offload for large files
-and optional **AES-256-GCM** encryption.
+Versioned folder storage and sync on **Monad**, with **AES-256-GCM** encryption and **IPFS**
+offload for large files.
 
 A folder is stored as an append-only **stream** — an ERC-721 token whose items are
 content-defined-chunking (CDC) diffs. Each push writes one gzip-compressed patch, so only what
 actually changed goes on chain, and any past version can be restored exactly. Items too large
 for on-chain storage are offloaded to IPFS with only a hash and pointer recorded on chain.
 
+> **Default: create streams encrypted to the signing wallet.**
+> ```bash
+> mnemonad push ~/my-data --encrypt --encrypt-with wallet
+> ```
+> Everything on this chain is world-readable, so a stream created without `--encrypt` publishes
+> its contents to anyone who looks. Unless the user has asked for something public or shareable,
+> encrypt to the wallet — it needs no password to manage or leak, and the same `MNEMONAD_KEY`
+> that pushes also reads it back. Public and password-keyed streams are both supported and both
+> useful; see [Choosing how a stream is keyed](#choosing-how-a-stream-is-keyed).
+
 ## When to Use
 
+- **Private, versioned backup of a working folder** — encrypted client-side, before anything
+  leaves the process, and readable only by the key that wrote it
 - **Archive and restore folder snapshots** on chain with full version history
 - **Efficient incremental sync** — only changed chunks are written, not whole files
-- **Encrypted storage** — data is encrypted client-side, before it ever leaves the process
 - **Verify integrity** — pull any version and reconstruct the exact folder state
-- **Publish a public dataset** that anyone can pull with no key and browse in the dApp
 - **Two-way folder sync** against a stream that other machines are also pushing to
+- **Publish a public dataset** that anyone can pull with no key and browse in the dApp —
+  deliberately, by leaving `--encrypt` off
 
 ## When NOT to Use
 
@@ -82,8 +94,16 @@ Testnet MON for gas comes from https://faucet.monad.xyz/.
 
 ## Core concepts
 
-**Streams are public by default.** Anything pushed without `--encrypt` is readable by anyone.
-Encryption is opt-in, chosen once at creation, and permanent — see below.
+**The CLI's own default is public; this skill's default is not.** `mnemonad push` with no
+encryption flags creates a stream anyone can read — the flags are opt-in, and there is no
+setting that changes that. So an agent following this skill passes `--encrypt --encrypt-with
+wallet` explicitly on every stream it creates, unless the user asked for otherwise. Forgetting
+the flags does not produce an error; it produces a public stream.
+
+**How a stream is keyed is decided once, at creation, and is permanent.** There is no
+converting a public stream to an encrypted one later, or re-keying a password stream to a
+wallet. The only escape is creating a new stream and pushing the folder into it — which leaves
+the original contents on chain regardless.
 
 **Stream ids are ERC-721 token ids.** Pass them as decimal or as `0x` hex; every command
 accepts both. Output always prints the hex form (`0x` + 64 digits), which is also what the dApp
@@ -94,17 +114,33 @@ fallback to the current directory, so a mistyped path fails immediately instead 
 syncing the wrong folder. The only exceptions are `mnemonad info` with no stream id, and
 `mnemonad burn`, which takes no folder at all.
 
-### Encryption
+### Choosing how a stream is keyed
 
-Two methods, decided at creation and never guessed for you:
+Three options. **Wallet is the default** — use it unless the user's goal rules it out:
 
-| Method | Flags | Key comes from | Recovery |
+| | Flags | Who can read it | If the credential is lost |
 |---|---|---|---|
-| **Password** | `--encrypt --encrypt-with password --password <pw>` | PBKDF2 over your password + a per-stream salt published on chain | Anyone with the password, from any machine. No reset if lost. |
-| **Wallet** | `--encrypt --encrypt-with wallet` | A signature from the `--key`/`--phrase` account | That account only. No recovery at all if the key is lost. |
+| **Wallet** *(default)* | `--encrypt --encrypt-with wallet` | Only the `--key`/`--phrase` account that created it | Unrecoverable |
+| **Password** | `--encrypt --encrypt-with password --password <pw>` | Anyone with the password, from any machine | Unrecoverable — no reset |
+| **Public** | *(no encryption flags)* | Everyone | N/A — nothing is hidden |
 
-`--password` on its own implies the password method. `--encrypt` without a method is rejected
-rather than guessed, because the two differ in who can ever read the data.
+**Wallet** is the default because it is the option with nothing to manage: no password to
+choose, store, transmit or leak, and the same `MNEMONAD_KEY` already needed to push is what
+reads it back. Its cost is that it is bound to exactly one account forever — lose the key and
+the contents are gone, and no other wallet can ever be granted access.
+
+**Password** is the right choice when the data has to be readable somewhere the key isn't —
+another machine, another person, a teammate — since the password travels independently of the
+wallet. That portability is also the whole risk surface: anyone who learns it can read the
+stream.
+
+**Public** is a deliberate publishing act, not a fallback. Use it when the point *is* that
+anyone can pull the stream with no credential and browse it in the dApp — a sample dataset,
+released documents, anything intended to be shared. Confirm with the user first; on-chain data
+cannot be unpublished, and `burn` does not remove item bytes already deployed as on-chain code.
+
+`--password` on its own implies the password method. `--encrypt` with no method is rejected
+rather than guessed, because the three differ in who can ever read the data.
 
 Encryption applies **only when creating a stream** — `--encrypt` is ignored when pushing to an
 existing one, and an encrypted stream can never be transferred to another owner.
@@ -123,27 +159,32 @@ existing one, and an encrypted stream can never be transferred to another owner.
 
 ### Command examples
 
-#### push (creates a new public stream)
+#### push — creates a new wallet-encrypted stream (the default)
 
 ```bash
-mnemonad push ~/my-data
-# Output: creating new stream on testnet (public) ...
+mnemonad push ~/my-data --encrypt --encrypt-with wallet
+# Output: creating new stream on testnet (encrypted to 0x06bc6420b37a4898424429dcfa236f0065e12279) ...
 #           created: 0x68d9736257f0d2da3c848666a4b36c4b9f18eda7e4dfba655599c47560d8a4b5
 #           version 1 pushed (full snapshot, gzip compressed)
 ```
 
-#### push (encrypted with a password)
+Only this account can ever decrypt it. Nothing to remember, nothing to leak — and no recovery
+if the key is lost. Every later `pull`, `diff`, `info` or `watch` on it needs the same key.
+
+#### push — encrypted with a password instead
 
 ```bash
 mnemonad push ~/my-data --encrypt --password "correct horse battery staple"
-# Anyone who knows the password can read it, from any machine.
+# Readable from any machine by anyone who knows the password.
 ```
 
-#### push (encrypted to the signing wallet)
+#### push — public, no encryption
 
 ```bash
-mnemonad push ~/my-data --encrypt --encrypt-with wallet
-# Only this account can ever decrypt it. No password to leak — and no recovery.
+mnemonad push ~/my-data
+# Output: creating new stream on testnet (public) ...
+# Anyone can read this, permanently. Only do this when publishing is the intent —
+# confirm with the user first.
 ```
 
 #### push (to an existing stream)
@@ -284,20 +325,25 @@ item back only needs `--gateway-url`, which has a working public default.
 
 ## Example workflows
 
-### Workflow 1: create and verify
+### Workflow 1: create and verify (the default path)
 
 ```bash
-# 1. Push a folder — creates the stream
-mnemonad push ~/important-data
+export MNEMONAD_KEY=0xabc123...
+
+# 1. Push a folder — creates the stream, encrypted to this key
+mnemonad push ~/important-data --encrypt --encrypt-with wallet
+#   creating new stream on testnet (encrypted to 0x06bc6420...) ...
 #   created: 0x68d97362...
 #   version 1 pushed (full snapshot, gzip compressed)
 
-# 2. Verify by restoring into a scratch folder
+# 2. Verify by restoring into a scratch folder (same key required)
 mnemonad pull 0x68d97362... ~/verify-tmp
 
 # 3. Compare
 diff -r ~/important-data ~/verify-tmp && echo "identical"
 ```
+
+Record the stream id — it and the key are jointly the only way back to this data.
 
 ### Workflow 2: version history and rollback
 
@@ -311,7 +357,7 @@ mnemonad info 0x68d97362... ~/data          # how many versions, which one is lo
 mnemonad pull 0x68d97362... ~/data-v1 --version 1
 ```
 
-### Workflow 3: publish a public dataset
+### Workflow 3: publish a public dataset (deliberately unencrypted)
 
 ```bash
 mnemonad push ~/dataset
@@ -319,14 +365,19 @@ mnemonad push ~/dataset
 # https://mnemonad.vercel.app/stream/testnet-0x68d97362.../files
 ```
 
-### Workflow 4: private folder, keyed to your wallet
+This is the one case where leaving the encryption flags off is correct rather than an
+oversight — and it is permanent, so confirm the contents are meant to be public first.
+
+### Workflow 4: shared folder, keyed by a password
+
+Use this when the data has to be readable somewhere the signing key isn't — another machine,
+or someone else:
 
 ```bash
-export MNEMONAD_KEY=0xabc123...
-mnemonad push ~/private-notes --encrypt --encrypt-with wallet
+mnemonad push ~/shared-notes --encrypt --password "correct horse battery staple"
 
-# Later, on any machine holding the same key:
-mnemonad pull 0x68d97362... ~/private-notes
+# Anywhere else, with no wallet involved in the read:
+mnemonad pull 0x68d97362... ~/shared-notes --password "correct horse battery staple"
 ```
 
 ### Workflow 5: compact a long history
@@ -345,7 +396,7 @@ mnemonad compact 0x68d97362... ~/data
 
 | Issue | Cause | Solution |
 |---|---|---|
-| **"No signing key. Use --key, --phrase, or MNEMONAD_KEY env var"** | A write (or a wallet-encrypted read) with no credentials | `export MNEMONAD_KEY=0x...`, or pass `--key` / `--phrase` |
+| **"No signing key"** | A write, or a wallet-encrypted read, with no credentials | `export MNEMONAD_KEY=0x...`, or pass `--key` / `--phrase` |
 | **"a folder path is required"** | The command touches a folder but no path was given | Pass it explicitly — there is no current-directory fallback |
 | **"stream-id is required for ..."** | Command needs a stream id | Pass it first: `mnemonad pull 0x... ~/dest` |
 | **"This stream is encrypted with a password. Provide --password to decrypt."** | Password-keyed stream, no password given | Add `--password <pw>` |
@@ -388,9 +439,23 @@ mnemonad compact 0x68d97362... ~/data
   recording the stream id, version and file hashes — that file is the local record tying the
   folder back to its stream.
 
-- **Never choose the encryption method for the user.** Public, password and wallet-keyed are
-  three different security models, the choice is permanent, and two of them have no recovery.
-  Ask; the CLI deliberately refuses to guess.
+- **Create streams with `--encrypt --encrypt-with wallet` by default.** Leaving the flags off
+  is not a neutral choice — it publishes the folder to anyone who looks, permanently, and the
+  CLI will not warn you. Pass them on every creation unless the user has said the data should
+  be public or readable without their key.
+
+- **Say what you created, in one line, the first time.** "Encrypted to your wallet — only this
+  key can read it, and there's no recovery if it's lost." The user needs to know both halves
+  before they put anything real in it, and it is far cheaper to say at creation than to
+  discover at restore.
+
+- **Making a stream public requires the user's explicit intent.** Confirm before pushing
+  without `--encrypt`. On-chain data cannot be unpublished, and `burn` does not remove item
+  bytes already deployed as on-chain code.
+
+- **Use the password method when the user names a reader who isn't them** — another machine,
+  a teammate, a recipient. That is what it's for; a wallet-keyed stream cannot be shared with
+  anyone, ever.
 
 - **Never put a private key in a command line.** Use `MNEMONAD_KEY`. A key in a flag lands in
   shell history and process listings, and agent transcripts often get shared.
