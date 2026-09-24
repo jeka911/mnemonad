@@ -17,12 +17,18 @@ import {
     resolveOffloadParams,
     formatStreamId,
     streamIdsEqual,
+    discoverStreamId,
 } from './shared.js';
 
 export async function push(args) {
+    const destPath = resolvePath(args.path, { mustExist: true });
+
+    // With --manifest and no id, a folder pushed before already has one recorded — reuse it
+    // rather than falling into the "no id" branch below and creating a second, unrelated
+    // stream for the same folder.
+    await discoverStreamId(args, destPath);
     let streamId = args.streamId;
 
-    const destPath = resolvePath(args.path, { mustExist: true });
     const fsFolder = new FSFolder(destPath, makeExcludes(args));
 
     const counts = await countTree(fsFolder);

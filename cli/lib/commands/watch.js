@@ -15,6 +15,7 @@ import {
     unlockStream,
     resolveOffloadParams,
     formatStreamId,
+    discoverStreamId,
 } from './shared.js';
 
 function timestamp() {
@@ -28,9 +29,12 @@ function hashesEqual(a, b) {
 }
 
 export async function watch(args) {
-    if (!args.streamId) throw new Error('stream-id is required for watch');
-
     const cwd = resolvePath(args.path, { mustExist: true });
+
+    // With --manifest and no id, a folder pulled/pushed before already has one recorded —
+    // no need to require it again.
+    await discoverStreamId(args, cwd);
+    if (!args.streamId) throw new Error('stream-id is required for watch');
     const debounceMs = args.debounce ?? 5000;
     const pollIntervalMs = (args.pollInterval ?? 2) * 1000;
     const pushEnabled = !args.pullOnly;

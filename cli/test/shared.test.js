@@ -1,5 +1,8 @@
 import { describe, it, expect } from 'vitest';
-import { resolvePath, formatStreamId, streamIdsEqual } from '../lib/commands/shared.js';
+import { mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { resolvePath, formatStreamId, streamIdsEqual, discoverStreamId, writeManifest } from '../lib/commands/shared.js';
 
 describe('resolvePath', () => {
 	it('throws a friendly, actionable error instead of falling back to cwd when path is missing', () => {
@@ -124,5 +127,50 @@ describe('streamIdsEqual', () => {
 	it('is the guard push.js\'s manifest check needs: a bare string compare would wrongly call these different', () => {
 		expect('123' === '0x7b').toBe(false); // the bug this function exists to avoid
 		expect(streamIdsEqual('123', '0x7b')).toBe(true); // the fix
+	});
+});
+
+describe('discoverStreamId', () => {
+	async function withTempDir(fn) {
+		const dir = await mkdtemp(join(tmpdir(), 'mnemonad-discover-'));
+		try {
+			return await fn(dir);
+		} finally {
+			await rm(dir, { recursive: true, force: true });
+		}
+	}
+
+	it('leaves an already-given id alone, without touching the manifest at all', async () => {
+		const args = { streamId: '123', manifest: true };
+		const id = await discoverStreamId(args, '/does/not/exist');
+		expect(id).toBe('123');
+		expect(args.streamId).toBe('123');
+	});
+
+	it('does nothing when --manifest was not passed, even if a manifest file exists', async () => {
+		await withTempDir(async (dir) => {
+			await writeManifest(dir, { streamId: formatStreamId('123'), version: 1, files: {} });
+			const args = { streamId: null, manifest: false };
+			expect(await discoverStreamId(args, dir)).toBe(null);
+			expect(args.streamId).toBe(null);
+		});
+	});
+
+	it('stays null when --manifest is set but no .mnemonad exists yet (first push/pull)', async () => {
+		await withTempDir(async (dir) => {
+			const args = { streamId: null, manifest: true };
+			expect(await discoverStreamId(args, dir)).toBe(null);
+			expect(args.streamId).toBe(null);
+		});
+	});
+
+	it('recovers and sets the id from .mnemonad when --manifest is set and no id was given', async () => {
+		await withTempDir(async (dir) => {
+			await writeManifest(dir, { streamId: formatStreamId('123'), version: 2, files: {} });
+			const args = { streamId: null, manifest: true };
+			const id = await discoverStreamId(args, dir);
+			expect(id).toBe(formatStreamId('123'));
+			expect(args.streamId).toBe(formatStreamId('123'));
+		});
 	});
 });

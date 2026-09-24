@@ -123,4 +123,31 @@ describe('pull', () => {
 		const baseArgs = await makeBaseArgs();
 		await expect(pull({ ...baseArgs, streamId: null, path: destDir })).rejects.toThrow(/stream-id is required/);
 	});
+
+	it('discovers the stream id from .mnemonad when --manifest is set and no id is given', async () => {
+		await writeTestFile(srcDir, 'readme.md', 'from manifest\n');
+		const baseArgs = await makeBaseArgs();
+		// --manifest writes .mnemonad into srcDir itself, recording the id that push created.
+		await push({ ...baseArgs, path: srcDir, manifest: true });
+
+		// A missing id, resolved purely from srcDir's own manifest — pulling back into the
+		// same folder is a no-op sync, but it proves the id never had to be typed again.
+		const { lines } = await captureLogs(() =>
+			pull({ ...baseArgs, streamId: null, path: srcDir, manifest: true })
+		);
+		expect(lines.some((l) => l.includes('using stream id from .mnemonad manifest'))).toBe(true);
+
+		const destTree = await readTree(srcDir);
+		expect(destTree['readme.md'].toString('utf8')).toBe('from manifest\n');
+	}, TX_TIMEOUT);
+
+	it('still requires an explicit id when --manifest is not set, even with a manifest on disk', async () => {
+		await writeTestFile(srcDir, 'readme.md', 'from manifest\n');
+		const baseArgs = await makeBaseArgs();
+		await push({ ...baseArgs, path: srcDir, manifest: true });
+
+		await expect(
+			pull({ ...baseArgs, streamId: null, path: srcDir, manifest: false })
+		).rejects.toThrow(/stream-id is required/);
+	}, TX_TIMEOUT);
 });

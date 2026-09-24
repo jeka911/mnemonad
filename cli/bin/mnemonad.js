@@ -81,7 +81,9 @@ Options:
                             signs for it). Implied by --password; required otherwise
   --password <pw>           Password to encrypt a new stream with, or decrypt an existing one
   --pinata-jwt <jwt>        Pinata JWT for IPFS offload of large files (or PINATA_JWT env var)
-  --manifest                Write/use .mnemonad manifest for faster change detection
+  --manifest                Write/use .mnemonad manifest for faster change detection.
+                            With no stream-id given, every command recovers it from an
+                            existing .mnemonad in <path> instead of requiring it explicitly
   --force-snapshot          Push a full snapshot regardless of prior history (repairs corrupt streams)
   --poll-interval <s>       Watch: seconds between remote checks (default: 2)
   --debounce <ms>           Watch: ms quiet period before pushing after a change (default: 1000)

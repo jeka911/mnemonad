@@ -312,6 +312,32 @@ export async function writeManifest(destPath, manifest) {
     await writeFile(join(destPath, '.mnemonad'), JSON.stringify(manifest, null, 2));
 }
 
+/**
+ * Recovers a stream id from the folder's own `.mnemonad` manifest when `--manifest` was
+ * passed and no id was given on the command line — the whole point of writing the manifest
+ * is that the id doesn't have to be remembered or re-typed for every later command on the
+ * same folder. Mutates `args.streamId` in place (every call site reads it back off `args`
+ * afterward) and is a no-op whenever an id was already given or `--manifest` wasn't passed —
+ * so it's safe to call unconditionally right after resolving the folder path.
+ *
+ * Silent when there's nothing to find (no `.mnemonad` yet, e.g. a folder's very first push,
+ * or a manifest with no `streamId`) — the caller's own "stream-id is required" error covers
+ * that case with the wording appropriate to its command.
+ *
+ * @param {Object} args - parsed CLI args, mutated in place
+ * @param {string} destPath - resolved folder path to look for `.mnemonad` in
+ * @returns {Promise<?string>} the resolved stream id, or whatever `args.streamId` already was
+ */
+export async function discoverStreamId(args, destPath) {
+    if (args.streamId || !args.manifest) return args.streamId;
+    const manifest = await readManifest(destPath);
+    if (manifest?.streamId) {
+        console.log('  using stream id from .mnemonad manifest:', formatStreamId(manifest.streamId));
+        args.streamId = manifest.streamId;
+    }
+    return args.streamId;
+}
+
 export const DISK_EXCLUDES = new Set(['.mnemonad', '.git', '.DS_Store', 'node_modules']);
 
 export async function hashDiskTree(dirPath, prefix = []) {

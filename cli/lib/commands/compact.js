@@ -10,6 +10,7 @@ import {
     assertStreamOwner,
     unlockStream,
     resolveOffloadParams,
+    discoverStreamId,
 } from './shared.js';
 
 /**
@@ -19,11 +20,15 @@ import {
  * to it.
  */
 export async function compact(args) {
+    const destPath = resolvePath(args.path, { mustExist: true });
+
+    // With --manifest and no id, a folder pulled/pushed before already has one recorded —
+    // no need to require it again.
+    await discoverStreamId(args, destPath);
     if (!args.streamId) {
         throw new Error('stream-id is required for compact');
     }
 
-    const destPath = resolvePath(args.path, { mustExist: true });
     const fsFolder = new FSFolder(destPath, makeExcludes(args));
 
     const counts = await countTree(fsFolder);

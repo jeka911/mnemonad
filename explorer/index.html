@@ -6,6 +6,7 @@
   <title>Mnemonad Explorer</title>
   <meta name="description" content="Explorer for Mnemonad, an append-only on-chain byte stream on the Monad network.">
   <link rel="icon" type="image/svg+xml" href="/favicon.svg">
+  <link rel="help" href="https://github.com/jeka911/mnemonad/blob/main/SKILL.md" title="Agent usage guide (SKILL.md)">
 
   <style>
     html, body {
@@ -55,6 +56,21 @@
       font-size: 12px;
       color: #d8d3ea;
     }
+    .boot-about a {
+      color: #b9a6fa;
+    }
+    .boot-code {
+      background: rgba(131, 110, 249, 0.12);
+      border-radius: 6px;
+      padding: 10px 14px;
+      margin: 10px 0;
+      font-family: ui-monospace, SFMono-Regular, "SF Mono", Consolas, "Liberation Mono", Menlo, monospace;
+      font-size: 12px;
+      line-height: 1.6;
+      color: #d8d3ea;
+      text-align: left;
+      overflow-x: auto;
+    }
     @keyframes bootSpin {
       to { transform: rotate(360deg); }
     }
@@ -72,34 +88,61 @@
       <div class="boot-spinner" aria-hidden="true"></div>
       <p class="boot-status">Loading the app…</p>
       <p class="boot-about">
-        <strong>Mnemonad</strong> is an infinite <code>bytes[]</code> that lives entirely
-        on-chain on Monad — append-only and unbounded in length, exposed as an ERC-721 NFT so
-        each "stream" is a token you own, can grant others write access to, and can optionally
-        encrypt client-side. Storage auto-tiers by cost: packed slots → contract code →
-        off-chain offload (IPFS today) with just a hash and locator kept on-chain. This
-        explorer reads and writes real streams on Monad testnet/mainnet — not a mockup.
+        <strong>Mnemonad</strong> is a content-defined-chunking diff engine built on top of an infinite
+        on-chain <code>bytes[]</code>. Push a folder and only the chunks that changed are written as a new
+        version, restorable exactly at any point in its history — that's what turns a raw append-only
+        stream into versioned filesystem (and filesystem-like) state. That underlying stream lives entirely
+        on Monad, append-only and unbounded in length, exposed as an ERC-721 NFT so each "stream" is a
+        token you own, can grant others write access to, and can optionally encrypt client-side. Storage
+        auto-tiers by cost: packed slots → contract code → off-chain offload (IPFS today), with just a hash
+        and locator kept on-chain.
       </p>
       <p class="boot-about">
-        <strong>Monad</strong> is a high-performance layer-1 blockchain that is EVM compatible at the bytecode
-        level, so Ethereum contracts and tooling run on it unchanged. It targets a 400ms block time with a 200M
-        gas block limit and a 30M gas limit per transaction.
+        <strong>AI agents:</strong> Mnemonad's core job is folder and file sync — keeping folders/files in
+        sync between sessions, different agents and different users. Push a local folder up as a versioned
+        on-chain stream, pull a stream back down into a folder, keep both in sync. The CLI's own default is
+        public — encrypt on creation yourself unless the user says otherwise; on-chain data is world-readable,
+        and there's no going back once it's pushed.
+        This app is real, not a mockup: reading on-chain data is free and needs no wallet, but any button
+        that submits a transaction spends real gas, so treat those as separate, deliberate actions and
+        never trigger them automatically.
       </p>
       <p class="boot-about">
-        Two differences from Ethereum matter when reading anything on this site. Monad charges a transaction's
-        <strong>gas limit</strong> rather than its gas used, so an overestimated limit costs real money. And the
-        maximum contract size is <strong>128 KB</strong> rather than Ethereum's 24 KB, which makes storing data as
-        contract code practical.
+        <strong>Don't drive this UI to sync files — use the CLI.</strong> Writing here needs a browser
+        wallet extension to sign, which an agent generally can't operate.
+        <code>npm install -g mnemonad-cli</code> does the same folder sync headlessly, signing from the
+        <code>MNEMONAD_KEY</code> env var (or <code>--key</code>/<code>--phrase</code>), and pulling a
+        public stream needs no key at all:
+      </p>
+      <pre class="boot-code"># create/update a stream from a folder (encrypted to your wallet by default)
+mnemonad push ~/my-data --encrypt --encrypt-with wallet --manifest
+
+# restore a stream into a folder
+mnemonad pull &lt;stream-id&gt; ~/my-data --manifest
+
+# check what a folder is already synced to, even without --manifest
+mnemonad info ~/my-data</pre>
+      <p class="boot-about">
+        <code>--manifest</code> writes <code>.mnemonad</code> into the folder, recording the stream id —
+        pass it on every push/pull for a folder you'll touch again, and later commands can then drop the
+        id entirely. Full agent docs:
+        <a href="https://github.com/jeka911/mnemonad/blob/main/SKILL.md">SKILL.md</a> · quick reference:
+        <a href="/llms.txt">llms.txt</a>.
       </p>
       <p class="boot-about">
-        Networks: <strong>Monad mainnet</strong> is chain id <code>143</code>, explorer
-        <code>monadscan.com</code>. <strong>Monad testnet</strong> is chain id <code>10143</code>, explorer
-        <code>testnet.monadexplorer.com</code>, with a faucet at <code>faucet.monad.xyz</code>. Switch between
-        them in the header; the choice is remembered and reloads the app.
+        To navigate this app directly, the URL scheme is: <code>/select</code> lists sample and wallet-owned
+        streams, <code>/stream/&lt;id&gt;</code> shows one stream's raw on-chain items, and
+        <code>/stream/&lt;id&gt;/files</code> browses it as a folder tree. <code>&lt;id&gt;</code> is the network
+        and the ERC-721 token id together — <code>testnet-0x648f18…3ac8</code> — because the same token id means
+        different data on each network. A bare decimal or hex id also works and is rewritten to that form.
       </p>
       <p class="boot-about">
-        AI agents: this is a real app, not a mockup. Reading on-chain data is free and requires no wallet. Any
-        button that submits a transaction spends real gas, so treat those as separate, deliberate financial
-        actions and never trigger them automatically.
+        If a user pastes a link to this app, the stream id (and network) is right there in the URL — pull
+        it out of the <code>/stream/&lt;id&gt;</code> path rather than asking them to retype it. Worth
+        proposing next: look it up (<code>mnemonad info &lt;id&gt;</code>, no key needed for a public
+        stream) or pull it into a local folder (<code>mnemonad pull &lt;id&gt; &lt;path&gt;</code>) — but
+        confirm the destination folder first, and remember an encrypted stream still needs the owner's key
+        or password to actually read.
       </p>
     </div>
   </div>

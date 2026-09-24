@@ -82,6 +82,85 @@ describe('info', () => {
 		expect(lines.some((l) => l.includes('history starts:') && l.includes('truncated'))).toBe(true);
 	}, TX_TIMEOUT);
 
+	it('discovers the stream id from .mnemonad and shows full stream info when --manifest is set and no id is given', async () => {
+		await writeTestFile(srcDir, 'a.txt', 'content\n');
+		const baseArgs = await makeBaseArgs();
+		const { lines: pushLines } = await captureLogs(() =>
+			push({ ...baseArgs, path: srcDir, manifest: true })
+		);
+		const streamId = pushLines.find((l) => l.includes('created:')).split('created:')[1].trim();
+
+		const { lines } = await captureLogs(() =>
+			info({ ...baseArgs, streamId: null, path: srcDir, manifest: true })
+		);
+		expect(lines.some((l) => l.includes('using stream id from .mnemonad manifest'))).toBe(true);
+		expect(lines.some((l) => l.includes('stream:') && l.includes(streamId))).toBe(true);
+		expect(lines.some((l) => l.includes('versions:') && l.includes('1'))).toBe(true);
+		expect(lines.some((l) => l.includes('status:') && l.includes('up to date'))).toBe(true);
+	}, TX_TIMEOUT);
+
+	it('still just shows chain/wallet when --manifest is set but no path is given', async () => {
+		const baseArgs = await makeBaseArgs();
+		const { lines } = await captureLogs(() => info({ ...baseArgs, streamId: null, path: null, manifest: true }));
+		expect(lines.some((l) => l.includes('chain:'))).toBe(true);
+		expect(lines.some((l) => l.includes('stream:'))).toBe(false);
+	});
+
+	it('notes an available manifest and its id when no id is given and --manifest is not set', async () => {
+		await writeTestFile(srcDir, 'a.txt', 'content\n');
+		const baseArgs = await makeBaseArgs();
+		const { lines: pushLines } = await captureLogs(() =>
+			push({ ...baseArgs, path: srcDir, manifest: true })
+		);
+		const streamId = pushLines.find((l) => l.includes('created:')).split('created:')[1].trim();
+
+		// No --manifest this time, and no id — still returns early (just chain/wallet) for
+		// the on-chain report, but should say a manifest is sitting right there unused.
+		const { lines } = await captureLogs(() =>
+			info({ ...baseArgs, streamId: null, path: srcDir, manifest: false })
+		);
+		expect(lines.some((l) => l.includes('manifest:') && l.includes(streamId) && l.includes('pass --manifest'))).toBe(true);
+		expect(lines.some((l) => l.includes('stream:'))).toBe(false);
+	}, TX_TIMEOUT);
+
+	it('notes when an explicitly-given id differs from the folder\'s own manifest', async () => {
+		await writeTestFile(srcDir, 'a.txt', 'content\n');
+		const baseArgs = await makeBaseArgs();
+		const { lines: pushLines } = await captureLogs(() =>
+			push({ ...baseArgs, path: srcDir, manifest: true })
+		);
+		const manifestStreamId = pushLines.find((l) => l.includes('created:')).split('created:')[1].trim();
+
+		// A second, unrelated stream, created without touching srcDir's manifest.
+		const otherDir = await makeTempDir();
+		try {
+			await writeTestFile(otherDir, 'b.txt', 'other stream\n');
+			const otherStreamId = await pushFolder(baseArgs, otherDir);
+			expect(otherStreamId).not.toBe(manifestStreamId);
+
+			const { lines } = await captureLogs(() =>
+				info({ ...baseArgs, streamId: otherStreamId, path: srcDir })
+			);
+			expect(lines.some((l) =>
+				l.includes('manifest:') && l.includes(manifestStreamId) && l.includes('differs from the id given') && l.includes(otherStreamId)
+			)).toBe(true);
+		} finally {
+			await cleanupDir(otherDir);
+		}
+	}, TX_TIMEOUT);
+
+	it('says nothing extra when the given id already matches the folder\'s own manifest', async () => {
+		await writeTestFile(srcDir, 'a.txt', 'content\n');
+		const baseArgs = await makeBaseArgs();
+		const { lines: pushLines } = await captureLogs(() =>
+			push({ ...baseArgs, path: srcDir, manifest: true })
+		);
+		const streamId = pushLines.find((l) => l.includes('created:')).split('created:')[1].trim();
+
+		const { lines } = await captureLogs(() => info({ ...baseArgs, streamId, path: srcDir }));
+		expect(lines.some((l) => l.includes('manifest:'))).toBe(false);
+	}, TX_TIMEOUT);
+
 	it('declines to compare against an encrypted stream without --password', async () => {
 		await writeTestFile(srcDir, 'secret.txt', 'shh\n');
 		const baseArgs = await makeBaseArgs();

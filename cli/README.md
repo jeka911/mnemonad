@@ -95,7 +95,7 @@ Every command prints the installed CLI version as its first line of output.
 | `--encrypt-with <method>` | How to key it: `password` (needs `--password`), or `wallet` — the `--key`/`--phrase` account signs for it, and only that account can ever decrypt it. Implied by `--password` |
 | `--password <pw>` | Password to encrypt a new stream with, or decrypt an existing one |
 | `--pinata-jwt <jwt>` | Pinata JWT for IPFS offload of large files (or `PINATA_JWT` env var) |
-| `--manifest` | Write/use `.mnemonad` manifest for faster change detection |
+| `--manifest` | Write/use `.mnemonad` manifest for faster change detection. With no stream-id given, every command recovers it from an existing `.mnemonad` in the folder instead of requiring it explicitly |
 | `--force-snapshot` | Push a full snapshot regardless of prior history (repairs a corrupt stream) |
 | `--poll-interval <s>` | `watch`: seconds between remote version checks (default: `2`) |
 | `--debounce <ms>` | `watch`: quiet period in ms before pushing after a local change (default: `1000`) |
@@ -238,6 +238,23 @@ local changes vs chain (what push would apply):
 mnemonad push 123 ~/my-data --manifest
 # subsequent pushes are skipped when nothing has changed locally
 ```
+
+`--manifest` writes `.mnemonad` into the folder, recording the stream id, version and file
+hashes. With it, later commands on the same folder don't need the id typed again:
+
+```bash
+mnemonad push ~/my-data --manifest          # no id — read from .mnemonad
+mnemonad pull ~/my-data --manifest          # same
+mnemonad diff ~/my-data --manifest          # same
+```
+
+If no id is given and there's no `.mnemonad` yet (or `--manifest` wasn't passed), the usual
+`stream-id is required` error is thrown.
+
+`info` is the one exception that doesn't require `--manifest` to react to a manifest: being
+read-only, it always peeks at `.mnemonad` in `<path>` and reports what it finds — a note that
+one's available (with its id) if you left `--manifest` off, or a note if the id you gave
+doesn't match the one recorded in the folder's own manifest.
 
 ### Watch a folder (auto push + pull)
 

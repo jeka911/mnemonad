@@ -17,7 +17,7 @@ for on-chain storage are offloaded to IPFS with only a hash and pointer recorded
 
 > **Default: create streams encrypted to the signing wallet.**
 > ```bash
-> mnemonad push ~/my-data --encrypt --encrypt-with wallet
+> mnemonad push ~/my-data --encrypt --encrypt-with wallet --manifest
 > ```
 > Everything on this chain is world-readable, so a stream created without `--encrypt` publishes
 > its contents to anyone who looks. Unless the user has asked for something public or shareable,
@@ -145,6 +145,29 @@ rather than guessed, because the three differ in who can ever read the data.
 Encryption applies **only when creating a stream** — `--encrypt` is ignored when pushing to an
 existing one, and an encrypted stream can never be transferred to another owner.
 
+### Use `--manifest`, and use `info` to find a folder's stream id
+
+The stream id is the only handle to a folder's data — there is no lookup by name, and an id
+that was never captured anywhere durable is gone for good. **Pass `--manifest` on every push
+and pull for any folder that will be touched again**, not just the first one. It writes
+`.mnemonad` into the folder (stream id, version, file hashes) and costs nothing to keep
+around.
+
+Before assuming a folder isn't synced to a stream yet, check it with `info` — safe and
+side-effect-free, even without `--manifest`:
+
+```bash
+mnemonad info ~/my-data
+# Reports whether a .mnemonad manifest exists in ~/my-data and what stream id it names,
+# even though no --manifest flag was passed.
+```
+
+With `--manifest`, any command resolves a missing id from `.mnemonad` automatically —
+`mnemonad info ~/my-data --manifest`, or `push`/`pull`/`diff`/`watch`/`compact` the same way,
+logged as `using stream id from .mnemonad manifest: 0x...`. And if an id is already in hand
+from elsewhere, `info` flags it when it doesn't match the folder's own manifest, rather than
+silently trusting either one.
+
 ## API Surface
 
 | Command | Arguments | Use case |
@@ -162,7 +185,7 @@ existing one, and an encrypted stream can never be transferred to another owner.
 #### push — creates a new wallet-encrypted stream (the default)
 
 ```bash
-mnemonad push ~/my-data --encrypt --encrypt-with wallet
+mnemonad push ~/my-data --encrypt --encrypt-with wallet --manifest
 # Output: creating new stream on testnet (encrypted to 0x06bc6420b37a4898424429dcfa236f0065e12279) ...
 #           created: 0x68d9736257f0d2da3c848666a4b36c4b9f18eda7e4dfba655599c47560d8a4b5
 #           version 1 pushed (full snapshot, gzip compressed)
@@ -170,6 +193,8 @@ mnemonad push ~/my-data --encrypt --encrypt-with wallet
 
 Only this account can ever decrypt it. Nothing to remember, nothing to leak — and no recovery
 if the key is lost. Every later `pull`, `diff`, `info` or `watch` on it needs the same key.
+`--manifest` writes `.mnemonad` into the folder recording the stream id — without it, the id
+exists only in this command's output.
 
 #### push — encrypted with a password instead
 
@@ -202,6 +227,15 @@ mnemonad push 0x68d97362... ~/my-data --manifest
 # Subsequent pushes compare against it instead of replaying the chain.
 ```
 
+#### push/pull without an id, once a manifest exists
+
+```bash
+mnemonad push ~/my-data --manifest
+# No id needed — read from .mnemonad, written by the wallet-encrypted push above.
+mnemonad pull ~/my-data --manifest
+# Same. Works for diff, watch, compact and info too, wherever the id is omitted.
+```
+
 #### push (full snapshot instead of a diff)
 
 ```bash
@@ -212,7 +246,7 @@ mnemonad push 0x68d97362... ~/my-data --force-snapshot
 #### pull (latest, or a specific version)
 
 ```bash
-mnemonad pull 0x68d97362... ~/restored
+mnemonad pull 0x68d97362... ~/restored --manifest
 mnemonad pull 0x68d97362... ~/restored --version 3
 ```
 
@@ -295,7 +329,7 @@ readable thing.
 | `--version` | Number | latest | `pull`/`diff`/`info`: use a specific version |
 | `--exclude` | Comma-separated patterns | — | Extra patterns to exclude from sync |
 | `--no-compress` | — | gzip on | Disable gzip compression |
-| `--manifest` | — | off | Write/use `.mnemonad` for faster change detection |
+| `--manifest` | — | off | Write/use `.mnemonad` for faster change detection; resolves a missing stream-id from it too |
 | `--force-snapshot` | — | off | Push a full snapshot regardless of history (repairs a corrupt stream) |
 | `--gateway-url` | URL | Pinata public gateway | IPFS gateway for reading offloaded items |
 | `--presign-url` | URL | deployed presign server | Paid IPFS uploads with no Pinata credential of your own |
@@ -433,11 +467,13 @@ mnemonad compact 0x68d97362... ~/data
   `https://mnemonad.vercel.app/stream/<network>-0x<id>/files`. The id is printed as hex; use it
   verbatim.
 
-- **The stream id is the only handle to the data — surface it immediately on creation.** There
-  is no lookup by name and no way to recover an id you never recorded. On a first push, show
-  the id prominently and suggest `--manifest`, which writes `.mnemonad` into the folder
-  recording the stream id, version and file hashes — that file is the local record tying the
-  folder back to its stream.
+- **Default to `--manifest` on every push and pull.** It writes `.mnemonad` into the folder,
+  recording the stream id, version and file hashes — the local record tying the folder back
+  to its stream, and subsequent pushes compare against it instead of replaying the chain.
+  With it, a later command on the same folder can drop the id entirely —
+  `mnemonad push ~/my-data --manifest`, `mnemonad pull ~/my-data --manifest` — and every
+  command that touches a folder resolves it from `.mnemonad` when no id is given. Without
+  `--manifest`, the id lives only in that one push's output and there is no lookup by name.
 
 - **Create streams with `--encrypt --encrypt-with wallet` by default.** Leaving the flags off
   is not a neutral choice — it publishes the folder to anyone who looks, permanently, and the

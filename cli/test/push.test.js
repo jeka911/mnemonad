@@ -106,6 +106,26 @@ describe('push', () => {
 		expect(lines.some((l) => l.includes('no changes since last pull, nothing to push'))).toBe(true);
 	}, TX_TIMEOUT);
 
+	it('reuses the stream id from .mnemonad when --manifest is set and no id is given, instead of creating a second stream', async () => {
+		await writeTestFile(srcDir, 'a.txt', 'version 1\n');
+		const baseArgs = await makeBaseArgs();
+
+		const first = { ...baseArgs, path: srcDir, manifest: true };
+		const { lines: firstLines } = await captureLogs(() => push(first));
+		const streamId = firstLines.find((l) => l.includes('created:')).split('created:')[1].trim();
+
+		await writeTestFile(srcDir, 'a.txt', 'version 2\n');
+		const second = { ...baseArgs, path: srcDir, streamId: null, manifest: true };
+		const { lines: secondLines } = await captureLogs(() => push(second));
+
+		expect(secondLines.some((l) => l.includes('using stream id from .mnemonad manifest'))).toBe(true);
+		expect(secondLines.some((l) => l.includes('created:'))).toBe(false);
+		expect(secondLines.some((l) => l.includes('stream:') && l.includes(streamId))).toBe(true);
+
+		const manifestRaw = await readTestFile(srcDir, '.mnemonad');
+		expect(JSON.parse(manifestRaw.toString('utf8')).streamId).toBe(streamId);
+	}, TX_TIMEOUT);
+
 	it('refuses to push to a stream owned by someone else', async () => {
 		await writeTestFile(srcDir, 'a.txt', 'mine\n');
 		const baseArgs = await makeBaseArgs();

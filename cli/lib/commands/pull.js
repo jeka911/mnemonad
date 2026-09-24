@@ -9,15 +9,20 @@ import {
     writeManifest,
     unlockStream,
     formatStreamId,
+    discoverStreamId,
 } from './shared.js';
 
 export async function pull(args) {
-    if (!args.streamId) {
-        throw new Error('stream-id is required for pull');
-    }
     // Resolved up front (throws if missing) so a missing path fails fast, before any chain
     // work — see resolvePath()'s own comment for why this is never defaulted to cwd.
     const destPath = resolvePath(args.path);
+
+    // With --manifest and no id, a folder pulled/pushed before already has one recorded —
+    // no need to require it again.
+    await discoverStreamId(args, destPath);
+    if (!args.streamId) {
+        throw new Error('stream-id is required for pull');
+    }
 
     const client = makeChainClient(args);
 

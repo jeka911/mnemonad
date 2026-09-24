@@ -10,6 +10,7 @@ import {
     unlockStream,
     formatStreamId,
     folderExists,
+    discoverStreamId,
 } from './shared.js';
 
 export function compareFileMaps(localFiles, remoteFiles) {
@@ -38,9 +39,6 @@ export function compareFileMaps(localFiles, remoteFiles) {
 }
 
 export async function diff(args) {
-    if (!args.streamId) {
-        throw new Error('stream-id is required for diff');
-    }
     // Resolved up front (throws if missing) so a missing path fails fast, before any chain
     // work — see resolvePath()'s own comment for why this is never defaulted to cwd.
     //
@@ -50,6 +48,13 @@ export async function diff(args) {
     // "everything deleted" for a folder that never existed reads as data loss rather than as
     // a wrong path.
     const destPath = resolvePath(args.path);
+
+    // With --manifest and no id, a folder pulled/pushed before already has one recorded —
+    // no need to require it again.
+    await discoverStreamId(args, destPath);
+    if (!args.streamId) {
+        throw new Error('stream-id is required for diff');
+    }
 
     const client = makeChainClient(args);
 
