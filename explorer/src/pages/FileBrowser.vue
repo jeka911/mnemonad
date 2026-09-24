@@ -78,8 +78,11 @@
 				/>
 			</template>
 			<template #body>
-				<div v-if="!mnemonadStore.isDeployed" class="state">
+				<div v-if="!mnemonadStore.isDeployed && !switchingNetwork" class="state">
 					<p>Mnemonad isn't deployed on {{ activeNetwork.label }}.</p>
+				</div>
+				<div v-else-if="switchingNetwork" class="state">
+					<q-spinner color="primary" size="28px" />
 				</div>
 				<div v-else-if="!validId" class="state">
 					<p>Not a valid stream id.</p>
@@ -253,6 +256,11 @@ export default {
 		streamId: function() {
 			return this.routeStream?.id ?? null;
 		},
+		// True while the URL names a specific network other than the one the app booted on —
+		// see Stream.vue's own copy of this computed for the full reasoning.
+		switchingNetwork: function() {
+			return !!(this.routeStream?.networkId && this.routeStream.networkId !== this.activeNetwork.id);
+		},
 		// Guarded on `validId` because the route param reaches here unvalidated: the invalid-id
 		// branch renders the header too, and the raw param is all there is to show for it.
 		formattedId: function() {
@@ -294,11 +302,14 @@ export default {
 		// Exposed for the template: an Options-API render function can't see module imports.
 		streamPath,
 		async load() {
-			if (!this.mnemonadStore.isDeployed || !this.validId) return;
+			if (!this.validId) return;
 			// The URL names a network as well as a stream. If it disagrees with the app's,
 			// this rewrites or reloads and the page renders again against the corrected URL —
-			// nothing to load in this pass.
+			// nothing to load in this pass. Checked before isDeployed: the network the app
+			// happens to be on might have no contract at all, which must not block switching
+			// to the one the URL actually asks for.
 			if (syncStreamRouteNetwork(this.$route, this.$router, this.routeStream)) return;
+			if (!this.mnemonadStore.isDeployed) return;
 			this.loading = true;
 			this.error = null;
 			try {

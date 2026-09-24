@@ -13,8 +13,11 @@
 			<div class="stream-layout__sidebar">
 				<GradientPanel always-expanded dense variant="fill" title="Stream">
 					<template #body>
-						<div v-if="!mnemonadStore.isDeployed" class="state">
+						<div v-if="!mnemonadStore.isDeployed && !switchingNetwork" class="state">
 							<p>Mnemonad isn't deployed on {{ activeNetwork.label }}.</p>
+						</div>
+						<div v-else-if="switchingNetwork" class="state">
+							<q-spinner color="primary" size="28px" />
 						</div>
 						<div v-else-if="!validId" class="state">
 							<p>Not a valid stream id.</p>
@@ -278,6 +281,15 @@ export default {
 		streamId: function() {
 			return this.routeStream?.id ?? null;
 		},
+		// True while the URL names a specific network other than the one the app booted on —
+		// load() is about to call setActiveNetworkId() (a full reload) to fix that, so
+		// `!mnemonadStore.isDeployed` below would otherwise flash the *old* network's verdict
+		// for a moment, even when the URL's network is the one that's actually deployed.
+		// Available synchronously (routeStream/activeNetwork both are), so it's correct from
+		// the very first render — no need to wait for load()'s async body.
+		switchingNetwork: function() {
+			return !!(this.routeStream?.networkId && this.routeStream.networkId !== this.activeNetwork.id);
+		},
 		// True when this stream is encrypted and this session doesn't have a usable key for
 		// it yet (see `unlocked` in data()) — method-agnostic, because both methods have an
 		// unlock affordance now. `kekMethod` below decides which credential to ask for.
@@ -325,11 +337,14 @@ export default {
 			this.$router.push('/select');
 		},
 		async load() {
-			if (!this.mnemonadStore.isDeployed || !this.validId) return;
+			if (!this.validId) return;
 			// The URL names a network as well as a stream. If it disagrees with the app's,
 			// this rewrites or reloads and the page renders again against the corrected URL —
-			// nothing to load in this pass.
+			// nothing to load in this pass. Checked before isDeployed: the network the app
+			// happens to be on might have no contract at all, which must not block switching
+			// to the one the URL actually asks for.
 			if (syncStreamRouteNetwork(this.$route, this.$router, this.routeStream)) return;
+			if (!this.mnemonadStore.isDeployed) return;
 			this.loading = true;
 			this.itemsLoading = true;
 			this.error = null;
