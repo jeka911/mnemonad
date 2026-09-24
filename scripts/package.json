@@ -2,6 +2,11 @@
     "name": "mnemonad-scripts",
     "version": "0.0.1",
     "description": "Deployment scripts for Mnemonad",
+    "repository": {
+        "type": "git",
+        "url": "git+https://github.com/jeka911/mnemonad.git",
+        "directory": "scripts"
+    },
     "type": "module",
     "private": true,
     "scripts": {

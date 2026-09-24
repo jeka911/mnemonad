@@ -45,7 +45,7 @@
 			Every <code>Mnemonad</code> instance is built with <code>cache: false</code> while
 			this is on — refs, pointers, and payload bytes all skip the cache and hit the
 			chain/IPFS directly. Session-only; resets when the browser is closed. See
-			<a href="https://github.com/jeka-kiselyov/mnemonad/blob/main/docs/caching.md" target="_blank" rel="noopener noreferrer">docs/caching.md</a>.
+			<a href="https://github.com/jeka911/mnemonad/blob/main/docs/caching.md" target="_blank" rel="noopener noreferrer">docs/caching.md</a>.
 		</p>
 		<div class="debug-panel__row debug-panel__row--rpc">
 			<span class="debug-panel__label">Presentation mode</span>

@@ -1,6 +1,11 @@
 {
   "name": "mnemonad-explorer",
   "version": "0.0.1",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/jeka911/mnemonad.git",
+    "directory": "explorer"
+  },
   "type": "module",
   "license": "AGPL-3.0",
   "scripts": {

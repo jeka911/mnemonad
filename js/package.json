@@ -2,6 +2,11 @@
     "name": "mnemonad",
     "version": "0.0.1",
     "description": "Scalable append-only on-chain stream for Monad with IPFS offloading and client-side encryption",
+    "repository": {
+        "type": "git",
+        "url": "git+https://github.com/jeka911/mnemonad.git",
+        "directory": "js"
+    },
     "type": "module",
     "main": "./index.js",
     "types": "./index.d.ts",
