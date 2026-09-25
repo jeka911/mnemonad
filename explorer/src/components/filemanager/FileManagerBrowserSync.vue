@@ -268,18 +268,23 @@ export default {
             });
         },
         /**
-         * Mirrors FileManagerTopLeftMenu.vue's own `storePendingChangesRef()` — subscribes
-         * to the folder's plain event emitter and keeps `this.pendingChangesCount` (a real
-         * Vue-reactive field) in sync with it.
+         * Keeps `this.pendingChangesCount` (a real Vue-reactive field) in sync with the
+         * *whole tree's* pending changes, not just this one folder's own —
+         * `folder.pendingChangesCount` is local to `folder` (same as
+         * FileManagerTopLeftMenu.vue's own per-folder badge deliberately is), but "Sync to
+         * chain" needs to know about a change anywhere underneath, since a push from the
+         * root commits the whole tree regardless of how deep the edit happened. Subscribes
+         * directly to `folder`'s own 'change' event (which `markChanged()` now bubbles up
+         * from every descendant) rather than the narrower `pendingChanges` interface.
          */
         _watchPendingChanges(folder) {
             if (this._pendingChangesUnsub) this._pendingChangesUnsub();
             const onChange = () => {
-                this.pendingChangesCount = folder.pendingChangesCount;
+                this.pendingChangesCount = folder.totalPendingChangesCount;
                 this._emitSyncState();
             };
-            folder.pendingChanges.on('change', onChange);
-            this._pendingChangesUnsub = () => folder.pendingChanges.off('change', onChange);
+            folder.on('change', onChange);
+            this._pendingChangesUnsub = () => folder.off('change', onChange);
             onChange();
         },
         /**
@@ -317,12 +322,30 @@ export default {
                 // so this costs nothing once warm and always reflects whichever account is
                 // currently connected.
                 this._monadSync._mn = await this.getWritable();
+
+                // Best-effort race guard, not an atomic one — same reasoning as the CLI's
+                // own watch.js runPush(): the chain may have moved since this tab last knew
+                // about it (another tab, the CLI, or a Live-poll tick elsewhere), and
+                // _monadSync's own diff state (senderStore/lastSnapshot) has to be caught up
+                // before building the next diff, or the push silently corrupts the chain —
+                // it lands at the right index (Mnemonad.sol's `expectedLength` check
+                // guarantees that atomically) but its *content* would still be wrong. See
+                // monadsync/README.md's "Repairing a corrupt chain". Also bootstraps the
+                // freshly-built writable instance just swapped in above, which starts
+                // uninitialized regardless of whether the chain actually moved.
+                const mn = this._monadSync._mn;
+                mn.reInitialize();
+                await mn.initialize();
+                if (mn.length !== this._knownLength) {
+                    this._monadSync.reInitialize();
+                    await this._monadSync.initialize();
+                }
+
                 const result = await this._monadSync.push(this._rawFolder);
                 // Mnemonad.push()'s own _afterWrite() only optimistically bumps `.length`,
                 // not `.binaryLength` — a real initialize() (forced, since _afterWrite
                 // already flipped _isInitialized false) is what makes binaryLength correct
                 // here, not just paranoia.
-                const mn = this._monadSync._mn;
                 await mn.initialize();
                 result.totalBytes = mn.binaryLength;
                 result.patchCount = mn.length;
@@ -372,6 +395,19 @@ export default {
                 mn.reInitialize();
                 await mn.initialize();
                 if (mn.length <= this._knownLength) return;
+
+                // Resync _monadSync itself, not just the raw mn above: restore() right below
+                // rebuilds the *view* from its own independent read, but a later push() from
+                // this tab needs _monadSync's own diff-building state (senderStore/
+                // lastSnapshot) caught up too — otherwise the next save builds a diff against
+                // the version this tab last knew about, not the one just detected here. That
+                // diff still lands at the right chain index (Mnemonad.sol's own
+                // `expectedLength` check guarantees that atomically) but its *content* would
+                // be wrong, corrupting the chain — see monadsync/README.md's "Repairing a
+                // corrupt chain" for exactly this failure mode. Confirmed live: this is what
+                // actually happened before this fix.
+                this._monadSync.reInitialize();
+                await this._monadSync.initialize();
 
                 const memFolder = await this._monadSync.restore();
                 this._knownLength = mn.length;

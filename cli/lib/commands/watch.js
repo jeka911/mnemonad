@@ -88,13 +88,17 @@ export async function watch(args) {
 
         pushInFlight = true;
         try {
-            // Best-effort race guard, not an atomic one: Mnemonad's own contract has no
-            // "expected prior length" check — no atomic on-chain compare-and-abort.
-            // Re-checking here narrows the window where a concurrent push (another `watch`
-            // session, or a manual push) could make MonadSync build a diff against a base
-            // the chain has since moved past — the same failure mode monadsync's own
-            // snapshot-recovery tests exercise — but doesn't close it entirely; only an
-            // on-chain guard could.
+            // Best-effort race guard, not an atomic one. Mnemonad's contract *does* check an
+            // `expectedLength` atomically (Mnemonad.sol's `_checkLength`/`LengthMismatch`) —
+            // that closes the index race outright: two writers can never land at the same
+            // position, one just reverts. What it can't check is content: it stores opaque
+            // bytes, with no way to verify a diff patch is actually consistent with the real
+            // previous item. Re-checking here narrows the separate window where a concurrent
+            // push (another `watch` session, or a manual push) lands at the *correct* index
+            // but MonadSync still builds its diff against a snapshot the chain has since
+            // moved past — the same failure mode monadsync's own snapshot-recovery tests
+            // exercise. Confirmed live as a real corruption, not just theoretical — see
+            // monadsync/README.md's "Repairing a corrupt chain".
             mn.reInitialize();
             await mn.initialize();
             if (mn.length !== remoteVersion) {

@@ -1,3 +1,5 @@
 one byte slips inward
 the boundaries hold their ground
 only one chunk moves
+
+23332

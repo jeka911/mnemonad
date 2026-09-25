@@ -1,0 +1,15 @@
+{
+  "streamId": "0x648f18ea13eaa4640b97a435a30d39d4f7af9c2105adb10217f8a8ae56e73ac8",
+  "version": 8,
+  "files": {
+    "README.md": "fe66630334259a92b8e1d1b9b69d332a5b377e432dbe93cc137d6b161cc29f06",
+    "haiku.txt": "36691670f66fec0d538496f0ff4ff9c5f0419fbeaf078b3c1b64f2b229c3ec22",
+    "notes/cdc.txt": "1bee454597abc9e22e778fb2fcc66efecc2fb9244b14cac5c6840dd4c9a585ef",
+    "append_only.txt": "6cd216e6aba20c0743189642a1002832d8c9a47a70431b9ee683f5510bcdb4ab",
+    "chunks.txt": "8744421aa0c99d867b680c4fa7054c546657c03cc1f31b50fea6139eb2128159",
+    "gas.txt": "8db1389e4e5311079114083c05e024c0186ecaf7ff682ac49462c00514e7bf8a",
+    "keys.txt": "7edf5c7012c987f70165c3fe269333fd0ad2149d3555b605fd230a6185bfae2d",
+    "test/z.txt": "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08",
+    "newfile.txt": "ed7002b439e9ac845f22357d822bac1444730fbdb6016d3ec9432297b9ec9f73"
+  }
+}

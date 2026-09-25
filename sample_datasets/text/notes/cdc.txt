@@ -1,4 +1,0 @@
-Content-defined chunking splits a file at boundaries the content itself decides, so
-inserting a byte near the start doesn't shift every chunk after it. That is what makes a
-second push cost a diff rather than a full re-upload.
-appended line

@@ -10,10 +10,10 @@
 			<!-- nav -->
 			<nav class="appFooter_nav">
 				<router-link to="/" class="appFooter_link" @mouseenter="scramble('home')"><ScrambleText ref="home" text="Home" /></router-link>
-				<router-link to="/showcase" class="appFooter_link" @mouseenter="scramble('components')"><ScrambleText ref="components" text="Components" /></router-link>
 				<router-link to="/docs" class="appFooter_link" @mouseenter="scramble('docs')"><ScrambleText ref="docs" text="Docs" /></router-link>
 				<a :href="explorerUrl" class="appFooter_link" @mouseenter="scramble('explorer')"><ScrambleText ref="explorer" text="Explorer" /><q-icon name="north_east" size="14px" class="appFooter_ext" /></a>
 				<a v-if="faucetUrl" :href="faucetUrl" class="appFooter_link" @mouseenter="scramble('faucet')"><ScrambleText ref="faucet" text="Faucet" /><q-icon name="north_east" size="14px" class="appFooter_ext" /></a>
+				<a href="https://www.npmjs.com/package/mnemonad-cli" class="appFooter_link" @mouseenter="scramble('cli')"><ScrambleText ref="cli" text="CLI" /><q-icon name="north_east" size="14px" class="appFooter_ext" /></a>
 				<a href="https://x.com/suidouble" class="appFooter_link appFooter_link--x">𝕏<q-icon name="north_east" size="14px" class="appFooter_ext" /></a>
 
 			</nav>

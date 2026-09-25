@@ -58,8 +58,9 @@ mnemonad --help
 If not, install from npm:
 
 ```bash
-npm install -g mnemonad-cli
-# provides the `mnemonad` command
+npm install -g mnemonad-cli@latest
+# provides the `mnemonad` command. Already installed but on an old version? `npm update -g`
+# doesn't reliably pick up a new release — reinstall with @latest instead, same as above.
 ```
 
 Then check the configured chain and wallet:

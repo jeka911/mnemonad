@@ -10,7 +10,7 @@ free and needs no wallet; any button that submits a transaction spends real gas.
 ## Don't drive this UI to sync folders — use the CLI
 
 Pushing/pulling here needs a browser wallet extension to sign, which an agent generally
-can't operate. `npm install -g mnemonad-cli` does the same folder sync headlessly, signing
+can't operate. `npm install -g mnemonad-cli@latest` does the same folder sync headlessly, signing
 from the `MNEMONAD_KEY` env var (or `--key`/`--phrase` flags — the env var is just the
 option that doesn't end up in shell history).
 

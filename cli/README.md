@@ -15,15 +15,29 @@ signer's own wallet key.
 ### From npm (recommended)
 
 ```bash
-npm install -g mnemonad-cli
+npm install -g mnemonad-cli@latest
 mnemonad --help
 ```
 
-To pick up a new release later:
+To pick up a new release later, prefer reinstalling `@latest` over `npm update -g` — `update`
+has known quirks where it doesn't reliably bump an already-installed global package even when
+a newer version is published:
 
 ```bash
-npm update -g mnemonad-cli
+npm install -g mnemonad-cli@latest
+mnemonad --help    # banner shows the version — confirm it actually moved
 ```
+
+If it still reports the old version, you likely have two installs shadowing each other on
+`PATH` (common with nvm, after switching Node versions):
+
+```bash
+which mnemonad
+npm ls -g mnemonad-cli
+```
+
+If `which mnemonad` doesn't resolve into the `npm root -g` you just installed into, remove
+the stale one — `npm uninstall -g mnemonad-cli`, then reinstall.
 
 ### From this repo (for development)
 

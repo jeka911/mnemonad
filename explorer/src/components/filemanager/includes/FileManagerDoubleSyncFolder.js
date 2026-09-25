@@ -71,9 +71,7 @@ export default class FileManagerDoubleSyncFolder extends DoubleSyncFolder {
         const removed = this._rowBuilder.remove(child);
         console.log('DSFolder.removeChild: rowBuilder.remove =>', removed, 'items left:', this._items.length, 'folders left:', this._folders.length);
 
-        this._pendingCount++;
-        this._emit('change');
-        this._emit('pendingChange', { change: { type: 'remove', name } });
+        this.markChanged({ type: 'remove', name });
         return true;
     }
 
@@ -93,7 +91,9 @@ export default class FileManagerDoubleSyncFolder extends DoubleSyncFolder {
         return '';
     }
 
-    /** Lightweight pending-changes interface expected by FileManagerTopLeftMenu */
+    /** Lightweight pending-changes interface expected by FileManagerTopLeftMenu — scoped to
+     *  this one folder, same as `_pendingCount` itself (see `totalPendingChangesCount` below
+     *  for the whole-subtree count "Sync to chain" actually needs). */
     get pendingChanges() {
         return {
             pendingCount: this._pendingCount,
@@ -105,26 +105,67 @@ export default class FileManagerDoubleSyncFolder extends DoubleSyncFolder {
     get pendingChangesCount() { return this._pendingCount; }
 
     /**
+     * Pending changes anywhere in this subtree — this folder's own plus every descendant's,
+     * recursively. This (not `pendingChangesCount`, which is local to one folder) is what
+     * "Sync to chain" needs: a push from the root walks the *whole* tree, so a change made
+     * three levels down is just as real as one made at the root, and a nested subfolder's
+     * own local count is invisible to anything watching only the root (confirmed live: this
+     * is exactly why a file added inside a Live-pulled subfolder never enabled the button).
+     * Walks `_children` directly rather than `_folders`/`_loaded` state, so it's correct
+     * regardless of which parts of the tree the UI has actually navigated into and loaded.
+     */
+    get totalPendingChangesCount() {
+        let total = this._pendingCount;
+        for (const child of this._children.values()) {
+            if (child instanceof FileManagerDoubleSyncFolder) total += child.totalPendingChangesCount;
+        }
+        return total;
+    }
+
+    /**
      * Marks a change as pending — same bookkeeping every mkdir/pushMediaFile/pushTextFile/
-     * removeChild call site here already does inline, extracted so a *file*'s own edit
+     * removeChild call site here uses, extracted so a *file*'s own edit
      * (FileManagerDoubleSyncFile.setContent/setTextContent, which mutates the file object
      * directly and has no other reason to reach back into its parent folder) can mark the
      * same "sync to chain" pending state those already do, instead of silently not counting.
+     *
+     * Also bubbles a plain 'change' up through every ancestor (not their own `_pendingCount`
+     * — that stays local, for FileManagerTopLeftMenu's per-folder badge — just the event),
+     * so anything watching a whole subtree (see `totalPendingChangesCount` above) knows to
+     * re-read it, no matter how deep the actual edit happened.
      * @param {Object} [change={type:'edit'}] - forwarded as-is to the 'pendingChange' event.
      */
     markChanged(change = { type: 'edit' }) {
         this._pendingCount++;
         this._emit('change');
         this._emit('pendingChange', { change });
+        for (let ancestor = this._parent; ancestor; ancestor = ancestor._parent) {
+            ancestor._emit('change');
+        }
     }
 
     /**
      * Called by the save button. Emits 'save' so the parent page can call monadSync.push().
+     * A root-level push commits the *whole* tree (DoubleSync's diff walks every descendant),
+     * so every descendant's pending count is cleared too, not just this folder's own —
+     * otherwise a subfolder edited earlier would still report itself "pending" immediately
+     * after a successful sync.
      */
     async implementChanges() {
         this._emit('save');
+        this._resetPendingCounts();
+        this._emit('change');
+    }
+
+    /** @private Recursively zeroes this folder's own pending count and every descendant's,
+     *  firing 'pendingChange' on each so a per-folder badge (FileManagerTopLeftMenu)
+     *  watching any of them updates too. */
+    _resetPendingCounts() {
         this._pendingCount = 0;
         this._emit('pendingChange', { implemented: true });
+        for (const child of this._children.values()) {
+            if (child instanceof FileManagerDoubleSyncFolder) child._resetPendingCounts();
+        }
     }
 
     /**
@@ -187,9 +228,7 @@ export default class FileManagerDoubleSyncFolder extends DoubleSyncFolder {
             this._rowBuilder.push(dsFile);
             this._emit('item', dsFile);
         }
-        this._pendingCount++;
-        this._emit('change');
-        this._emit('pendingChange', { change: { type: 'add' } });
+        this.markChanged({ type: 'add' });
 
         return dsFile;
     }
@@ -209,9 +248,7 @@ export default class FileManagerDoubleSyncFolder extends DoubleSyncFolder {
             }
             this._emit('folder', folder);
         }
-        this._pendingCount++;
-        this._emit('change');
-        this._emit('pendingChange', { change: { type: 'mkdir' } });
+        this.markChanged({ type: 'mkdir' });
         return folder;
     }
 
@@ -235,9 +272,7 @@ export default class FileManagerDoubleSyncFolder extends DoubleSyncFolder {
             this._rowBuilder.push(dsFile);
             this._emit('item', dsFile);
         }
-        this._pendingCount++;
-        this._emit('change');
-        this._emit('pendingChange', { change: { type: 'add' } });
+        this.markChanged({ type: 'add' });
         return dsFile;
     }
 

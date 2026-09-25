@@ -1,6 +1,1 @@
-an append-only
-chain remembers every draft
-even the bad ones
-
-a second verse, appended later
-a third verse, pushed by update_dataset_testnet
+test
