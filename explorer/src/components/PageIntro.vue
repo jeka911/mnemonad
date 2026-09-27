@@ -36,10 +36,6 @@
 					aria-label="Clear search"
 					@click="clear"
 				/>
-				<span v-else class="page-intro-shortcut">
-					<span>⌘</span>
-					<span>K</span>
-				</span>
 			</template>
 		</q-input>
 
@@ -139,8 +135,7 @@ export default {
 		},
 	},
 
-	// The ⌘K / Ctrl+K hint shown in the field is real: it focuses the field from anywhere on
-	// the page.
+	// ⌘K / Ctrl+K focuses the field from anywhere on the page.
 	mounted() {
 		this._onKeydown = (event) => {
 			if (!this.search) return;
@@ -256,18 +251,6 @@ export default {
 	opacity: 1;
 }
 
-.page-intro-shortcut {
-	display: inline-flex;
-	align-items: center;
-	gap: 5px;
-	padding: 6px 8px;
-	font-size: 12px;
-	color: #a19bad;
-	background: rgba(132, 100, 198, 0.08);
-	border: 1px solid rgba(132, 100, 198, 0.09);
-	border-radius: 8px;
-}
-
 /* Light mode — driven by Quasar's body.body--light class, matching how
    GradientPanel / GradientButton / BlockNumber / AppFooter already theme
    (see GradientPanel.vue for why: the production bundle can end up with two
@@ -297,12 +280,6 @@ body.body--light .page-intro-search :deep(.q-field__native)::placeholder {
 
 body.body--light .page-intro-search :deep(.q-field__prepend) {
 	color: #696c7e;
-}
-
-body.body--light .page-intro-shortcut {
-	color: #77798a;
-	background: rgba(113, 102, 177, 0.07);
-	border-color: rgba(113, 102, 177, 0.08);
 }
 
 @media (max-width: 760px) {

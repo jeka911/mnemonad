@@ -89,8 +89,8 @@ export default {
     },
     primaryLabel: { type: String, default: 'Launch dApp' },
     primaryHref: { type: String, default: '/select' },
-    secondaryLabel: { type: String, default: 'Explore' },
-    secondaryHref: { type: String, default: '#explorer' },
+    secondaryLabel: { type: String, default: 'Docs' },
+    secondaryHref: { type: String, default: '/docs' },
     networkLabel: { type: String, default: 'Monad Testnet' },
     walletLabel: { type: String, default: 'Connect Wallet' },
     navItems: {

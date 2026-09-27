@@ -219,9 +219,51 @@ body.body--light .docs-link-card--active:hover {
 	box-shadow: 0 0 0 1px var(--accent, #7357ff) inset;
 }
 
+/* Narrow screens: compact chips — icon and title only, two to a row. Six full cards stacked
+   one per row pushed the docs themselves a screen and a half down on a phone. */
 @media (max-width: 760px) {
 	.docs-links {
-		grid-template-columns: 1fr;
+		grid-template-columns: repeat(2, minmax(0, 1fr));
+		gap: 8px;
+	}
+
+	.docs-link-card {
+		grid-template-columns: auto minmax(0, 1fr);
+		gap: 8px;
+		min-height: 0;
+		padding: 10px 12px;
+		border-radius: 12px;
+	}
+
+	.docs-link-card:hover {
+		transform: none;
+	}
+
+	.link-icon {
+		width: 22px;
+		height: 22px;
+	}
+
+	.link-icon :deep(.q-icon) {
+		font-size: 20px !important;
+	}
+
+	/* Wraps rather than truncates — a clipped title ("Vector sear…") hides the one thing the
+	   chip is for. Two lines at most. */
+	.link-copy strong {
+		font-size: 13.5px;
+		line-height: 1.25;
+		display: -webkit-box;
+		-webkit-line-clamp: 2;
+		line-clamp: 2;
+		-webkit-box-orient: vertical;
+		overflow: hidden;
+		overflow-wrap: anywhere;
+	}
+
+	.link-copy small,
+	.chevron {
+		display: none;
 	}
 
 	.docs-title {

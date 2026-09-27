@@ -161,11 +161,11 @@ function firstDocRoute(folder) {
 	color: var(--q-text-muted);
 }
 
-.docs-page__source {
-	display: inline-flex;
-	align-items: center;
-	flex-wrap: wrap;
-	gap: 5px;
+/* Plain inline text, so on a narrow screen it wraps like a sentence — as a wrapping flex row,
+   the icon ended up alone on a line of its own. */
+.docs-page__source :deep(.q-icon) {
+	margin-right: 4px;
+	vertical-align: -2px;
 }
 
 .docs-page__mono {
