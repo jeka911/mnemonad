@@ -609,4 +609,15 @@ body.body--light .mn-feature-icon {
   .mn-features { margin-top: 38px; }
   .mn-art { right: -55%; width: 175%; height: 450px; }
 }
+
+/* The smallest phones: two lg buttons side by side leave ~150px each, and "Launch dApp" at
+   20px wrapped onto two lines inside its button (seen at 380px). A smaller label keeps both
+   on one line. GradientButton sets its font-size inline, hence !important. */
+@media (max-width: 420px) {
+  .mn-actions { gap: 10px; }
+  .mn-actions :deep(.gradient-btn) {
+    font-size: 15px !important;
+    white-space: nowrap;
+  }
+}
 </style>

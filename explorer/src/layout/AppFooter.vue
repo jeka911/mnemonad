@@ -160,6 +160,7 @@ body.body--light .appFooter {
 	}
 }
 
+
 .appFooter_copy {
 	font-size: 13px;
 	line-height: 1;
@@ -227,4 +228,27 @@ body.body--light .appFooter {
 	background: var(--footer-pill-bg);
 }
 .appFooter_statusIcon { color: var(--footer-ok); }
+
+/* The smallest phones: six links at 15px with 24px gaps don't fit one row, and the flex row
+   squeezed each label until it broke mid-word ("HOM/E", "C/L/I" — seen at 380px). Smaller
+   labels that never break inside a word, and rows that wrap between whole links instead. */
+@media (max-width: 480px) {
+	.appFooter_nav {
+		flex-wrap: wrap;
+		gap: 10px 16px;
+	}
+
+	.appFooter_link {
+		font-size: 12px;
+		white-space: nowrap;
+	}
+
+	.appFooter_link--x {
+		font-size: 14px;
+	}
+
+	.appFooter_link :deep(.q-icon) {
+		font-size: 12px !important;
+	}
+}
 </style>
