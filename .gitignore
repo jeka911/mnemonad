@@ -21,3 +21,8 @@ types/
 
 # presign-server's issuance ledger — contains issued upload URLs.
 data/
+
+# The docs stream's local state (scripts/push_docs.js) — the search index it builds and the
+# CLI manifest. Only the markdown is committed; both are rebuilt on demand.
+docs/search_index.db
+docs/.mnemonad

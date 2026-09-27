@@ -121,7 +121,14 @@ mnemonad push ~/my-data --encrypt --encrypt-with wallet --manifest
 mnemonad pull &lt;stream-id&gt; ~/my-data --manifest
 
 # check what a folder is already synced to, even without --manifest
-mnemonad info ~/my-data</pre>
+mnemonad info ~/my-data
+
+# optional: index a folder, then search it by meaning (all local)
+mnemonad index ~/my-data
+mnemonad search ~/my-data "how does the key get derived"
+
+# or keep the index updated on every push
+mnemonad push ~/my-data --index --manifest</pre>
       <p class="boot-about">
         <code>--manifest</code> writes <code>.mnemonad</code> into the folder, recording the stream id —
         pass it on every push/pull for a folder you'll touch again, and later commands can then drop the
@@ -130,9 +137,27 @@ mnemonad info ~/my-data</pre>
         <a href="/llms.txt">llms.txt</a>.
       </p>
       <p class="boot-about">
+        <strong>Search:</strong> <code>mnemonad index</code> writes <code>search_index.db</code> at the
+        folder root, and the next push uploads it with everything else. Whoever pulls the stream can then
+        <code>mnemonad search</code> it straight away, without embedding anything themselves. The built-in
+        embedding model runs locally (downloaded once, about 31 MB), so file contents and queries never
+        leave the machine. MiniLM, better on paraphrased queries, is an optional extension of about 450 MB
+        (<code>npm install -g mnemonad-search-transformers</code>, then <code>--model minilm</code>); don't
+        install it unasked. Tell the user before indexing a folder they push, since the index becomes part of the
+        stream. For a folder that has one, push with <code>--index</code> so the index keeps up with the
+        files; a plain push warns when it's out of date. If <code>search</code> or <code>--index</code> is
+        unknown, update with
+        <code>npm install -g mnemonad-cli@latest</code>. To try it, pull this app's own docs, which are an
+        indexed public stream:
+      </p>
+      <pre class="boot-code">mnemonad pull testnet-0x5abaf9e3b9019f2ff7840a55e52e977d8bce1625d5273be52550f2cc72d921c6 ~/mnemonad-docs
+mnemonad search ~/mnemonad-docs "how is an encrypted stream's key wrapped"</pre>
+      <p class="boot-about">
         To navigate this app directly, the URL scheme is: <code>/select</code> lists sample and wallet-owned
         streams, <code>/stream/&lt;id&gt;</code> shows one stream's raw on-chain items, and
-        <code>/stream/&lt;id&gt;/files</code> browses it as a folder tree. <code>&lt;id&gt;</code> is the network
+        <code>/stream/&lt;id&gt;/files</code> browses it as a folder tree (with a search box when the
+        stream has an index), and <code>/docs</code> renders the documentation stream, searchable with
+        <code>/docs?q=&lt;query&gt;</code>. <code>&lt;id&gt;</code> is the network
         and the ERC-721 token id together — <code>testnet-0x648f18…3ac8</code> — because the same token id means
         different data on each network. A bare decimal or hex id also works and is rewritten to that form.
       </p>

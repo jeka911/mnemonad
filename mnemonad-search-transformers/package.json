@@ -1,0 +1,44 @@
+{
+    "name": "mnemonad-search-transformers",
+    "version": "0.1.0",
+    "description": "Optional neural embedding models (MiniLM by default) for mnemonad-cli's vector search, run locally on ONNX Runtime via transformers.js.",
+    "repository": {
+        "type": "git",
+        "url": "git+https://github.com/jeka911/mnemonad.git",
+        "directory": "mnemonad-search-transformers"
+    },
+    "type": "module",
+    "engines": {
+        "node": ">=22"
+    },
+    "main": "./index.js",
+    "exports": {
+        ".": "./index.js",
+        "./package.json": "./package.json"
+    },
+    "sideEffects": false,
+    "files": [
+        "index.js",
+        "README.md"
+    ],
+    "keywords": [
+        "mnemonad",
+        "vector-search",
+        "embeddings",
+        "transformers",
+        "minilm"
+    ],
+    "publishConfig": {
+        "access": "public"
+    },
+    "license": "AGPL-3.0",
+    "scripts": {
+        "test": "vitest run ./test/*.test.js"
+    },
+    "dependencies": {
+        "@huggingface/transformers": "^4.3.0"
+    },
+    "devDependencies": {
+        "vitest": "^4.1.11"
+    }
+}

@@ -77,6 +77,8 @@ mnemonad diff <stream-id> <path> [options]     List files added/modified/deleted
 mnemonad watch <stream-id> <path> [options]    Watch folder: auto-push on changes, auto-pull on remote updates
 mnemonad compact <stream-id> <path> [options]  Truncate old history and push folder as a fresh snapshot
 mnemonad burn <stream-id> --yes [options]      Permanently destroy a stream — irreversible
+mnemonad index <path> [options]                Build/update a local vector-search index (optional)
+mnemonad search <path> <query> [options]       Search a folder's vector index
 ```
 
 `<path>` is always required for any command that touches a folder — there is no need to
@@ -102,7 +104,7 @@ Every command prints the installed CLI version as its first line of output.
 | `--chain <name>` | Chain: `testnet`, `mainnet`, `local` (default: `testnet`) |
 | `--rpc-url <url>` | Override the resolved RPC endpoint (e.g. a local Hardhat node) |
 | `--contract-address <addr>` | Registry address to use instead of the chain's known deployment (required with `--chain local`) |
-| `--gateway-url <url>` | IPFS gateway for reading externally-offloaded items (default: `https://gateway.pinata.cloud/ipfs/`, or `MNEMONAD_IPFS_GATEWAY` env var) |
+| `--gateway-url <url>` | IPFS gateway for reading externally-offloaded items (default: this project's Pinata dedicated gateway, or `MNEMONAD_IPFS_GATEWAY` env var) |
 | `--key <privkey>` | Monad private key (or set `MNEMONAD_KEY` env var) |
 | `--phrase <mnemonic>` | Mnemonic phrase instead of a raw key |
 | `--version <n>` | Version to restore or compare against (`pull`, `diff`, `info`; default: latest) |
@@ -114,11 +116,18 @@ Every command prints the installed CLI version as its first line of output.
 | `--pinata-jwt <jwt>` | Pinata JWT for IPFS offload of large files (or `PINATA_JWT` env var) |
 | `--manifest` | Write/use `.mnemonad` manifest for faster change detection. With no stream-id given, every command recovers it from an existing `.mnemonad` in the folder instead of requiring it explicitly |
 | `--force-snapshot` | Push a full snapshot regardless of prior history (repairs a corrupt stream) |
+| `--index` | `push`/`watch`: update the folder's search index before every push (takes `--db`/`--model`/`--chunk-size`/`--chunk-overlap`); if indexing fails, nothing is pushed |
 | `--poll-interval <s>` | `watch`: seconds between remote version checks (default: `2`) |
 | `--debounce <ms>` | `watch`: quiet period in ms before pushing after a local change (default: `1000`) |
 | `--push-only` | `watch`: disable auto-pull |
 | `--pull-only` | `watch`: disable auto-push |
 | `--yes` | Required by `burn` — explicit opt-in for an irreversible action, never assumed |
+| `--db <name>` | `index`/`search`: vector-index filename (default: `search_index.db`) |
+| `--model <name>` | `index` / `--index`: embedding model — `potion` (built in, the default for a new index) or `minilm` (needs `npm install -g mnemonad-search-transformers`), or a full model id. Without it, an existing index keeps its own model; `search` always uses the index's model |
+| `--rebuild` | `index` / `--index`: start the index over — the way to switch models (the next push uploads the whole index again) |
+| `--chunk-size <n>` | `index`: target characters per chunk (default: `1000`) |
+| `--chunk-overlap <n>` | `index`: characters of overlap between chunks (default: `150`) |
+| `--limit <n>`, `-k <n>` | `search`: number of results (default: `5`) |
 | `--help` | Show help |
 
 ### Authentication
@@ -334,6 +343,63 @@ mnemonad push 123 ~/my-data --force-snapshot
 # restore() will recover from this snapshot, skipping any corrupt diffs before it
 ```
 
+### Vector search (optional)
+
+Builds a local, plain (non-dot-prefixed) `search_index.db` at the folder root, using a local
+embedding model — no API key, nothing sent anywhere. Because it's a plain file, it rides
+through the next `push` like anything else in the folder, so anyone who later `pull`s the
+stream gets a ready-to-search index with no re-embedding of their own.
+
+```bash
+mnemonad index ~/my-data
+# embeds every changed text file since the last run (skips unchanged ones); binary files
+# are skipped entirely
+
+mnemonad search ~/my-data "how does chunking work"
+# 1. chunks.txt (chunk 0, distance 0.5838)
+#    one byte slips inward the boundaries hold their ground only one chunk moves
+
+mnemonad push ~/my-data
+# search_index.db is included automatically — it's just a file in the folder
+```
+
+The built-in model is `minishlab/potion-base-8M`: static embeddings in plain JS, no native
+code, a 31 MB download on first use, and a whole folder embedded in milliseconds. For better
+results on paraphrased queries, MiniLM is available as an optional extension (about 450 MB
+installed, most of it ONNX Runtime):
+
+```bash
+npm install -g mnemonad-search-transformers
+mnemonad index ~/my-data --model minilm
+```
+
+An index keeps the model it was built with, and `search` always uses it. To switch an existing
+index to another model, add `--rebuild`. See `docs/search.md` in the repository for how the two
+compare on this project's own data.
+
+`push` can also keep the index current for you: `--index` runs the same update right before pushing,
+with the push's own `--exclude`, so the index always covers exactly what the push uploads.
+If indexing fails (the first-time model download, say), nothing is pushed:
+
+```bash
+mnemonad push ~/my-data --index
+#   updating search index...
+#   index: 1 file(s) re-embedded, 0 removed (3 chunks)
+
+mnemonad watch <stream-id> ~/my-data --index
+# re-indexes before every automatic push; the model loads once for the whole session
+```
+
+A plain `push` of a folder that has an index checks it first. It doesn't load the model and
+doesn't touch the file. If files changed since the index was built, it says so and suggests
+`--index`, because a stale index would keep returning the old text's passages.
+
+See [`../docs/search.md`](../docs/search.md) for the whole process, and why the index stays
+diff-friendly on repeated pushes.
+
+A pushed index also turns on a search box in the explorer's file browser for that stream.
+The search runs in the browser on the same file and gives the same ranking as `mnemonad search`.
+
 ## End-to-end workflow
 
 Create a stream, verify what was stored, then roll back to an earlier version:
@@ -382,10 +448,13 @@ mnemonad pull 123 ~/my-data-v1 --version 1
    the on-chain version.
 5. **watch** — combines push and pull in a loop. A filesystem watcher triggers a debounced
    push on local changes. A poll interval checks the remote stream for new versions and
-   pulls them if found. Push and pull never run concurrently. Monad's registry has no
-   "expected prior length" guard on push, so `watch` re-checks the remote length itself
-   right before pushing and resyncs if it has moved — a best-effort narrowing of the race
-   window, not a hard guarantee.
+   pulls them if found. Push and pull never run concurrently. The contract *does* check an
+   `expectedLength` atomically on every write, so two writers can never land at the same
+   index — one just reverts. What it can't check is content: it stores opaque bytes, with no
+   way to verify a diff patch is actually consistent with the real previous item. `watch`
+   re-checks the remote length and resyncs before pushing specifically to narrow that
+   separate window — a best-effort narrowing, not a hard guarantee, since only an atomic
+   on-chain check (which it already has, for the index) could close it outright.
 6. **compact** — drops all existing history on-chain and pushes the current folder as a
    single fresh full snapshot, speeding up future replay after many incremental syncs.
 
@@ -393,7 +462,8 @@ mnemonad pull 123 ~/my-data-v1 --version 1
 
 The following are always excluded from snapshots: `node_modules`, `.git`, `.env`,
 `.DS_Store`, `.mnemonad`, `.claude`, `pnpm-lock.yaml`, `package-lock.json`. Add more with
-`--exclude`.
+`--exclude`. `search_index.db` (see "Vector search" above) is deliberately **not** on this
+list — it's a plain file, meant to be pushed like any other.
 
 ## Dependencies
 
@@ -401,4 +471,7 @@ The following are always excluded from snapshots: `node_modules`, `.git`, `.env`
 |---|---|
 | `mnemonad` | On-chain stream primitive (this repo's `js/`) |
 | `monadsync` | Folder-diff / snapshot layer on top of `mnemonad` (this repo's `monadsync/`) |
+| `better-sqlite3`, `@sqliteai/sqlite-vector` | The search index: SQLite with vector search (`lib/search/`) |
+| `@huggingface/tokenizers` | Tokenizer for the built-in embedding model (pure JS) |
+| `mnemonad-search-transformers` | *Not a dependency* — the optional MiniLM extension, installed separately and found at runtime |
 | `viem` | Monad client / key management |

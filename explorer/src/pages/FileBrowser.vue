@@ -61,6 +61,12 @@
 						size="sm"
 						@click.stop="cloneDialog = true"
 					/>
+					<!-- Renders nothing unless this stream carries a search_index.db. -->
+					<StreamSearchBox
+						v-if="browserReady"
+						:folder="searchFolder"
+						@reveal="onSearchReveal"
+					/>
 				</div>
 			</template>
 
@@ -104,6 +110,7 @@
 					@streamInfo="onStreamInfo"
 					@error="onSyncError"
 					@sync-state="onSyncState"
+					@folder="onFolder"
 				/>
 			</template>
 		</GradientPanel>
@@ -162,6 +169,7 @@
 </template>
 
 <script>
+import { shallowRef } from 'vue';
 import { mapStores } from 'pinia';
 import { getActiveNetwork } from '../settings.js';
 import { useWalletStore } from '../stores/wallet.js';
@@ -174,6 +182,7 @@ import GradientPanel from '../components/GradientPanel.vue';
 import GradientButton from '../components/GradientButton.vue';
 import ExplorerLink from '../mnemonad/ExplorerLink.vue';
 import CloneStreamDialog from '../mnemonad/CloneStreamDialog.vue';
+import StreamSearchBox from '../mnemonad/StreamSearchBox.vue';
 import FileManagerBrowserSync from '../components/filemanager/FileManagerBrowserSync.vue';
 
 export default {
@@ -185,6 +194,7 @@ export default {
 	title: 'File Browser',
 	components: {
 		JPanel, GradientPanel, GradientButton, ExplorerLink, FileManagerBrowserSync, CloneStreamDialog,
+		StreamSearchBox,
 	},
 	data() {
 		return {
@@ -221,6 +231,12 @@ export default {
 			versionCount: null,
 
 			cloneDialog: false,
+
+			// The file browser's current root folder, for the header's search box — handed up
+			// by FileManagerBrowserSync's `@folder` on load and after every live poll. A shallowRef
+			// (same as FileManagerBrowser's own currentFolder1/2): the assignment is what needs to
+			// be reactive, not the decrypted tree inside it.
+			searchFolder: shallowRef(null),
 		};
 	},
 	computed: {
@@ -326,6 +342,7 @@ export default {
 				// never lingers on the button for that one render.
 				this.pendingChangesCount = 0;
 				this.isSyncing = false;
+				this.searchFolder = null;
 			} catch (e) {
 				this.error = e?.shortMessage || e?.message || 'Failed to load stream';
 				this._stream = null;
@@ -390,6 +407,15 @@ export default {
 		 * it itself; nothing extra to catch here. */
 		async syncNow() {
 			await this.$refs.sync?.syncNow();
+		},
+		onFolder(folder) {
+			this.searchFolder = folder;
+		},
+		async onSearchReveal({ path, selection }) {
+			const shown = await this.$refs.sync?.revealPath(path, selection);
+			if (!shown) {
+				this.$q.notify({ type: 'warning', message: `${path} isn't in this folder anymore.`, position: 'top' });
+			}
 		},
 		onSyncError(err) {
 			const message = err?.shortMessage || err?.message || '';
@@ -480,6 +506,9 @@ export default {
 .panel-head__note {
 	color: var(--q-text-muted, #8a94a6);
 	font-weight: 400;
+	/* Gives way well before the id does when the row is squeezed (the search box takes
+	   room here too) — it's the least important text in the row. */
+	flex-shrink: 20;
 	min-width: 0;
 	overflow: hidden;
 	text-overflow: ellipsis;

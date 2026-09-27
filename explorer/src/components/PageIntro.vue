@@ -12,28 +12,48 @@
 
 		<q-input
 			v-if="search"
-			v-model="query"
+			ref="searchInput"
+			v-model="text"
 			class="page-intro-search"
 			borderless
 			dense
 			:placeholder="searchPlaceholder"
-			@keyup.enter="$emit('search', query)"
+			@update:model-value="onInput"
+			@keyup.enter="submit"
+			@keydown.esc="clear"
 		>
 			<template #prepend>
 				<q-icon name="search" size="23px" />
 			</template>
 
 			<template #append>
-				<span class="page-intro-shortcut">
+				<q-icon
+					v-if="text"
+					name="close"
+					size="18px"
+					class="page-intro-clear cursor-pointer"
+					role="button"
+					aria-label="Clear search"
+					@click="clear"
+				/>
+				<span v-else class="page-intro-shortcut">
 					<span>⌘</span>
 					<span>K</span>
 				</span>
 			</template>
 		</q-input>
+
+		<!-- A line of context tied to the search field (what it searches, say). -->
+		<div v-if="$slots['below-search']" class="page-intro-below-search">
+			<slot name="below-search" />
+		</div>
 	</div>
 </template>
 
 <script>
+const LIVE_DEBOUNCE_MS = 400;
+const LIVE_MIN_CHARS = 2;
+
 export default {
 	name: 'PageIntro',
 
@@ -50,6 +70,18 @@ export default {
 			type: Boolean,
 			default: true,
 		},
+		// Initial / externally-set search text (e.g. restored from the URL). The field stays
+		// editable; `search` fires on Enter (and, with `live`, as you type).
+		query: {
+			type: String,
+			default: '',
+		},
+		// Search as the user types: `search` fires once typing pauses, not only on Enter.
+		// Clearing the field fires it at once with ''.
+		live: {
+			type: Boolean,
+			default: false,
+		},
 		searchPlaceholder: {
 			type: String,
 			default: 'Search...',
@@ -60,13 +92,82 @@ export default {
 
 	data () {
 		return {
-			query: '',
+			text: this.query,
 		}
+	},
+
+	created() {
+		this._lastEmitted = this.query;
+		this._debounce = null;
+	},
+
+	watch: {
+		// Follows the page's own query (Back/Forward, a result clicked elsewhere clearing it) —
+		// except when the page is only echoing what this field just sent: in live mode that echo
+		// trails the typing by one pause, and writing it back would undo the keystrokes since.
+		query(value) {
+			if (value === this._lastEmitted) return;
+			this._lastEmitted = value;
+			this.text = value;
+		},
+	},
+
+	methods: {
+		emitSearch(text) {
+			this._lastEmitted = text;
+			this.$emit('search', text);
+		},
+		onInput(value) {
+			clearTimeout(this._debounce);
+			if (!this.live) return;
+			const text = (value || '').trim();
+			if (!text) {
+				this.emitSearch('');
+				return;
+			}
+			if (text.length < LIVE_MIN_CHARS) return;
+			this._debounce = setTimeout(() => this.emitSearch(text), LIVE_DEBOUNCE_MS);
+		},
+		submit() {
+			clearTimeout(this._debounce);
+			this.emitSearch((this.text || '').trim());
+		},
+		clear() {
+			clearTimeout(this._debounce);
+			this.text = '';
+			this.emitSearch('');
+		},
+	},
+
+	// The ⌘K / Ctrl+K hint shown in the field is real: it focuses the field from anywhere on
+	// the page.
+	mounted() {
+		this._onKeydown = (event) => {
+			if (!this.search) return;
+			if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'k') {
+				event.preventDefault();
+				this.$refs.searchInput?.focus();
+			}
+		};
+		window.addEventListener('keydown', this._onKeydown);
+	},
+
+	beforeUnmount() {
+		clearTimeout(this._debounce);
+		window.removeEventListener('keydown', this._onKeydown);
 	},
 }
 </script>
 
 <style scoped>
+.page-intro-clear {
+	color: var(--muted, #8a94a6);
+}
+
+.page-intro-clear:hover {
+	color: var(--text, #fff);
+}
+
 /* Sits above a host section's decorative overlay (e.g. a ::after dot-grid),
    which is why this needs relative + z-index rather than relying on DOM
    order alone — matches how sibling content blocks position themselves in
@@ -97,6 +198,14 @@ export default {
 .page-intro-search {
 	width: min(100%, 520px);
 	margin-top: 26px;
+}
+
+.page-intro-below-search {
+	margin-top: 10px;
+	padding-left: 4px;
+	font-size: 12px;
+	line-height: 1.5;
+	color: var(--muted, var(--q-text-muted));
 }
 
 /* `borderless` keeps Quasar from drawing its own frame, so the box is

@@ -8,6 +8,9 @@
         "directory": "scripts"
     },
     "type": "module",
+    "engines": {
+        "node": ">=22"
+    },
     "private": true,
     "scripts": {
         "sync-abi": "osv-guard node sync_abi.js",
@@ -17,6 +20,7 @@
         "deploy:gateway:mainnet": "osv-guard node deploy_gateway_mainnet.js",
         "push-dataset:testnet": "osv-guard node push_dataset_testnet.js",
         "update-dataset:testnet": "osv-guard node update_dataset_testnet.js",
+        "push-docs:testnet": "osv-guard node push_docs_testnet.js",
         "collect-fees:testnet": "osv-guard node collect_fees_testnet.js",
         "collect-fees:mainnet": "node collect_fees_mainnet.js"
     },

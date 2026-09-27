@@ -6,11 +6,13 @@ import { quasar, transformAssetUrls } from '@quasar/vite-plugin';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
-// Both pulled in by path, not as pnpm dependencies — see resolveSdkDeps' own doc for why
+// All pulled in by path, not as pnpm dependencies — see resolveSdkDeps' own doc for why
 // that needs this redirect at all.
 const SDK_DIRS = [
 	path.resolve(__dirname, '../js') + path.sep,
 	path.resolve(__dirname, '../monadsync') + path.sep,
+	path.resolve(__dirname, '../cli/lib/search') + path.sep,
+	path.resolve(__dirname, '../mnemonad-search-transformers') + path.sep,
 ];
 
 /**
@@ -63,7 +65,28 @@ export default defineConfig({
 		alias: {
 			'@mnemonad': path.resolve(__dirname, '../js/index.js'),
 			'@monadsync': path.resolve(__dirname, '../monadsync/index.js'),
+			// The CLI's search engine, browser half only — its Node entry loads better-sqlite3
+			// and the native sqlite-vector extension. Its one runtime import
+			// (@huggingface/tokenizers) resolves against this package via resolveSdkDeps.
+			'@mnemonad-search': path.resolve(__dirname, '../cli/lib/search/browser.js'),
+			// The optional MiniLM provider — loaded only for an index built with it (see
+			// src/mnemonad/search/searchWorker.js); @huggingface/transformers resolves here too.
+			'@mnemonad-search-transformers': path.resolve(__dirname, '../mnemonad-search-transformers/index.js'),
 		},
+	},
+	optimizeDeps: {
+		// sqlite-wasm finds its .wasm next to itself via `new URL('sqlite3.wasm',
+		// import.meta.url)`; pre-bundling moves the JS into .vite/deps and leaves the .wasm
+		// behind. (searchWorker.js also passes an explicit `?url` import as locateFile.)
+		exclude: ['@sqliteai/sqlite-wasm'],
+	},
+	// Stream search runs in a module worker (src/mnemonad/search/). Its bundle is built
+	// separately from the app's, so it needs the same SDK resolution, and ES format because
+	// it lazy-loads sqlite-wasm and transformers.js with dynamic import(), which Vite's
+	// default IIFE worker format can't code-split.
+	worker: {
+		format: 'es',
+		plugins: () => [resolveSdkDeps()],
 	},
 	server: {
 		port: process.env.PORT ? parseInt(process.env.PORT) : 5173,

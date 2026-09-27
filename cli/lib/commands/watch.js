@@ -16,7 +16,9 @@ import {
     resolveOffloadParams,
     formatStreamId,
     discoverStreamId,
+    userError,
 } from './shared.js';
+import { makeIndexer, updateIndex } from './buildIndex.js';
 
 function timestamp() {
     return new Date().toTimeString().slice(0, 8);
@@ -39,6 +41,17 @@ export async function watch(args) {
     const pollIntervalMs = (args.pollInterval ?? 2) * 1000;
     const pushEnabled = !args.pullOnly;
     const pullEnabled = !args.pushOnly;
+
+    if (args.index && !pushEnabled) {
+        throw userError('--index only applies when watch pushes — drop --pull-only to use it');
+    }
+    if (args.rebuild && !args.index) {
+        throw userError('--rebuild only applies with --index (it starts the search index over)');
+    }
+    // One indexer for the whole session: the embedding model loads on the first change and
+    // then stays in memory, so every later re-index costs only the files that changed.
+    // Built now so bad chunking flags or a missing extension fail before watching starts.
+    const indexer = args.index ? await makeIndexer(cwd, args) : null;
 
     const excludes = makeExcludes(args);
 
@@ -79,6 +92,7 @@ export async function watch(args) {
     console.log(`  remote version: ${remoteVersion}`);
     console.log(`  push:          ${pushEnabled ? `enabled (debounce ${debounceMs}ms)` : 'disabled'}`);
     console.log(`  pull:          ${pullEnabled ? `enabled (poll every ${pollIntervalMs / 1000}s)` : 'disabled'}`);
+    if (indexer) console.log('  index:         updated before every push');
     console.log('press Ctrl+C to stop\n');
 
     async function runPush() {
@@ -88,6 +102,23 @@ export async function watch(args) {
 
         pushInFlight = true;
         try {
+            // Before the push, so the push carries it. The index file's own write then fires
+            // the watcher again, but by then lastSyncedHash (taken after indexing, below)
+            // already includes it, so that second pass finds nothing new and doesn't push.
+            // A failed index skips the push rather than publishing a stale index; the next
+            // change retries both.
+            let hashToSync = newHash;
+            if (indexer) {
+                try {
+                    // Never a rebuild here — `--rebuild` applies once, to the startup pass below.
+                    await updateIndex(cwd, args, { indexer, quiet: true, rebuild: false });
+                } catch (err) {
+                    console.error(`[${timestamp()}] index update failed, not pushing:`, err.message);
+                    return;
+                }
+                hashToSync = await localTreeHash(cwd);
+            }
+
             // Best-effort race guard, not an atomic one. Mnemonad's contract *does* check an
             // `expectedLength` atomically (Mnemonad.sol's `_checkLength`/`LengthMismatch`) —
             // that closes the index race outright: two writers can never land at the same
@@ -111,7 +142,7 @@ export async function watch(args) {
             const fsFolder = new FSFolder(cwd, excludes);
             console.log(`[${timestamp()}] change detected — pushing...`);
             const result = await monadSync.push(fsFolder);
-            lastSyncedHash = newHash;
+            lastSyncedHash = hashToSync;
             remoteVersion = result.version;
             console.log(`[${timestamp()}] pushed version ${result.version}`);
         } catch (err) {
@@ -172,6 +203,20 @@ export async function watch(args) {
     });
 
     const poller = setInterval(runPoll, pollIntervalMs);
+
+    // An index that's already out of date when the session starts (files edited, or indexed
+    // for the first time) would otherwise only catch up on the next local change.
+    if (indexer) {
+        try {
+            const result = await updateIndex(cwd, args, { indexer, quiet: true, rebuild: !!args.rebuild });
+            if (result.filesChanged || result.filesRemoved) {
+                console.log(`[${timestamp()}] index was out of date — pushing the update`);
+                debounceTimer = setTimeout(runPush, 0);
+            }
+        } catch (err) {
+            console.error(`[${timestamp()}] index update failed:`, err.message);
+        }
+    }
 
     let shutdownResolve;
     const shutdownPromise = new Promise((resolve) => {

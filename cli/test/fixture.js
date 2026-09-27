@@ -56,6 +56,14 @@ export async function makeBaseArgs(params = {}) {
 		pushOnly: false,
 		pullOnly: false,
 		yes: false,
+		query: null,
+		index: false,
+		rebuild: false,
+		searchDb: null,
+		model: null,
+		chunkSize: null,
+		chunkOverlap: null,
+		limit: null,
 		// Not part of the real CLI's args shape — convenience for tests only.
 		accountAddress: clients.account.address,
 	};

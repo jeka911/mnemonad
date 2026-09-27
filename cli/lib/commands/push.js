@@ -18,7 +18,9 @@ import {
     formatStreamId,
     streamIdsEqual,
     discoverStreamId,
+    userError,
 } from './shared.js';
+import { updateIndex, checkIndex, indexDbName } from './buildIndex.js';
 
 export async function push(args) {
     const destPath = resolvePath(args.path, { mustExist: true });
@@ -28,6 +30,23 @@ export async function push(args) {
     // stream for the same folder.
     await discoverStreamId(args, destPath);
     let streamId = args.streamId;
+
+    // Before anything is scanned or signed: the push below then picks the updated index up
+    // like any other file. A failure stops the push outright — a push that silently went out
+    // without the index asked for would leave the stream unsearchable with no sign of why.
+    if (args.rebuild && !args.index) {
+        throw userError('--rebuild only applies with --index (it starts the search index over)');
+    }
+    if (args.index) {
+        console.log(args.rebuild ? '  rebuilding search index...' : '  updating search index...');
+        try {
+            await updateIndex(destPath, args, { quiet: true });
+        } catch (err) {
+            throw userError(`indexing failed, so nothing was pushed: ${err.message}`);
+        }
+    } else {
+        await warnIfIndexStale(destPath, args);
+    }
 
     const fsFolder = new FSFolder(destPath, makeExcludes(args));
 
@@ -135,4 +154,28 @@ export async function push(args) {
         // versa) still matches; streamIdsEqual() above is the belt to this suspenders.
         await writeManifest(destPath, { streamId: formatStreamId(streamId), version: result.version, files: localFiles });
     }
+}
+
+/**
+ * A folder that already carries an index, pushed without `--index` after its files changed,
+ * would publish an index that no longer matches them — searches keep returning the old text's
+ * offsets. Cheap to catch (a hash per file, no model load, the index opened read-only) and
+ * worth a line; never a reason to fail the push itself.
+ */
+async function warnIfIndexStale(destPath, args) {
+    let status;
+    try {
+        status = await checkIndex(destPath, args);
+    } catch {
+        return;
+    }
+    if (!status || status.total === 0) return;
+    const parts = [];
+    if (status.changed.length) parts.push(`${status.changed.length} changed`);
+    if (status.added.length) parts.push(`${status.added.length} new`);
+    if (status.removed.length) parts.push(`${status.removed.length} removed`);
+    console.log(
+        `  note: ${indexDbName(args)} is out of date (${parts.join(', ')} file(s) since it was built).\n` +
+        '        Push with --index to update it first, or run `mnemonad index <path>`.'
+    );
 }

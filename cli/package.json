@@ -1,6 +1,6 @@
 {
     "name": "mnemonad-cli",
-    "version": "0.2.0",
+    "version": "0.3.0",
     "description": "CLI to sync local folders to versioned, diffed on-chain streams on Monad, backed by Mnemonad + monadsync.",
     "repository": {
         "type": "git",
@@ -8,6 +8,9 @@
         "directory": "cli"
     },
     "type": "module",
+    "engines": {
+        "node": ">=22"
+    },
     "license": "AGPL-3.0",
     "bin": {
         "mnemonad": "./bin/mnemonad.js"
@@ -19,14 +22,19 @@
         "README.md"
     ],
     "scripts": {
-        "test": "vitest run ./test/*.test.js"
+        "test": "vitest run ./test/*.test.js ./test/search/*.test.js"
     },
     "dependencies": {
+        "@huggingface/tokenizers": "^0.2.0",
+        "@sqliteai/sqlite-vector": "^1.1.2",
+        "better-sqlite3": "^13.0.3",
         "mnemonad": "workspace:^",
         "monadsync": "workspace:^",
         "viem": "^2.56.3"
     },
     "devDependencies": {
+        "@sqliteai/sqlite-wasm": "3.50.4-wasm.1.0.0-sync.1.1.3-vector.1.1.2-memory.1.3.5",
+        "mnemonad-search-transformers": "workspace:^",
         "vitest": "^4.1.11"
     }
 }

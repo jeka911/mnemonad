@@ -45,6 +45,8 @@ const CLI_CHAIN = {
  * @param {boolean} [opts.manifest] - write/use `.mnemonad` for faster change detection
  * @param {boolean} [opts.forceSnapshot] - push a full snapshot instead of a diff
  * @param {string} [opts.exclude] - extra comma-separated exclude patterns
+ * @param {boolean} [opts.index] - update the folder's search index before pushing (`--index`)
+ * @param {boolean} [opts.rebuild] - with `index`: start the search index over (`--rebuild`)
  * @returns {Promise<{streamId: ?string}>} the id the CLI reported, for the caller to print
  *   or chain from; null if its output didn't name one (nothing to push, say).
  */
@@ -71,6 +73,8 @@ export async function pushDatasetToNetwork(networkKey, opts = {}) {
 	argv.push(dir, '--chain', chain);
 	if (opts.manifest) argv.push('--manifest');
 	if (opts.forceSnapshot) argv.push('--force-snapshot');
+	if (opts.index) argv.push('--index');
+	if (opts.rebuild) argv.push('--rebuild');
 	if (opts.exclude) argv.push('--exclude', opts.exclude);
 
 	console.log(`Pushing ${path.relative(REPO_ROOT, dir) || dir} to ${chain}`);
@@ -82,9 +86,11 @@ export async function pushDatasetToNetwork(networkKey, opts = {}) {
 	// CLI's own `created:` line, which is the only place a freshly minted id is announced.
 	// Parsing is confined to that one case on purpose — the id we were handed is never
 	// re-derived from output that may or may not mention it (a no-op push doesn't).
-	const streamId = opts.streamId || (output.match(/\bcreated:\s*(\d+)/) || [])[1] || null;
-	if (streamId && chain === 'testnet') {
-		console.log(`  browse:        https://mnemonad.vercel.app/stream/${streamId}/files`);
+	// The CLI prints the id as 0x-prefixed hex (formatStreamId) — a bare `\d+` here would
+	// capture just the leading "0". Decimal still accepted, for an id passed in that form.
+	const streamId = opts.streamId || (output.match(/\bcreated:\s*(0x[0-9a-fA-F]+|\d+)/) || [])[1] || null;
+	if (streamId) {
+		console.log(`  browse:        ${browseUrl(chain, streamId)}`);
 	}
 	return { streamId };
 }
@@ -125,13 +131,14 @@ export function parsePushDatasetArgs(argv) {
  * argument, so it never appears in a process listing.
  *
  * @param {string[]} argv
- * @param {string} key
+ * @param {?string} [key] - omit for commands that don't sign anything
  * @returns {Promise<string>} everything the CLI wrote to stdout
  */
-function runCli(argv, key) {
+export function runCli(argv, key = null) {
 	return new Promise((resolve, reject) => {
 		const child = spawn(process.execPath, [CLI_BIN, ...argv], {
-			env: { ...process.env, MNEMONAD_KEY: key },
+			// Read-only commands (`index`, `diff`) sign nothing, so they get no key at all.
+			env: key ? { ...process.env, MNEMONAD_KEY: key } : process.env,
 			stdio: ['ignore', 'pipe', 'pipe'],
 		});
 
@@ -146,9 +153,20 @@ function runCli(argv, key) {
 		child.on('close', (code) => {
 			if (code === 0) resolve(stdout);
 			// The CLI has already printed its own message; this only sets the exit status.
-			else reject(new Error(`push-dataset: mnemonad push exited with code ${code}`));
+			else reject(new Error(`push-dataset: mnemonad ${argv[0]} exited with code ${code}`));
 		});
 	});
+}
+
+/** `deployToNetwork`'s network keys, exported for scripts building on this one. */
+export { CLI_CHAIN };
+
+/** Explorer page for a stream's files, as a network-qualified id (see
+ *  explorer/src/includes/streamRoute.js) so it opens on the right network whichever one the
+ *  visitor last selected. */
+export function browseUrl(chain, streamId) {
+	const hex = '0x' + BigInt(streamId).toString(16).padStart(64, '0');
+	return `https://mnemonad.vercel.app/stream/${chain}-${hex}/files`;
 }
 
 /**

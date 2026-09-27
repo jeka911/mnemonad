@@ -5,3 +5,5 @@ export { diff } from './diff.js';
 export { watch } from './watch.js';
 export { compact } from './compact.js';
 export { burn } from './burn.js';
+export { buildIndex } from './buildIndex.js';
+export { search } from './search.js';

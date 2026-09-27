@@ -17,7 +17,7 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 
-import { push, pull, info, diff, watch, compact, burn } from '../lib/commands/index.js';
+import { push, pull, info, diff, watch, compact, burn, buildIndex, search } from '../lib/commands/index.js';
 import { parseQualifiedStreamId } from '../lib/commands/shared.js';
 import defaultConfig from '../mnemonad.config.js';
 
@@ -40,7 +40,7 @@ const CONFIG = defaultConfig || {};
 // Same default the explorer dApp uses (explorer/src/mnemonad/presignProvider.js) — a
 // public read gateway so pulling/diffing/inspecting a stream with IPFS-offloaded items
 // works out of the box, with no setup, for anyone who didn't push it themselves.
-const DEFAULT_IPFS_GATEWAY = CONFIG.gatewayUrl || 'https://gateway.pinata.cloud/ipfs/';
+const DEFAULT_IPFS_GATEWAY = CONFIG.gatewayUrl || 'https://azure-casual-firefly-850.mypinata.cloud/ipfs/';
 
 // The deployed presign server (presign-server/) this project runs by default — see its own
 // README for what it does. Pushing an item too big to fit on-chain uses this automatically
@@ -58,6 +58,9 @@ Usage:
   mnemonad watch <stream-id> <path> [options]     Watch folder and auto-push/pull
   mnemonad compact <stream-id> <path> [options]   Truncate old history, push a fresh snapshot
   mnemonad burn <stream-id> --yes [options]       Permanently destroy a stream (irreversible)
+  mnemonad index <path> [options]                 Build/update a local vector-search index
+                                                   for the folder (optional; see below)
+  mnemonad search <path> <query> [options]        Search a folder's vector index
 
 <path> is always required wherever a command touches a folder — the CLI never assumes the
 current directory. The exceptions are \`mnemonad info\` with no stream-id (just checks your
@@ -73,7 +76,7 @@ Options:
   --contract-address <addr> Registry address to use instead of the chain's known deployment
                             (required with --chain local)
   --gateway-url <url>       IPFS gateway for reading externally-offloaded items
-                            (default: https://gateway.pinata.cloud/ipfs/, or MNEMONAD_IPFS_GATEWAY env var)
+                            (default: this project's Pinata dedicated gateway, or MNEMONAD_IPFS_GATEWAY env var)
   --presign-url <url>       Presign server for paid IPFS uploads with no Pinata credential
                             (default: the deployed server in mnemonad.config.js, or MNEMONAD_PRESIGN_URL env var)
   --key <privkey>           Monad private key (or set MNEMONAD_KEY env var)
@@ -90,12 +93,35 @@ Options:
                             With no stream-id given, every command recovers it from an
                             existing .mnemonad in <path> instead of requiring it explicitly
   --force-snapshot          Push a full snapshot regardless of prior history (repairs corrupt streams)
+  --index                   push/watch: update the folder's search index (search_index.db)
+                            before every push, so the stream is searchable right after a pull.
+                            Takes --db/--model/--chunk-size/--chunk-overlap like \`index\`
   --poll-interval <s>       Watch: seconds between remote checks (default: 2)
   --debounce <ms>           Watch: ms quiet period before pushing after a change (default: 1000)
   --push-only               Watch: disable auto-pull
   --pull-only               Watch: disable auto-push
   --yes                     Required by burn — explicit opt-in for an irreversible action
+  --db <name>               index/search: vector-index filename (default: search_index.db)
+  --model <name>            index / --index: embedding model. \`potion\` (built in, the default for
+                            a new index) or \`minilm\` (better on paraphrased queries; needs the
+                            optional extension: npm install -g mnemonad-search-transformers),
+                            or a full model id. Without it, an existing index keeps its own
+                            model. \`search\` always uses the index's own model. All local —
+                            no API key, nothing sent anywhere
+  --rebuild                 index / --index: start the index over (the way to switch models);
+                            the next push uploads the whole index again
+  --chunk-size <n>          index: target characters per chunk (default: 1000)
+  --chunk-overlap <n>       index: characters of overlap between chunks (default: 150)
+  --limit, -k <n>           search: number of results (default: 5)
   --help                    Show this help
+
+index/search are optional and independent of push/pull — a folder with no search_index.db
+just has no search capability. \`index\` writes a plain (non-dot-prefixed) file at the
+folder's root, so it rides through the next \`push\` like any other file: whoever pulls the
+stream gets the index already built, with no re-embedding of their own. \`push --index\` and
+\`watch --index\` run \`index\` for you before each push, and a plain \`push\` of a folder whose
+index has fallen behind its files says so. See docs/search.md in the repository for how the
+index works and stays diff-friendly on repeated pushes.
 `;
 
 function parseArgs(argv) {
@@ -120,12 +146,20 @@ function parseArgs(argv) {
         password: null,
         pinataJwt: process.env.PINATA_JWT || null,
         manifest: false,
+        index: false,
+        rebuild: false,
         forceSnapshot: false,
         pollInterval: 2,
         debounce: 1000,
         pushOnly: false,
         pullOnly: false,
         yes: false,
+        query: null,
+        searchDb: null,
+        model: null,
+        chunkSize: null,
+        chunkOverlap: null,
+        limit: null,
     };
 
     const raw = argv.slice(2);
@@ -164,12 +198,22 @@ function parseArgs(argv) {
         return qualified.id;
     };
 
+    // `-k` is the one short flag — it has to end the positionals too, or `search`'s
+    // join-the-rest query below swallows it (`search ./f slow and steady -k 3` once searched
+    // for "slow and steady -k 3").
+    const isFlag = (arg) => arg.startsWith('--') || arg === '-k';
     const positionals = [];
-    while (i < raw.length && !raw[i].startsWith('--')) {
+    while (i < raw.length && !isFlag(raw[i])) {
         positionals.push(raw[i]);
         i++;
     }
-    if (positionals.length === 2) {
+    if (args.command === 'search') {
+        // <path> <query...> — everything after the path is the query, joined back with spaces
+        // so an unquoted multi-word query (`mnemonad search ./docs how does chunking work`)
+        // works the same as a quoted one. Never a stream id — `search` doesn't take one.
+        args.path = positionals[0] || null;
+        args.query = positionals.length > 1 ? positionals.slice(1).join(' ') : null;
+    } else if (positionals.length === 2) {
         args.streamId = takeStreamId(positionals[0]);
         args.path = positionals[1];
     } else if (positionals.length === 1) {
@@ -214,6 +258,10 @@ function parseArgs(argv) {
             args.pinataJwt = raw[++i];
         } else if (flag === '--manifest') {
             args.manifest = true;
+        } else if (flag === '--index') {
+            args.index = true;
+        } else if (flag === '--rebuild') {
+            args.rebuild = true;
         } else if (flag === '--force-snapshot') {
             args.forceSnapshot = true;
         } else if (flag === '--poll-interval' && i + 1 < raw.length) {
@@ -226,6 +274,16 @@ function parseArgs(argv) {
             args.pullOnly = true;
         } else if (flag === '--yes') {
             args.yes = true;
+        } else if (flag === '--db' && i + 1 < raw.length) {
+            args.searchDb = raw[++i];
+        } else if (flag === '--model' && i + 1 < raw.length) {
+            args.model = raw[++i];
+        } else if (flag === '--chunk-size' && i + 1 < raw.length) {
+            args.chunkSize = Number(raw[++i]);
+        } else if (flag === '--chunk-overlap' && i + 1 < raw.length) {
+            args.chunkOverlap = Number(raw[++i]);
+        } else if ((flag === '--limit' || flag === '-k') && i + 1 < raw.length) {
+            args.limit = Number(raw[++i]);
         }
         i++;
     }
@@ -268,6 +326,10 @@ try {
         await compact(args);
     } else if (args.command === 'burn') {
         await burn(args);
+    } else if (args.command === 'index') {
+        await buildIndex(args);
+    } else if (args.command === 'search') {
+        await search(args);
     } else {
         console.error('Unknown command:', args.command);
         console.log(USAGE);

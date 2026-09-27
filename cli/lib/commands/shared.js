@@ -12,7 +12,7 @@ import { DoubleSync as SyncEngine, CDCStore, DoubleSyncSnapshot as SyncSnapshot 
 import { FSFolder } from '../FSFolder.js';
 import { createPresignProvider } from '../presignProvider.js';
 
-const DEFAULT_FS_EXCLUDES = ['node_modules', '.git', '.env', '.DS_Store', '.mnemonad', '.claude', 'pnpm-lock.yaml', 'package-lock.json'];
+export const DEFAULT_FS_EXCLUDES = ['node_modules', '.git', '.env', '.DS_Store', '.mnemonad', '.claude', 'pnpm-lock.yaml', 'package-lock.json'];
 
 export function makeExcludes(args) {
     if (!args.exclude) return undefined;
@@ -305,7 +305,8 @@ export async function unlockStream(mn, credentials = {}) {
     return true;
 }
 
-function userError(message) {
+/** An error the CLI prints as a plain message (no stack trace) — see bin/mnemonad.js. */
+export function userError(message) {
     const err = new Error(message);
     err._isUserError = true;
     return err;

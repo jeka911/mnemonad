@@ -2,6 +2,7 @@ packages:
   - js
   - monadsync
   - cli
+  - mnemonad-search-transformers
 
 # Merged from js/pnpm-workspace.yaml and monadsync/pnpm-workspace.yaml (both agreed on this
 # entry, cli had none of its own) now that all three share one workspace root. explorer/ and
@@ -10,3 +11,16 @@ packages:
 # without risking its Vercel deploy (root directory = explorer).
 minimumReleaseAgeExclude:
   - osv-guard@0.2.1
+
+# Native/build-script dependencies pnpm otherwise blocks by default for supply-chain safety.
+# Approved once here so every future `pnpm install` (any dev, CI) just works with no manual
+# `pnpm approve-builds` step. better-sqlite3 (mnemonad-search's vector index store) and
+# onnxruntime-node (mnemonad-search's default local embedding model, via @huggingface/
+# transformers) both need their install step to place a real native addon — confirmed live:
+# without this, a fresh install silently leaves them non-functional. protobufjs's own install
+# script is just an optional native-speedup build for its wire-format parser (used by
+# onnxruntime-node's model loading) — allowed too, same reasoning.
+allowBuilds:
+  better-sqlite3: true
+  onnxruntime-node: true
+  protobufjs: true

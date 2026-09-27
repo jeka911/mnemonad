@@ -3,6 +3,9 @@
     "version": "0.0.1",
     "description": "Issues size-bounded Pinata presigned upload URLs against paid on-chain escrow",
     "type": "module",
+    "engines": {
+        "node": ">=22"
+    },
     "private": true,
     "license": "AGPL-3.0",
     "scripts": {

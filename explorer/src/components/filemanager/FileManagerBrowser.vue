@@ -63,8 +63,9 @@
             v-if="editingTextItem"
             :item="editingTextItem"
             :readOnly="readOnly"
+            :selection="editingTextSelection"
             @saved="onTextSaved"
-            @close="editingTextItem = null"
+            @close="closeTextEditor"
         />
 
     </div>
@@ -137,6 +138,8 @@ export default {
             activeTab: 1,
             viewingMediaItem: null,
             editingTextItem: null,
+            // {start, end} to highlight when the editor opens — set only by revealItem().
+            editingTextSelection: null,
             browserWidth: 0,
             browserHeight: 0,
         }
@@ -155,6 +158,7 @@ export default {
             } else if (item.isBackButton) {
                 this.goToFolder(item.parent);
             } else if (item.isText) {
+                this.editingTextSelection = null;
                 this.editingTextItem = item;
             } else if (item.isFile) {
                 this.downloadFile(item);
@@ -250,7 +254,27 @@ export default {
         },
         onTextSaved() {
             this.$emit('change');
+            this.closeTextEditor();
+        },
+        closeTextEditor() {
             this.editingTextItem = null;
+            this.editingTextSelection = null;
+        },
+        /**
+         * Shows `item` (a file inside `folder`) in the text editor, navigating there first if
+         * that folder isn't the one on screen. Always the text editor, even for a file whose
+         * extension isn't one onItemClick() would treat as text: the only caller is stream
+         * search, and anything the indexer embedded is text by construction.
+         */
+        async revealItem(folder, item, selection = null) {
+            const active = this.activeTab == 1 ? this.currentFolder1 : this.currentFolder2;
+            if (!active || toRaw(active) !== toRaw(folder)) {
+                await this.goToFolder(folder);
+            }
+            this.editingTextItem = null;
+            await this.$nextTick();
+            this.editingTextSelection = selection;
+            this.editingTextItem = item;
         },
         handlePaste(e) {
             if (!e.clipboardData || !e.clipboardData.items) return;

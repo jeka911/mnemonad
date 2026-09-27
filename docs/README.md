@@ -1,0 +1,39 @@
+# Mnemonad docs
+
+Mnemonad is an infinite `bytes[]` on chain, one ERC-721 stream per `bytes[]`, with a
+content-defined-chunking diff engine on top that turns a folder into a versioned stream: each
+push stores only what changed since the last one.
+
+These pages are themselves a Mnemonad stream. They're pushed from the repo's `docs/` folder by
+`scripts/push_docs.js`, and this page reads them back from chain. They come with a search index,
+so the search box above searches them by meaning.
+
+## Start here
+
+- [Terms](terms.md): what *stream*, *item*, *chunk*, *pointer* and *frame* mean here. They look
+  interchangeable and aren't.
+
+## How it works
+
+- [Encryption](encryption/encryption.md): public and encrypted streams, and how an encrypted
+  stream's key is wrapped.
+  - [Password-based](encryption/password.md): a key-encryption key derived from a password.
+    It can be shared without handing over a wallet.
+  - [Signature-based](encryption/signature.md): a key-encryption key derived from the
+    owner's wallet signature. Nothing to remember, and no recovery if the wallet is lost.
+- [Item caching](caching.md): what the SDK caches, how each entry is keyed, and why only
+  as-stored bytes are ever cached.
+- [Vector search](search.md): how a folder's search index is built, shared, and searched from
+  the CLI and in the browser.
+
+## Research
+
+- [IPFS CID math](research/ipfs-cid-math.md): whether a client can know a payload's CID before
+  uploading it.
+- [Upload method selection](research/upload-methods-optimization.md): which storage-tier choices
+  the contract forces and which are left to the SDK.
+
+## Testing
+
+- [Local signer in the dApp](testing/local-signer.md): connecting the explorer with a raw
+  private key, for testing multi-transaction flows without wallet popups.

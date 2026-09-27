@@ -17,16 +17,18 @@ import { config as wagmiConfig } from '../wagmi';
 const PRESIGN_URL = (import.meta.env.VITE_PRESIGN_URL || '').replace(/\/$/, '');
 
 /**
- * Read gateway. Set this to your Pinata **dedicated** gateway
- * (`<name>.mypinata.cloud/ipfs/`), not the shared `gateway.pinata.cloud`.
+ * Read gateway. Defaults to this project's Pinata **dedicated** gateway
+ * (`<name>.mypinata.cloud/ipfs/`), not the shared `gateway.pinata.cloud` — override with
+ * VITE_IPFS_GATEWAY if you're running against a different Pinata account's uploads.
  *
- * The shared gateway is aggressively rate-limited and returns 429 for ordinary app traffic
- * — measured here as 429 on five consecutive reads of a freshly pinned CID, where the
- * dedicated gateway answered all five with 200. The dedicated domain is safe to ship in a
- * client bundle: it is a hostname, not a credential, and the content behind it is public
- * IPFS either way. List yours with `GET https://api.pinata.cloud/v3/ipfs/gateways`.
+ * The shared gateway is aggressively rate-limited and returns 429 for ordinary app traffic —
+ * measured live twice now: five consecutive reads of a freshly pinned CID (429 x5 shared,
+ * 200 x5 dedicated), and later a 20-request burst (429 x20 shared, 200 x20 dedicated, then
+ * 200 x50 at higher burst). The dedicated domain is safe to ship in a client bundle/commit to
+ * config: it's a hostname, not a credential, and the content behind it is public IPFS either
+ * way. List yours with `GET https://api.pinata.cloud/v3/ipfs/gateways`.
  */
-const READ_GATEWAY = import.meta.env.VITE_IPFS_GATEWAY || 'https://gateway.pinata.cloud/ipfs/';
+const READ_GATEWAY = import.meta.env.VITE_IPFS_GATEWAY || 'https://azure-casual-firefly-850.mypinata.cloud/ipfs/';
 
 /** How long a request signature stays valid. Short: it is used immediately. */
 const SIGNATURE_TTL_SECONDS = 120;

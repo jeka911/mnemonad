@@ -8,6 +8,9 @@
         "directory": "js"
     },
     "type": "module",
+    "engines": {
+        "node": ">=22"
+    },
     "main": "./index.js",
     "types": "./index.d.ts",
     "sideEffects": false,

@@ -66,11 +66,58 @@ given — `mnemonad info ~/my-data --manifest`, or `push`/`pull`/`diff`/`watch`/
 same way. And if you already have an id from elsewhere, `info` flags it when it doesn't match
 the folder's own manifest.
 
+## Search a folder by meaning (optional)
+
+A folder can carry its own semantic search index: `search_index.db`, a plain file at the folder
+root. Build it once and push it with the folder; whoever pulls the stream can search it
+straight away, with no embedding work of their own.
+
+```bash
+# build or update the index (only files changed since the last run are embedded again)
+mnemonad index ~/my-data
+
+# search by meaning, not keywords
+mnemonad search ~/my-data "how does the key get derived" -k 5
+
+# or update the index as part of every push (watch --index works the same way)
+mnemonad push ~/my-data --index --manifest
+```
+
+- Everything runs locally: a built-in embedding model (potion-base-8M, downloaded once, about
+  31 MB) and no API key. File contents and queries are never sent anywhere.
+- For better results on paraphrased queries there's an optional MiniLM extension (about 450 MB
+  installed): `npm install -g mnemonad-search-transformers`, then `mnemonad index <path> --model minilm`.
+  Don't install it unasked, since it's large. An index keeps its model: `search` always uses
+  it, and a pulled MiniLM index needs the extension to be searched from the CLI (the error says
+  so, and offers `mnemonad index <path> --rebuild` to switch it to the built-in model).
+- `index` adds `search_index.db` to the folder, and the next `push` uploads it like any other
+  file. Tell the user before indexing a folder they push. In an encrypted stream the index is
+  encrypted along with everything else.
+- For a folder that has an index, prefer `push --index`: it keeps the index in step with the
+  files, and pushes nothing if indexing fails. A plain `push` warns when the index is out of
+  date. Don't ignore that warning, because a stale index returns the old text's passages.
+- `search` needs an index in the folder: the user's own, or one that came down with a `pull`.
+  Without one it says to run `mnemonad index` first.
+- `index`, `search`, `--index` and `--rebuild` need mnemonad-cli 0.3.0 or newer. If any is
+  unknown, update: `npm install -g mnemonad-cli@latest`.
+
+A ready-made indexed stream to try it on is this app's own documentation, which is itself a
+public Mnemonad stream:
+
+```bash
+mnemonad pull testnet-0x5abaf9e3b9019f2ff7840a55e52e977d8bce1625d5273be52550f2cc72d921c6 ~/mnemonad-docs
+mnemonad search ~/mnemonad-docs "how is an encrypted stream's key wrapped"
+```
+
+In this app, a stream that has an index gets a search box in its file browser
+(`/stream/<id>/files`), and `/docs` renders the documentation stream above with search built in.
+
 ## URL scheme
 
 - `/select` — sample and wallet-owned streams
 - `/stream/<id>` — one stream's raw on-chain items
 - `/stream/<id>/files` — the same stream browsed as a folder tree
+- `/docs`, `/docs/<path>` — the documentation, read from its own stream; `?q=<query>` searches it
 
 `<id>` is the network and the ERC-721 token id together, e.g. `testnet-0x648f18…3ac8` —
 the same token id means different data on each network. A bare decimal or hex id also works

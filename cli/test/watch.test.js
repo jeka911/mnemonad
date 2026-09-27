@@ -2,6 +2,7 @@ import { beforeAll, afterAll, beforeEach, afterEach, describe, it, expect } from
 import { push } from '../lib/commands/push.js';
 import { pull } from '../lib/commands/pull.js';
 import { watch } from '../lib/commands/watch.js';
+import { search } from '../lib/commands/search.js';
 import {
 	startNode, makeBaseArgs, makeTempDir, cleanupDir, writeTestFile, readTree, captureLogs,
 } from './fixture.js';
@@ -105,5 +106,49 @@ describe('watch', () => {
 
 		const destTree = await readTree(destDir);
 		expect(destTree['a.txt'].toString('utf8')).toBe('v2 pushed from elsewhere\n');
+	}, TX_TIMEOUT);
+
+	it('with --index, re-indexes before each push — and pushes once, not again for the index file', async () => {
+		await writeTestFile(srcDir, 'notes.txt', 'Shopping list: bread, butter and jam.\n');
+		const baseArgs = await makeBaseArgs();
+		const { lines: pushLines } = await captureLogs(() => push({ ...baseArgs, path: srcDir, index: true }));
+		const streamId = pushLines.find((l) => l.includes('created:')).split('created:')[1].trim();
+
+		const handle = startWatch({
+			...baseArgs, streamId, path: srcDir, pullOnly: false, pushOnly: true, index: true,
+			debounce: 300, pollInterval: 1,
+		});
+
+		try {
+			await waitFor(() => handle.lines.some((l) => l.includes('watching')));
+			await writeTestFile(srcDir, 'notes.txt', 'Travel plans: a sailing trip around the harbour islands.\n');
+			await waitFor(() => handle.lines.some((l) => l.includes('pushed version 2')), 60_000);
+			// Writing the index is itself a change on disk; give the watcher more than a debounce
+			// period to react to it, and check that it didn't turn into a second push.
+			await new Promise((r) => setTimeout(r, 2500));
+			expect(handle.lines.some((l) => l.includes('pushed version 3'))).toBe(false);
+			expect(handle.lines.some((l) => l.includes('index: 1 file(s) re-embedded'))).toBe(true);
+		} finally {
+			await handle.stop();
+		}
+
+		// The pushed index describes the new text, not the old.
+		await pull({ ...baseArgs, streamId, path: destDir });
+		const { lines: hits } = await captureLogs(() =>
+			search({ ...baseArgs, path: destDir, query: 'boats and islands', limit: 1 })
+		);
+		const snippet = hits[hits.findIndex((l) => /^\n1\. /.test(l)) + 1];
+		expect(snippet).toContain('sailing trip');
+	}, 120_000);
+
+	it('rejects --index for a pull-only session, before watching starts', async () => {
+		await writeTestFile(srcDir, 'a.txt', 'v1\n');
+		const baseArgs = await makeBaseArgs();
+		const { lines: pushLines } = await captureLogs(() => push({ ...baseArgs, path: srcDir }));
+		const streamId = pushLines.find((l) => l.includes('created:')).split('created:')[1].trim();
+
+		await expect(
+			watch({ ...baseArgs, streamId, path: srcDir, pullOnly: true, index: true })
+		).rejects.toThrow(/--index only applies when watch pushes/);
 	}, TX_TIMEOUT);
 });

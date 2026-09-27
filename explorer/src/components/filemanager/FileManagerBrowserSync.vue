@@ -84,7 +84,7 @@ export default {
             default: 'var(--q-primary)',
         },
     },
-    emits: ['ready', 'pushed', 'error', 'close', 'change', 'unlock-requested', 'streamInfo', 'sync-state'],
+    emits: ['ready', 'pushed', 'error', 'close', 'change', 'unlock-requested', 'streamInfo', 'sync-state', 'folder'],
     data() {
         return {
             rootFolder: null,
@@ -261,6 +261,7 @@ export default {
             this.rootFolder = folder;
             this._knownLength = mn.length;
             this.status = 'ready';
+            this.$emit('folder', folder);
             this.$emit('ready', {
                 patchCount: mn.length,
                 totalBytes: mn.binaryLength,
@@ -309,6 +310,29 @@ export default {
         async syncNow() {
             if (!this._rawFolder || this.isSaving) return;
             await this._rawFolder.implementChanges();
+        },
+        /**
+         * Public: navigate to the file at `path` ('a/b/c.txt', relative to the stream's root)
+         * and open it in the text editor, optionally with `selection` ({start, end}, string
+         * offsets into its decoded text) highlighted — what a stream-search hit does when
+         * clicked (see StreamSearchBox.vue). Walks `_rawFolder`, not `rootFolder`: after a
+         * live poll the browser is showing a newer tree than the one first mounted.
+         * @returns {Promise<boolean>} false when the path doesn't resolve to a file.
+         */
+        async revealPath(path, selection = null) {
+            if (!this._rawFolder || !this.$refs.browser) return false;
+            const parts = path.split('/');
+            const fileName = parts.pop();
+            let folder = this._rawFolder;
+            for (const part of parts) {
+                const next = (await folder.list()).find((c) => c.name === part);
+                if (!next || !next.isFolder) return false;
+                folder = next;
+            }
+            const file = (await folder.list()).find((c) => c.name === fileName);
+            if (!file || file.isFolder) return false;
+            await this.$refs.browser.revealItem(folder, file, selection);
+            return true;
         },
         async push() {
             if (this.isSaving || this.readOnly) return;
@@ -417,6 +441,7 @@ export default {
                 this._watchPendingChanges(newFolder);
                 await newFolder.load();
                 this._rawFolder = newFolder;
+                this.$emit('folder', newFolder);
 
                 if (this.$refs.browser) {
                     await this.$refs.browser.reinitialize(newFolder);

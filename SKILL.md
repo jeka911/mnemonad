@@ -185,6 +185,8 @@ silently trusting either one.
 | **watch** | `<stream-id> <path> [options]` | Two-way sync: auto-push local changes, auto-pull remote updates |
 | **compact** | `<stream-id> <path> [options]` | Drop old history and push the current folder as a fresh snapshot |
 | **burn** | `<stream-id> --yes [options]` | Permanently destroy the stream. Irreversible |
+| **index** | `<path> [options]` | Optional: build/update a local vector-search index for the folder |
+| **search** | `<path> <query> [options]` | Optional: semantic search over a folder's vector index |
 
 ### Command examples
 
@@ -318,6 +320,42 @@ does **not** recover the data — the contract marks a burned id as permanently 
 already deployed as on-chain code physically survive; burning removes the stream as a usable,
 readable thing.
 
+#### index / search (optional vector search)
+
+```bash
+mnemonad index ~/my-data
+# Embeds changed text files into search_index.db, a plain file at the folder root — it rides
+# through the next push like any other file, so a later `pull` is searchable immediately with
+# no re-embedding by whoever pulled it. Uses a small local model; no API key, nothing sent
+# anywhere. Safe to run again later — unchanged files are skipped.
+
+mnemonad search ~/my-data "how does chunking work"
+# Semantic search, not keyword match. Needs an existing search_index.db (yours, or already
+# pulled down as part of the stream).
+
+mnemonad push ~/my-data --index
+# Same update, run right before the push. Uses the push's own --exclude, so the index covers
+# exactly what gets uploaded; if indexing fails, nothing is pushed. `watch --index` does the
+# same before every automatic push.
+```
+
+The built-in model (potion-base-8M, about 31 MB, pure JS) is the default. MiniLM is better on
+paraphrased queries but lives in an optional ~450 MB extension
+(`npm install -g mnemonad-search-transformers`, then `--model minilm`); don't install it
+unasked. An index keeps its model and `search` always uses it; `--rebuild` switches an index to
+another model.
+
+A plain `push` of a folder that already has an index warns when the index has fallen behind
+the files. Re-push with `--index` rather than publishing a stale one. As with `index`, tell
+the user before adding an index to a folder they push: it becomes part of the stream.
+
+Entirely optional — a folder with no `search_index.db` just has no search capability, and
+nothing else about push/pull/diff/watch changes either way.
+
+Once pushed, the index also switches on a search box in the explorer's file browser, next to
+**Clone**. It runs in the viewer's browser on the same index, so the stream's browse link is
+searchable too, for anyone who can open it (after unlocking, if the stream is encrypted).
+
 ## Configuration
 
 ### Command-line flags
@@ -337,7 +375,10 @@ readable thing.
 | `--no-compress` | — | gzip on | Disable gzip compression |
 | `--manifest` | — | off | Write/use `.mnemonad` for faster change detection; resolves a missing stream-id from it too |
 | `--force-snapshot` | — | off | Push a full snapshot regardless of history (repairs a corrupt stream) |
-| `--gateway-url` | URL | Pinata public gateway | IPFS gateway for reading offloaded items |
+| `--index` | — | off | `push`/`watch`: update the search index before every push; nothing is pushed if indexing fails |
+| `--model` | `potion` \| `minilm` \| model id | the index's own, else `potion` | `index`/`--index`: embedding model; `minilm` needs the optional `mnemonad-search-transformers` |
+| `--rebuild` | — | off | `index`/`--index`: start the index over — the way to switch models |
+| `--gateway-url` | URL | this project's Pinata dedicated gateway | IPFS gateway for reading offloaded items |
 | `--presign-url` | URL | deployed presign server | Paid IPFS uploads with no Pinata credential of your own |
 | `--pinata-jwt` | JWT | — | Use your own Pinata credential instead of the presign server |
 | `--poll-interval` | Seconds | `2` | `watch`: how often to check the chain |

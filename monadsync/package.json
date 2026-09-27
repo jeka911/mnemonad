@@ -2,6 +2,9 @@
 	"name": "monadsync",
 	"version": "0.0.1",
 	"type": "module",
+	"engines": {
+		"node": ">=22"
+	},
 	"description": "Combines Mnemonad (on-chain append-only storage on Monad) with DoubleSync (CDC delta sync) to store and replay folder-tree snapshots on-chain.",
 	"repository": {
 		"type": "git",
