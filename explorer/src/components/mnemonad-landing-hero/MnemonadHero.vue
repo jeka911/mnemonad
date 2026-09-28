@@ -77,7 +77,7 @@ export default {
      * `eyebrow` text) once past the demo stage. */
     eyebrowWords: {
       type: Array,
-      default: () => ['PERSISTENT', 'PERMISSIONLESS', 'PROGRAMMABLE', 'VERIFIABLE', 'PORTABLE', 'ENCRYPTABLE', 'DECENTRALIZED', 'EFFICIENT', 'SCALABLE', 'COMPOSABLE'],
+      default: () => ['PERSISTENT', 'AI', 'PERMISSIONLESS','PROGRAMMABLE', 'VERIFIABLE', 'PORTABLE', 'ENCRYPTABLE', 'DECENTRALIZED', 'EFFICIENT', 'SCALABLE', 'COMPOSABLE'],
     },
     titleLine1: { type: String, default: 'Your data.' },
     titleLine2: { type: String, default: 'On Monad.' },

@@ -11,6 +11,16 @@
 				no wallet confirmation.
 			</q-tooltip>
 		</q-icon>
+		<q-icon
+			v-if="walletStore.isConnected && isPasskeySession"
+			name="key"
+			size="16px"
+			class="passkey-badge"
+		>
+			<q-tooltip>
+				Connected with a passkey-derived account.
+			</q-tooltip>
+		</q-icon>
 		<GradientButton
 			:label="walletLabel"
 			:loading="isConnecting"
@@ -44,6 +54,21 @@
 					<div v-if="!connectors.length" class="no-wallets">
 						No wallet extensions detected. Install MetaMask or another browser wallet.
 					</div>
+
+					<template v-if="passkeySignerEnabled">
+						<q-separator />
+						<q-btn
+							v-if="!showPasskeySigner"
+							flat
+							dense
+							no-caps
+							color="primary"
+							label="Use a passkey instead"
+							class="passkey-toggle"
+							@click="showPasskeySigner = true"
+						/>
+						<PasskeyCard v-else @connected="onPasskeySignerConnected" />
+					</template>
 
 					<template v-if="localSignerEnabled">
 						<q-separator />
@@ -81,10 +106,15 @@ import { config } from './wagmi';
 import { useWalletStore } from './stores/wallet';
 import GradientButton from './components/GradientButton.vue';
 import { LOCAL_SIGNER_CONNECTOR_NAME } from './wallet/localSignerConnector.js';
+import { PASSKEY_CONNECTOR_NAME } from './wallet/passkeyConnector.js';
 import { getActiveNetwork } from './settings.js';
 
 // Off by default and read once at module load, matching `wagmi.js`'s own pattern.
 const LOCAL_SIGNER_ENABLED = import.meta.env.VITE_ENABLE_LOCAL_SIGNER === 'true';
+// On by default (unlike Local Signer): @category-labs/mera is still pre-1.0 and its own
+// docs say the API may change, not that the feature itself is unsafe — so this stays a kill
+// switch (VITE_ENABLE_PASSKEY_SIGNER=false) rather than an opt-in.
+const PASSKEY_SIGNER_ENABLED = import.meta.env.VITE_ENABLE_PASSKEY_SIGNER !== 'false';
 
 // A dynamic import rather than a static one: `components: { LocalSignerCard }` with a
 // static import would still bundle the component into this chunk regardless of the flag
@@ -93,6 +123,7 @@ const LOCAL_SIGNER_ENABLED = import.meta.env.VITE_ENABLE_LOCAL_SIGNER === 'true'
 // code at all, not merely never renders it — genuinely absent from what ships to a user who
 // never clicks the toggle, not just hidden behind one.
 const LocalSignerCard = defineAsyncComponent(() => import('./wallet/LocalSignerCard.vue'));
+const PasskeyCard = defineAsyncComponent(() => import('./wallet/PasskeyCard.vue'));
 
 export default {
 	name: 'WalletConnect',
@@ -100,6 +131,7 @@ export default {
 		JPanel,
 		GradientButton,
 		LocalSignerCard,
+		PasskeyCard,
 	},
 	data() {
 		return {
@@ -110,6 +142,8 @@ export default {
 			connectors: getConnectors(config),
 			localSignerEnabled: LOCAL_SIGNER_ENABLED,
 			showLocalSigner: false,
+			passkeySignerEnabled: PASSKEY_SIGNER_ENABLED,
+			showPasskeySigner: false,
 		};
 	},
 	computed: {
@@ -125,6 +159,9 @@ export default {
 		// via wagmi's own `account.connector.name`. No separate flag to keep in sync.
 		isLocalSignerSession: function() {
 			return this.walletStore.connectorName === LOCAL_SIGNER_CONNECTOR_NAME;
+		},
+		isPasskeySession: function() {
+			return this.walletStore.connectorName === PASSKEY_CONNECTOR_NAME;
 		},
 	},
 	mounted() {
@@ -175,12 +212,17 @@ export default {
 			this.showModal = false;
 			this.walletStore.refreshAccount();
 		},
+		onPasskeySignerConnected() {
+			this.showModal = false;
+			this.walletStore.refreshAccount();
+		},
 	},
 	watch: {
 		// Reopening later should offer the toggle again, not a form left expanded (or
 		// mid-edit) from the last time the dialog was open.
 		showModal(isOpen) {
 			if (!isOpen) this.showLocalSigner = false;
+			if (!isOpen) this.showPasskeySigner = false;
 		},
 	},
 };
@@ -193,6 +235,11 @@ export default {
 
 .local-signer-badge {
 	color: var(--q-warning, #f2c037);
+	margin-right: 4px;
+}
+
+.passkey-badge {
+	color: var(--q-primary);
 	margin-right: 4px;
 }
 
@@ -218,6 +265,10 @@ export default {
 }
 
 .local-signer-toggle {
+	align-self: center;
+}
+
+.passkey-toggle {
 	align-self: center;
 }
 

@@ -21,6 +21,8 @@ so the search box above searches them by meaning.
     It can be shared without handing over a wallet.
   - [Signature-based](encryption/signature.md): a key-encryption key derived from the
     owner's wallet signature. Nothing to remember, and no recovery if the wallet is lost.
+- [Passkey-derived accounts](wallet/passkey-accounts.md): a wallet-picker option in the
+  explorer where the account itself, not just a stream's key, is derived from a passkey.
 - [Item caching](caching.md): what the SDK caches, how each entry is keyed, and why only
   as-stored bytes are ever cached.
 - [Vector search](search.md): how a folder's search index is built, shared, and searched from

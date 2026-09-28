@@ -18,6 +18,7 @@
     "clean:cache": "rm -rf node_modules/.vite"
   },
   "dependencies": {
+    "@category-labs/mera": "^0.2.0",
     "@fizzyflow/doublesync": "^0.1.1",
     "@huggingface/tokenizers": "^0.2.0",
     "@huggingface/transformers": "^4.3.0",
