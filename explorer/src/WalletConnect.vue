@@ -116,8 +116,8 @@
 					</template>
 
 					<p v-if="!connectors.length" class="no-wallets">
-						No wallet extension detected — you can also install any EVM-compatible
-						browser wallet (MetaMask, Rabby, …) to sign in that way.
+						Optionally, install any EVM-compatible browser wallet (MetaMask, Rabby,
+						…) to sign in that way.
 					</p>
 				</div>
 
