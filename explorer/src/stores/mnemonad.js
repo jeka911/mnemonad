@@ -204,9 +204,9 @@ export const useMnemonadStore = defineStore('mnemonad', {
 		},
 		/**
 		 * Unlocks a wallet-encrypted stream by asking the connected account for the one
-		 * signature its key-encryption key derives from, adopting the key onto the cached
-		 * instance — so it survives navigation exactly like a password unlock does, and is
-		 * dropped by the same `clearStreamCache()`.
+		 * signature its key-encryption key derives from, adopting the key onto `stream` — so
+		 * it survives navigation exactly like a password unlock does, and is dropped by the
+		 * same `clearStreamCache()`.
 		 *
 		 * Checks ownership *before* prompting. Any wallet can produce a signature and derive
 		 * *a* key; only the owner's derives the right one, and everything else fails as an
@@ -214,17 +214,30 @@ export const useMnemonadStore = defineStore('mnemonad', {
 		 * is exactly the right test here because the contract refuses to transfer an
 		 * encrypted stream and only the owner may rewrap it.
 		 *
-		 * @param {bigint} id
+		 * Takes the live instance directly rather than an id to look up in `streamCache` —
+		 * connecting a wallet mid-visit (as opposed to arriving already connected) can clear
+		 * that cache out from under an open page via `wallet.js`'s own account-change sync,
+		 * even though the page's own instance (what `stream` is here) never stopped being
+		 * valid. Re-seeds the cache from it below instead of failing — there's no reason
+		 * unlocking should need a second `loadStream()` (a full page revisit, previously the
+		 * only way to recover from this) when the caller already has exactly what that would
+		 * have produced.
+		 *
+		 * @param {Object} stream - a live, already-`initialize()`d `Mnemonad` instance
 		 * @param {?string} address - the connected account, passed in rather than read from
 		 *   the wallet store to keep these two stores from importing each other
 		 * @returns {Promise<Uint8Array>} the unwrapped data key
 		 */
-		async unlockStreamWithWallet(id, address) {
-			const key = String(id);
-			const stream = streamCache.get(key);
+		async unlockStreamWithWallet(stream, address) {
 			if (!stream) throw new Error('Open the stream before unlocking it');
+			const key = String(stream.id);
+			if (!streamCache.has(key)) streamCache.set(key, stream);
 
-			const owner = ownerCache.get(key);
+			let owner = ownerCache.get(key);
+			if (owner === undefined) {
+				owner = await stream.owner();
+				ownerCache.set(key, owner);
+			}
 			if (!address) {
 				throw new Error('Connect the owner\'s wallet to unlock this stream');
 			}

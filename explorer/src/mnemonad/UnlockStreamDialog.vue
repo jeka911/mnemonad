@@ -161,7 +161,7 @@ export default {
 				} else {
 					// The store checks ownership before prompting, so the common "wrong account
 					// connected" case never costs the user a popup.
-					await this.mnemonadStore.unlockStreamWithWallet(this.stream.id, this.walletStore.address);
+					await this.mnemonadStore.unlockStreamWithWallet(this.stream, this.walletStore.address);
 				}
 				this.$emit('unlocked');
 				this.$emit('update:modelValue', false);
