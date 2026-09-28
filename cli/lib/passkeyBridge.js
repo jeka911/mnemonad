@@ -39,7 +39,26 @@ export async function openPasskeyBridge(args) {
 	if (active) return active.account;
 
 	const token = randomBytes(24).toString('hex');
-	const httpServer = createServer((_req, res) => {
+	// Read by /ping below — the one thing the page can't get from the WS (it doesn't exist
+	// yet at that point, see docs/wallet/passkey-accounts.md's CLI section) but still wants
+	// live: how much of the connect-timeout is actually left, and confirmation the CLI is
+	// still there at all.
+	const deadlineAt = Date.now() + CONNECT_TIMEOUT_MS;
+	const httpServer = createServer((req, res) => {
+		const url = new URL(req.url, 'http://127.0.0.1');
+		if (url.pathname === '/ping' && url.searchParams.get('token') === token) {
+			res.writeHead(200, {
+				'Content-Type': 'application/json',
+				// The page is served from the explorer's own origin, not this loopback one —
+				// an ordinary fetch() response is otherwise unreadable cross-origin. The token
+				// above is what actually gates this, same as the WS connection itself; the
+				// wildcard just matches that (no meaningful "origin" to restrict to when the
+				// caller could be any explorer deployment this token was ever handed to).
+				'Access-Control-Allow-Origin': '*',
+			});
+			res.end(JSON.stringify({ ttl: Math.max(0, Math.round((deadlineAt - Date.now()) / 1000)) }));
+			return;
+		}
 		res.writeHead(404);
 		res.end();
 	});
@@ -57,6 +76,12 @@ export async function openPasskeyBridge(args) {
 
 	const connected = new Promise((resolve, reject) => {
 		const timer = setTimeout(() => {
+			// Nothing ever reached the point (below) that assigns `active`, so
+			// closePasskeyBridge() has nothing to close on this path — without this, the
+			// server/socket this function opened above would sit open forever, and the CLI
+			// process would hang right after printing the error below rather than exiting.
+			wss.close();
+			httpServer.close();
 			reject(userError(
 				'Timed out waiting for the browser passkey sign-in. Complete the prompt in the\n' +
 				'  tab that opened, or re-run with --passkey to try again.'

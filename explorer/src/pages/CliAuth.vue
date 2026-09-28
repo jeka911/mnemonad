@@ -42,6 +42,10 @@
 						The CLI gives up waiting in {{ countdownLabel }} — sign in before then, or
 						just re-run the command if it's too late.
 					</p>
+					<p v-if="cliReachable === false" class="warning">
+						Can't reach the CLI on this machine — it may have already timed out, or
+						exited. Signing in won't do anything useful until it's reachable again.
+					</p>
 
 					<GradientButton
 						v-if="status === 'idle' || status === 'signing'"
@@ -129,6 +133,10 @@ export default {
 			// which has no result to report — see disconnect()).
 			resultOk: null,
 			resultSummary: '',
+			// null until the first ping settles — see pingCli(). Deliberately not "true" up
+			// front: a false positive here (claiming reachable before ever actually checking)
+			// is worse than briefly showing nothing.
+			cliReachable: null,
 		};
 	},
 	computed: {
@@ -179,12 +187,43 @@ export default {
 				if (this.remainingSeconds === 0) clearInterval(this._countdownTimer);
 			}, 1000);
 		}
+		if (this.bridgeParams) {
+			this.pingCli();
+			this._pingTimer = setInterval(() => {
+				if (this.status !== 'idle' && this.status !== 'signing') {
+					clearInterval(this._pingTimer);
+					return;
+				}
+				this.pingCli();
+			}, 10_000);
+		}
 	},
 	beforeUnmount() {
 		clearInterval(this._countdownTimer);
+		clearInterval(this._pingTimer);
 		this.teardown();
 	},
 	methods: {
+		/**
+		 * Checks the CLI's loopback server is actually there — before the WS bridge exists
+		 * (see connectBridge()), this http /ping is the only channel to it — and, while we're
+		 * asking anyway, gets back its authoritative view of the remaining connect-timeout,
+		 * self-correcting `remainingSeconds` for whatever drift has built up since either side
+		 * started counting (see mounted()'s own per-second tick, and passkeyBridge.js's
+		 * `deadlineAt`). Runs once immediately on mount and every 10s after — see mounted().
+		 */
+		async pingCli() {
+			const { port, token } = this.bridgeParams;
+			try {
+				const res = await fetch(`http://127.0.0.1:${port}/ping?token=${encodeURIComponent(token)}`);
+				if (!res.ok) throw new Error(`unexpected status ${res.status}`);
+				const { ttl } = await res.json();
+				this.cliReachable = true;
+				if (Number.isFinite(ttl)) this.remainingSeconds = ttl;
+			} catch {
+				this.cliReachable = false;
+			}
+		},
 		async signIn() {
 			this.status = 'signing';
 			this.error = null;

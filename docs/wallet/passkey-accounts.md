@@ -204,12 +204,25 @@ a WebAuthn ceremony itself. `--passkey` works around that by borrowing a browser
    served from anywhere else would either fail outright or produce an unrelated account. The
    URL also carries a one-line `desc` (e.g. `mnemonad push ~/my-data`, built by
    `describeCommand()` from the command name plus its stream id/path — no flags), so the tab
-   says what it's actually signing in for rather than just "a CLI command."
-2. `/cli-auth` runs the same sign-in ceremony `passkeyConnector.js` uses for the dApp (no
+   says what it's actually signing in for rather than just "a CLI command." This is also the
+   one structural way this differs from the usual CLI-auth-via-browser pattern (`gh auth
+   login`, most OAuth loopback flows per RFC 8252 §7.3): those hand the whole auth UI to a
+   *remote* provider and only ever touch localhost once, for a single redirect at the very
+   end. There's no remote provider here — the ceremony is WebAuthn, running in the browser
+   against this domain directly — so the page has to talk back to the loopback server itself.
+2. Before running the ceremony, the page polls `GET /ping?token=…` on that same loopback
+   server every 10s (and once immediately on load) — the one thing available before a real
+   connection exists, since the WS below doesn't open until sign-in actually completes. A
+   working pong doubles as "the CLI is still there" and hands back its authoritative view of
+   how much of the connect-timeout is left, which the page uses to correct the countdown for
+   whatever drift built up since either side started counting (the CLI's clock starts before
+   the browser tab has even finished loading). A failing ping shows a plain "can't reach the
+   CLI" instead of only finding that out after a completed passkey prompt.
+3. `/cli-auth` runs the same sign-in ceremony `passkeyConnector.js` uses for the dApp (no
    "create" — this only ever signs in to a passkey that already exists), then opens
    `ws://127.0.0.1:<port>` back to the CLI's server and holds the resulting Mera session in a
    closure for as long as the tab stays open.
-3. Every signature the CLI's command needs (a `personal_sign` for wallet-keyed-stream
+4. Every signature the CLI's command needs (a `personal_sign` for wallet-keyed-stream
    encryption, a transaction signature for any write) goes out over that socket as a request
    and comes back as just the signature — the raw key never leaves the browser tab, the same
    "session with a real, zeroed lifetime" property described above, just relayed instead of
@@ -217,7 +230,7 @@ a WebAuthn ceremony itself. `--passkey` works around that by borrowing a browser
    [`explorer/src/wallet/bridgeCodec.js`](../../explorer/src/wallet/bridgeCodec.js) exist only
    to carry a transaction's `BigInt` fields (`value`, `gas`, the fee fields) across that JSON
    socket, which can't represent `BigInt` natively.
-4. When the command finishes, `bin/mnemonad.js` tells the tab it's done — with whether it
+5. When the command finishes, `bin/mnemonad.js` tells the tab it's done — with whether it
    actually succeeded and a one-line result (the command's own last `console.log` line, the
    same thing the terminal itself just showed, or the error message on failure), so the tab
    shows what happened instead of a bare "done" before the page ends the session (zeroing the
