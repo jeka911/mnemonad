@@ -21,13 +21,20 @@
 				Connected with a passkey-derived account.
 			</q-tooltip>
 		</q-icon>
-		<GradientButton
-			:label="walletLabel"
-			:loading="isConnecting"
-			loading-label="Connecting..."
-			@click="onButtonClick"
-			size="md"
-		>
+		<span class="wallet-btn-wrap">
+			<GradientButton
+				:label="walletLabel"
+				:loading="isConnecting"
+				loading-label="Connecting..."
+				@click="onButtonClick"
+				size="md"
+			/>
+			<!-- A sibling of GradientButton, not slotted inside it — GradientButton's own
+			     slot has fallback content (the icon/label) that only renders when nothing is
+			     passed into the slot, so nesting <q-menu> there instead of here silently ate
+			     the address label. QMenu anchors to its DOM parent by default, and this
+			     wrapper contains only the button, so a click anywhere on it still opens the
+			     menu exactly as if it were nested. -->
 			<q-menu v-if="walletStore.isConnected" auto-close>
 				<q-list style="min-width: 180px">
 					<q-item clickable v-close-popup @click="openExplorer">
@@ -51,7 +58,7 @@
 					</q-item>
 				</q-list>
 			</q-menu>
-		</GradientButton>
+		</span>
 
 		<q-dialog v-model="showModal" position="standard">
 			<JPanel accent="header" icon="wallet" iconColor="var(--q-primary)" title="Connect Wallet" style="min-width: 420px;">
@@ -272,6 +279,10 @@ export default {
 <style scoped>
 .wallet-connect-wrapper {
 	display: contents;
+}
+
+.wallet-btn-wrap {
+	display: inline-flex;
 }
 
 .local-signer-badge {
