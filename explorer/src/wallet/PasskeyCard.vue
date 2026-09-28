@@ -68,6 +68,11 @@
 				after registering.
 			</p>
 
+			<p class="hint hint--small">
+				Powered by <a href="https://mera.category.xyz/" target="_blank" rel="noopener noreferrer">Mera</a>,
+				which turns your passkey into the signing key for this account.
+			</p>
+
 			<p v-if="error" class="error">{{ error }}</p>
 		</template>
 	</div>
@@ -156,6 +161,12 @@ export default {
 .hint--small {
 	font-size: 11px;
 	opacity: 0.7;
+}
+
+.hint--small a {
+	color: inherit;
+	text-decoration: underline;
+	text-underline-offset: 2px;
 }
 
 .link-btn {

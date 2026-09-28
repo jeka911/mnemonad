@@ -60,13 +60,14 @@
 						<q-btn
 							v-if="!showPasskeySigner"
 							flat
-							dense
-							no-caps
+							round
 							color="primary"
-							label="Use a passkey instead"
 							class="passkey-toggle"
 							@click="showPasskeySigner = true"
-						/>
+						>
+							<q-icon name="fingerprint" size="48px" />
+							<q-tooltip>Use a passkey instead, powered by Mera</q-tooltip>
+						</q-btn>
 						<PasskeyCard v-else @connected="onPasskeySignerConnected" />
 					</template>
 
