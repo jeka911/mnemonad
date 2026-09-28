@@ -55,7 +55,7 @@ export async function watch(args) {
 
     const excludes = makeExcludes(args);
 
-    const client = makeChainClient(args);
+    const client = await makeChainClient(args);
     if (pushEnabled) requireWalletClient(client);
 
     // Only a push-enabled session needs write-side offload capability (pinata-jwt or

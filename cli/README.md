@@ -107,6 +107,8 @@ Every command prints the installed CLI version as its first line of output.
 | `--gateway-url <url>` | IPFS gateway for reading externally-offloaded items (default: this project's Pinata dedicated gateway, or `MNEMONAD_IPFS_GATEWAY` env var) |
 | `--key <privkey>` | Monad private key (or set `MNEMONAD_KEY` env var) |
 | `--phrase <mnemonic>` | Mnemonic phrase instead of a raw key |
+| `--passkey` | Sign with a passkey instead: opens the explorer in your browser to sign in with WebAuthn, then relays signing requests to that tab for this command. Interactive only — not for scripts/CI. Cannot be combined with `--key`/`--phrase` |
+| `--auth-origin <url>` | Explorer deployment `--passkey` opens (default: this project's explorer deployment, or `MNEMONAD_AUTH_ORIGIN` env var) |
 | `--version <n>` | Version to restore or compare against (`pull`, `diff`, `info`; default: latest) |
 | `--exclude <p1,p2>` | Extra exclude patterns (comma-separated) |
 | `--no-compress` | Disable gzip compression |
@@ -147,6 +149,21 @@ mnemonad push ~/my-data
 
 A mnemonic works instead of a raw key: `--phrase "word1 word2 ..."`. `--key` and
 `MNEMONAD_KEY` both take precedence over `--phrase`.
+
+Or sign in with a passkey instead of any key at all:
+
+```bash
+mnemonad push ~/my-data --passkey
+```
+
+This opens the explorer's `/cli-auth` page in your default browser to complete a WebAuthn
+sign-in — no key ever touches this machine's disk or environment, only signatures relayed
+back for the duration of that one command. It needs a passkey already registered through the
+explorer (`--passkey` only signs in, it doesn't create one), a browser to complete the
+prompt in, and someone available to click through it — so it's a good fit for a human running
+a command by hand, not for scripts or CI (use `--key`/`MNEMONAD_KEY` there instead). See
+[`docs/wallet/passkey-accounts.md`](../docs/wallet/passkey-accounts.md) for how the account
+is derived and what this flow does and doesn't send anywhere.
 
 `pull`, `info` and `diff` work without a key for public (unencrypted) streams. A key is
 required for encrypted streams that use wallet-based encryption (not needed for

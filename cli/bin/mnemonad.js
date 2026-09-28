@@ -19,6 +19,7 @@ import { dirname, join } from 'node:path';
 
 import { push, pull, info, diff, watch, compact, burn, buildIndex, search } from '../lib/commands/index.js';
 import { parseQualifiedStreamId } from '../lib/commands/shared.js';
+import { closePasskeyBridge } from '../lib/passkeyBridge.js';
 import defaultConfig from '../mnemonad.config.js';
 
 const PKG_ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
@@ -47,6 +48,10 @@ const DEFAULT_IPFS_GATEWAY = CONFIG.gatewayUrl || 'https://azure-casual-firefly-
 // so a signer needs no Pinata credential of their own; --pinata-jwt still works as a direct
 // alternative for anyone who'd rather supply their own.
 const DEFAULT_PRESIGN_URL = CONFIG.presignUrl || null;
+
+// See mnemonad.config.js's own comment on why this has to be a real deployed domain, not a
+// placeholder — --passkey opens it to run the WebAuthn ceremony there.
+const DEFAULT_AUTH_ORIGIN = CONFIG.authOrigin || 'https://mnemonad.vercel.app';
 
 const USAGE = `mnemonad v${VERSION} — sync local folders to a versioned, diffed stream on Monad
 
@@ -81,6 +86,12 @@ Options:
                             (default: the deployed server in mnemonad.config.js, or MNEMONAD_PRESIGN_URL env var)
   --key <privkey>           Monad private key (or set MNEMONAD_KEY env var)
   --phrase <mnemonic>       Mnemonic phrase
+  --passkey                 Sign with a passkey instead of --key/--phrase: opens the explorer
+                            in your browser to sign in with WebAuthn, then relays signing
+                            requests to that tab for this command. Interactive only — not for
+                            scripts/CI. See docs/wallet/passkey-accounts.md
+  --auth-origin <url>       Explorer deployment --passkey opens (default: this project's
+                            explorer deployment, or MNEMONAD_AUTH_ORIGIN env var)
   --version <n>             Version to restore/compare (pull, diff, info; default: latest)
   --exclude <p1,p2>         Extra exclude patterns (comma-separated)
   --no-compress             Disable gzip compression
@@ -138,6 +149,8 @@ function parseArgs(argv) {
         presignUrl: process.env.MNEMONAD_PRESIGN_URL || DEFAULT_PRESIGN_URL,
         key: null,
         phrase: null,
+        passkey: false,
+        authOrigin: process.env.MNEMONAD_AUTH_ORIGIN || DEFAULT_AUTH_ORIGIN,
         version: null,
         exclude: null,
         compress: 'gzip',
@@ -242,6 +255,10 @@ function parseArgs(argv) {
             args.key = raw[++i];
         } else if (flag === '--phrase' && i + 1 < raw.length) {
             args.phrase = raw[++i];
+        } else if (flag === '--passkey') {
+            args.passkey = true;
+        } else if (flag === '--auth-origin' && i + 1 < raw.length) {
+            args.authOrigin = raw[++i];
         } else if (flag === '--version' && i + 1 < raw.length) {
             args.version = raw[++i];
         } else if (flag === '--exclude' && i + 1 < raw.length) {
@@ -348,5 +365,8 @@ try {
         process.exitCode = 1;
     }
 } finally {
+    // No-op when --passkey was never used — see passkeyBridge.js. Runs whether the command
+    // succeeded or failed, so a browser tab left open on a failed push doesn't linger.
+    closePasskeyBridge();
     clearInterval(keepAlive);
 }

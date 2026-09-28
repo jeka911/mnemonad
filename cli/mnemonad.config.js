@@ -24,4 +24,12 @@ export default {
     // credential, and the content behind it is public IPFS either way. List yours with
     // `GET https://api.pinata.cloud/v3/ipfs/gateways`.
     gatewayUrl: 'https://azure-casual-firefly-850.mypinata.cloud/ipfs/',
+
+    // Where --passkey opens the browser to run the WebAuthn ceremony (see
+    // lib/passkeyBridge.js and docs/wallet/passkey-accounts.md's CLI section). Has to be this
+    // exact domain, not a placeholder or a local dev server — a passkey is bound to whichever
+    // domain created it (rp.id), so this only ever works against the same deployment the dApp
+    // itself runs on. Overridable per-run with --auth-origin or MNEMONAD_AUTH_ORIGIN, mainly
+    // for pointing at a different deployment during development of this feature itself.
+    authOrigin: 'https://mnemonad.vercel.app',
 };

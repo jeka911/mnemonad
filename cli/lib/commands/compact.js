@@ -34,7 +34,7 @@ export async function compact(args) {
     const counts = await countTree(fsFolder);
     console.log('  scanning...', counts.files, 'files,', counts.folders, 'folders');
 
-    const client = makeChainClient(args);
+    const client = await makeChainClient(args);
     requireWalletClient(client);
 
     // No `password` at construction — see shared.js's unlockStream() for why.

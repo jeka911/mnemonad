@@ -24,7 +24,7 @@ export async function pull(args) {
         throw new Error('stream-id is required for pull');
     }
 
-    const client = makeChainClient(args);
+    const client = await makeChainClient(args);
 
     const mn = new Mnemonad({
         publicClient: client.publicClient,

@@ -56,7 +56,7 @@ export async function diff(args) {
         throw new Error('stream-id is required for diff');
     }
 
-    const client = makeChainClient(args);
+    const client = await makeChainClient(args);
 
     const mn = new Mnemonad({
         publicClient: client.publicClient,

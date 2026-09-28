@@ -1,0 +1,228 @@
+<template>
+	<div class="cli-auth-page">
+		<JPanel accent="header" icon="terminal" iconColor="var(--q-primary)" title="Sign in for the CLI">
+			<div class="q-pa-md cli-auth-body">
+				<template v-if="!supported">
+					<p class="warning">
+						Passkeys aren't supported in this browser. Open this link in a recent
+						Chrome, Edge, or Safari instead.
+					</p>
+				</template>
+				<template v-else-if="!bridgeParams">
+					<p class="warning">
+						This page needs to be opened by the <code>mnemonad</code> CLI (it's missing
+						the connection details a direct visit wouldn't have) — run a command with
+						<code>--passkey</code> instead of opening this URL directly.
+					</p>
+				</template>
+				<template v-else-if="status === 'done'">
+					<p class="hint">Done — the CLI command finished. You can close this tab.</p>
+				</template>
+				<template v-else>
+					<p class="hint">
+						A <code>mnemonad</code> CLI command on this machine is waiting to sign in
+						with your passkey. Nothing is sent anywhere except back to that command,
+						running locally. Powered by
+						<a href="https://mera.category.xyz/" target="_blank" rel="noopener noreferrer">Mera</a>.
+					</p>
+
+					<GradientButton
+						v-if="status === 'idle' || status === 'signing'"
+						label="Sign in with your passkey"
+						loading-label="Waiting for your passkey..."
+						:loading="status === 'signing'"
+						:disable="status === 'signing'"
+						@click="signIn"
+					/>
+
+					<template v-else-if="status === 'connected'">
+						<p class="hint hint--small">
+							Connected as <strong>{{ address }}</strong>. Keep this tab open while the
+							CLI command runs — it'll close this connection when it's done.
+						</p>
+						<GradientButton label="Disconnect" outline @click="disconnect" />
+					</template>
+				</template>
+
+				<p v-if="error" class="error">{{ error }}</p>
+			</div>
+		</JPanel>
+	</div>
+</template>
+
+<script>
+import { JPanel } from 'themed_varmory';
+import GradientButton from '../components/GradientButton.vue';
+import { getPasskeyPrfOutput, createSecp256k1SigningSession } from '@category-labs/mera';
+import { toViemAccount } from '@category-labs/mera/viem';
+import { describeError } from '../wallet/passkeyConnector.js';
+import { decodeFromBridge } from '../wallet/bridgeCodec.js';
+
+/**
+ * The browser half of `mnemonad ... --passkey` (see cli/lib/passkeyBridge.js and
+ * docs/wallet/passkey-accounts.md's CLI section). The CLI opens this page pointing at a
+ * loopback WebSocket server it just started; this page runs the same WebAuthn sign-in
+ * ceremony `passkeyConnector.js` uses for the dApp, then relays signing requests to it for
+ * the lifetime of the tab — the raw key never leaves the browser, only signatures do.
+ *
+ * Deliberately not wired through `passkeyConnector.js`/wagmi at all: this isn't a wallet
+ * connection for this page's own session, it's a one-off signer for someone else's process.
+ * Sign-in only (no "create") — a CLI-driven ceremony still has to run on this exact domain
+ * (rp.id is bound to it, same as everywhere else in this feature), so it only ever makes
+ * sense against a passkey that already exists.
+ */
+export default {
+	name: 'CliAuth',
+	// Static route metadata read by pages/index.js to self-register this page.
+	path: '/cli-auth',
+	title: 'CLI Sign-in',
+	components: { JPanel, GradientButton },
+	data() {
+		// Read once at mount, straight off the URL the CLI opened this page with — never
+		// re-derived later, so a copy/pasted link without them just shows the "open this from
+		// the CLI" message below instead of half-working.
+		const searchParams = typeof window !== 'undefined' ? new URLSearchParams(window.location.search) : null;
+		const port = searchParams?.get('port');
+		const token = searchParams?.get('token');
+		return {
+			supported: typeof navigator !== 'undefined' && !!navigator.credentials && !!window.PublicKeyCredential,
+			bridgeParams: port && token ? { port, token } : null,
+			status: 'idle', // idle | signing | connected | done
+			address: null,
+			error: null,
+			ws: null,
+			session: null,
+		};
+	},
+	beforeUnmount() {
+		this.teardown();
+	},
+	methods: {
+		async signIn() {
+			this.status = 'signing';
+			this.error = null;
+			try {
+				const result = await getPasskeyPrfOutput({ rpId: window.location.hostname });
+				const { prfOutput } = result;
+				this.session = createSecp256k1SigningSession({ privateKey: prfOutput });
+				prfOutput.fill(0);
+				const account = toViemAccount(this.session);
+				this.address = account.address;
+				this.connectBridge(account);
+			} catch (e) {
+				this.session?.end();
+				this.session = null;
+				this.status = 'idle';
+				this.error = describeError(e)?.message || 'Failed to sign in with a passkey.';
+			}
+		},
+		connectBridge(account) {
+			const { port, token } = this.bridgeParams;
+			const ws = new WebSocket(`ws://127.0.0.1:${port}?token=${encodeURIComponent(token)}`);
+			this.ws = ws;
+
+			ws.addEventListener('open', () => {
+				ws.send(JSON.stringify({ type: 'hello', address: account.address }));
+				this.status = 'connected';
+			});
+
+			ws.addEventListener('message', (event) => {
+				let msg;
+				try {
+					msg = JSON.parse(event.data);
+				} catch {
+					return;
+				}
+				if (msg.type === 'sign-message') {
+					this.respond(msg.id, () => account.signMessage({ message: msg.message }));
+				} else if (msg.type === 'sign-transaction') {
+					this.respond(msg.id, () => account.signTransaction(decodeFromBridge(msg.transaction)));
+				} else if (msg.type === 'done') {
+					this.status = 'done';
+					this.teardown();
+				}
+			});
+
+			ws.addEventListener('close', () => {
+				if (this.status !== 'done') {
+					this.status = 'done';
+					this.teardown();
+				}
+			});
+
+			ws.addEventListener('error', () => {
+				this.error = 'Lost the connection to the CLI.';
+			});
+		},
+		async respond(id, run) {
+			try {
+				const result = await run();
+				this.ws?.send(JSON.stringify({ type: 'sign-result', id, result }));
+			} catch (e) {
+				this.ws?.send(JSON.stringify({ type: 'sign-error', id, error: e?.message || 'signing failed' }));
+			}
+		},
+		disconnect() {
+			try {
+				this.ws?.send(JSON.stringify({ type: 'done' }));
+			} catch {
+				// Nothing to tell the CLI if the socket's already gone.
+			}
+			this.status = 'done';
+			this.teardown();
+		},
+		/** Actually zeroes the key (see docs/wallet/passkey-accounts.md) and drops the socket —
+		 *  run on every way this page's job can end: disconnect, the CLI saying it's done, the
+		 *  bridge dropping, or the tab itself closing. */
+		teardown() {
+			this.session?.end();
+			this.session = null;
+			this.ws?.close();
+			this.ws = null;
+		},
+	},
+};
+</script>
+
+<style scoped>
+.cli-auth-page {
+	max-width: 480px;
+	margin: 48px auto;
+	padding: 0 16px;
+}
+
+.cli-auth-body {
+	display: flex;
+	flex-direction: column;
+	gap: 12px;
+}
+
+.hint {
+	font-size: 13px;
+	line-height: 1.5;
+	opacity: 0.85;
+	margin: 0;
+}
+
+.hint--small {
+	font-size: 12px;
+	opacity: 0.7;
+}
+
+.warning {
+	color: var(--q-negative, #e57373);
+	font-size: 13px;
+	margin: 0;
+}
+
+.error {
+	color: var(--q-negative, #e57373);
+	font-size: 12px;
+	margin: 0;
+}
+
+code {
+	font-size: 0.9em;
+	opacity: 0.9;
+}
+</style>

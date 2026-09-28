@@ -64,7 +64,7 @@ export async function push(args) {
         }
     }
 
-    const client = makeChainClient(args);
+    const client = await makeChainClient(args);
     requireWalletClient(client);
 
     const baseParams = {

@@ -21,7 +21,7 @@ export async function burn(args) {
         throw new Error('stream-id is required for burn');
     }
 
-    const client = makeChainClient(args);
+    const client = await makeChainClient(args);
     requireWalletClient(client);
 
     const mn = new Mnemonad({

@@ -8,6 +8,8 @@
 import { createPublicClient, createWalletClient, defineChain, http } from 'viem';
 import { privateKeyToAccount, mnemonicToAccount } from 'viem/accounts';
 import { monad, monadTestnet } from 'viem/chains';
+import { openPasskeyBridge } from './passkeyBridge.js';
+import { userError } from './commands/shared.js';
 
 /**
  * CLI `--chain` name -> { viem chain object, Mnemonad network shorthand for
@@ -45,10 +47,20 @@ function normalizeKey(key) {
 	return key.startsWith('0x') ? key : `0x${key}`;
 }
 
-function resolveAccount(args) {
+/**
+ * `--key`/`--phrase`/`MNEMONAD_KEY` resolve synchronously; `--passkey` doesn't (it opens a
+ * browser tab and waits for a human to complete a WebAuthn prompt) — see
+ * passkeyBridge.js. That's the one thing that makes this function, and therefore
+ * `makeChainClient`, async rather than the plain synchronous lookup it used to be.
+ */
+async function resolveAccount(args) {
 	const key = args.key || process.env.MNEMONAD_KEY;
+	if (args.passkey && (key || args.phrase)) {
+		throw userError('--passkey cannot be combined with --key/--phrase/MNEMONAD_KEY — pick one signing method.');
+	}
 	if (key) return privateKeyToAccount(normalizeKey(key));
 	if (args.phrase) return mnemonicToAccount(args.phrase);
+	if (args.passkey) return openPasskeyBridge(args.authOrigin);
 	return null;
 }
 
@@ -60,16 +72,17 @@ function resolveAccount(args) {
  * `requireWalletClient` themselves, so the "no key" error only surfaces where it's
  * actually required.
  *
- * @param {Object} args - parsed CLI args: `chain`, `rpcUrl`, `key`, `phrase`, `contractAddress`
- * @returns {{
+ * @param {Object} args - parsed CLI args: `chain`, `rpcUrl`, `key`, `phrase`, `passkey`,
+ *   `authOrigin`, `contractAddress`
+ * @returns {Promise<{
  *   publicClient: Object,
  *   walletClient: ?Object,
  *   account: ?Object,
  *   contractAddress: string,
  *   chain: Object,
- * }}
+ * }>}
  */
-export function makeChainClient(args) {
+export async function makeChainClient(args) {
 	let chain, contractAddress;
 	if (args.chain === 'local') {
 		// Dev/test only — see localChain() above.
@@ -95,7 +108,7 @@ export function makeChainClient(args) {
 	const transport = http(args.rpcUrl);
 	const publicClient = createPublicClient({ chain, transport });
 
-	const account = resolveAccount(args);
+	const account = await resolveAccount(args);
 	const walletClient = account ? createWalletClient({ chain, transport, account }) : null;
 
 	return { publicClient, walletClient, account, contractAddress, chain };
@@ -111,7 +124,8 @@ export function requireWalletClient(client) {
 		// first thing anyone hits before configuring a key, and a stack trace through
 		// chainClient makes an actionable one-liner look like a crash.
 		const err = new Error(
-			'No signing key. Set the MNEMONAD_KEY env var to a private key, or pass --key / --phrase.'
+			'No signing key. Set the MNEMONAD_KEY env var to a private key, pass --key / --phrase, ' +
+			'or pass --passkey to sign in with a passkey via the browser.'
 		);
 		err._isUserError = true;
 		throw err;

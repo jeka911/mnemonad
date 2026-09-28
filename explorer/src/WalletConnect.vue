@@ -27,7 +27,31 @@
 			loading-label="Connecting..."
 			@click="onButtonClick"
 			size="md"
-		/>
+		>
+			<q-menu v-if="walletStore.isConnected" auto-close>
+				<q-list style="min-width: 180px">
+					<q-item clickable v-close-popup @click="openExplorer">
+						<q-item-section avatar>
+							<q-icon name="open_in_new" size="18px" />
+						</q-item-section>
+						<q-item-section>Explore</q-item-section>
+					</q-item>
+					<q-item clickable v-close-popup @click="copyAddress">
+						<q-item-section avatar>
+							<q-icon name="content_copy" size="18px" />
+						</q-item-section>
+						<q-item-section>Copy address</q-item-section>
+					</q-item>
+					<q-separator />
+					<q-item clickable v-close-popup @click="walletStore.disconnect()">
+						<q-item-section avatar>
+							<q-icon name="logout" size="18px" />
+						</q-item-section>
+						<q-item-section>Disconnect</q-item-section>
+					</q-item>
+				</q-list>
+			</q-menu>
+		</GradientButton>
 
 		<q-dialog v-model="showModal" position="standard">
 			<JPanel accent="header" icon="wallet" iconColor="var(--q-primary)" title="Connect Wallet" style="min-width: 420px;">
@@ -102,6 +126,7 @@
 import { defineAsyncComponent } from 'vue';
 import { connect, getConnectors, watchConnectors } from '@wagmi/core';
 import { mapStores } from 'pinia';
+import { copyToClipboard } from 'quasar';
 import { JPanel } from 'themed_varmory';
 import { config } from './wagmi';
 import { useWalletStore } from './stores/wallet';
@@ -109,6 +134,7 @@ import GradientButton from './components/GradientButton.vue';
 import { LOCAL_SIGNER_CONNECTOR_NAME } from './wallet/localSignerConnector.js';
 import { PASSKEY_CONNECTOR_NAME } from './wallet/passkeyConnector.js';
 import { getActiveNetwork } from './settings.js';
+import { addressUrl } from './includes/explorerUrl.js';
 
 // Off by default and read once at module load, matching `wagmi.js`'s own pattern.
 const LOCAL_SIGNER_ENABLED = import.meta.env.VITE_ENABLE_LOCAL_SIGNER === 'true';
@@ -176,11 +202,25 @@ export default {
 	},
 	methods: {
 		onButtonClick() {
-			if (this.walletStore.isConnected) {
-				this.walletStore.disconnect();
-			} else {
+			// When connected, the click that reaches here also reaches the q-menu nested in
+			// the button (its own listener opens the dropdown) — nothing to do on this side;
+			// the dropdown's own items are what disconnect/explore/copy now.
+			if (!this.walletStore.isConnected) {
 				this.showModal = true;
 			}
+		},
+		openExplorer() {
+			const url = addressUrl(this.activeChain, this.walletStore.address);
+			if (url) window.open(url, '_blank', 'noopener,noreferrer');
+		},
+		copyAddress() {
+			copyToClipboard(this.walletStore.address)
+				.then(() => {
+					this.$q.notify({ type: 'positive', message: 'Address copied', position: 'top' });
+				})
+				.catch(() => {
+					this.$q.notify({ type: 'negative', message: 'Could not copy address', position: 'top' });
+				});
 		},
 		async connectWallet(connector) {
 			this.isConnecting = true;

@@ -69,7 +69,7 @@ describe('burn', () => {
 
 		// A burned id stays permanently gone — the contract's own `_requireExists` rejects
 		// every read on it, same as an id that was never created.
-		const client = makeChainClient(baseArgs);
+		const client = await makeChainClient(baseArgs);
 		const reader = new Mnemonad({
 			publicClient: client.publicClient,
 			contractAddress: client.contractAddress,

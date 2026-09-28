@@ -14,7 +14,7 @@ import {
 } from './shared.js';
 
 export async function info(args) {
-    const client = makeChainClient(args);
+    const client = await makeChainClient(args);
 
     console.log('  chain:          ', args.chain);
     console.log('  your wallet:    ', client.account?.address || '(none)');

@@ -180,3 +180,36 @@ hand a webpage for any of them.
   of the failures above involve one — every one of them happens entirely inside a browser
   talking to this website directly (or, for hybrid, to another browser). There is nothing to
   configure here for that reason.
+
+## Using a passkey from the CLI (`--passkey`)
+
+The CLI (`cli/`) is a Node process — there's no `navigator.credentials` there, so it can't run
+a WebAuthn ceremony itself. `--passkey` works around that by borrowing a browser for it:
+
+1. [`cli/lib/passkeyBridge.js`](../../cli/lib/passkeyBridge.js) starts a loopback WebSocket
+   server on `127.0.0.1` with a random one-time token, and opens the explorer's
+   [`/cli-auth`](../../explorer/src/pages/CliAuth.vue) page in the system browser at that
+   deployment's own domain — has to be that exact domain, not a placeholder, since the
+   ceremony's `rp.id` is whatever domain the page is actually served from (see above); a page
+   served from anywhere else would either fail outright or produce an unrelated account.
+2. `/cli-auth` runs the same sign-in ceremony `passkeyConnector.js` uses for the dApp (no
+   "create" — this only ever signs in to a passkey that already exists), then opens
+   `ws://127.0.0.1:<port>` back to the CLI's server and holds the resulting Mera session in a
+   closure for as long as the tab stays open.
+3. Every signature the CLI's command needs (a `personal_sign` for wallet-keyed-stream
+   encryption, a transaction signature for any write) goes out over that socket as a request
+   and comes back as just the signature — the raw key never leaves the browser tab, the same
+   "session with a real, zeroed lifetime" property described above, just relayed instead of
+   called in-process. `cli/lib/bridgeCodec.js` /
+   [`explorer/src/wallet/bridgeCodec.js`](../../explorer/src/wallet/bridgeCodec.js) exist only
+   to carry a transaction's `BigInt` fields (`value`, `gas`, the fee fields) across that JSON
+   socket, which can't represent `BigInt` natively.
+4. When the command finishes (success or failure), `bin/mnemonad.js` tells the tab it's done;
+   the page ends the session (zeroing the key) and the CLI closes the loopback server.
+
+This is deliberately a one-shot bridge, scoped to a single command: no daemon, no state file,
+nothing that persists once the command exits. The next `--passkey` command opens a fresh tab
+and repeats the sign-in. That's a real tradeoff — a human has to be there to click through the
+prompt every time, so it's a fit for someone running a command by hand, not for scripts or CI
+(which should keep using `--key`/`MNEMONAD_KEY`) — but it keeps the whole thing to "one bridge,
+one browser tab, one command" with nothing left running or stored anywhere after.

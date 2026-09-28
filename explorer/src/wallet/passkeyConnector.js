@@ -242,7 +242,7 @@ export function passkeyConnector({ mode, chainId }) {
  * the message too, since a blank "cancelled or unavailable" for every one of those cases
  * left both the user and whoever's debugging it with nothing to go on.
  */
-function describeError(error) {
+export function describeError(error) {
 	if (isMeraError(error)) {
 		console.error('[passkeyConnector]', error.code, error.message, error.cause);
 		const causeDetail = error.cause instanceof Error ? ` (${error.cause.name}: ${error.cause.message})` : '';
