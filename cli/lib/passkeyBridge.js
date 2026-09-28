@@ -100,7 +100,11 @@ export async function openPasskeyBridge(args) {
 
 	const desc = describeCommand(args);
 	const ttl = Math.floor(CONNECT_TIMEOUT_MS / 1000);
-	const authUrl = `${args.authOrigin.replace(/\/$/, '')}/cli-auth?port=${port}&token=${token}&desc=${encodeURIComponent(desc)}&ttl=${ttl}`;
+	// Lets the result screen turn a stream id in its summary line into a link to the
+	// explorer's own stream page — only for a real deployment id (testnet/mainnet); --chain
+	// local has no explorer route to link to, so the page just falls back to plain text.
+	const network = args.chain === 'testnet' || args.chain === 'mainnet' ? `&network=${args.chain}` : '';
+	const authUrl = `${args.authOrigin.replace(/\/$/, '')}/cli-auth?port=${port}&token=${token}&desc=${encodeURIComponent(desc)}&ttl=${ttl}${network}`;
 	console.log('  opening', authUrl, 'to sign in with a passkey...');
 	try {
 		await open(authUrl);

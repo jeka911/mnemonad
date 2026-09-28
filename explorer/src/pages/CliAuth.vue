@@ -16,8 +16,13 @@
 					</p>
 				</template>
 				<template v-else-if="status === 'done'">
-					<p v-if="resultOk === true" class="hint hint--ok">✓ {{ resultSummary }}</p>
-					<p v-else-if="resultOk === false" class="hint hint--fail">✗ {{ resultSummary }}</p>
+					<p v-if="resultOk !== null" class="hint" :class="resultOk ? 'hint--ok' : 'hint--fail'">
+						{{ resultOk ? '✓' : '✗' }} {{ resultPrefix }}<router-link
+							v-if="resultStreamLink"
+							:to="resultStreamLink"
+							class="result-link"
+						>{{ resultStreamIdShort }}</router-link><template v-else-if="resultStreamIdShort">{{ resultStreamIdShort }}</template>{{ resultSuffix }}
+					</p>
 					<p v-else class="hint">Disconnected.</p>
 					<p class="hint hint--small">You can close this tab.</p>
 				</template>
@@ -69,6 +74,10 @@ import { getPasskeyPrfOutput, createSecp256k1SigningSession } from '@category-la
 import { toViemAccount } from '@category-labs/mera/viem';
 import { describeError } from '../wallet/passkeyConnector.js';
 import { decodeFromBridge } from '../wallet/bridgeCodec.js';
+import { formatStreamId } from '../includes/formatStreamId.js';
+import { streamPath } from '../includes/streamRoute.js';
+
+const STREAM_ID_RE = /0x[0-9a-fA-F]{64}/;
 
 /**
  * The browser half of `mnemonad ... --passkey` (see cli/lib/passkeyBridge.js and
@@ -107,6 +116,10 @@ export default {
 			// passkeyBridge.js's own `describeCommand()` builds this into the URL it opens.
 			description: searchParams?.get('desc') || null,
 			remainingSeconds: Number.isFinite(ttlSeconds) ? ttlSeconds : null,
+			// 'testnet' | 'mainnet' | null (--chain local, or an older CLI that predates this
+			// param) — which network to link a stream id in the result to. Never guessed: a
+			// wrong network in the link would be worse than no link at all.
+			network: searchParams?.get('network') || null,
 			status: 'idle', // idle | signing | connected | done
 			address: null,
 			error: null,
@@ -124,6 +137,32 @@ export default {
 			const m = Math.floor(this.remainingSeconds / 60);
 			const s = this.remainingSeconds % 60;
 			return `${m}:${String(s).padStart(2, '0')}`;
+		},
+		// Every command that leaves a stream behind (push, burn, compact, …) already ends its
+		// own console output with a line naming it in full — `resultSummary` is just whatever
+		// that line was (see bin/mnemonad.js). Rather than every command learning to hand back
+		// structured data for this one page, the full 64-hex-digit id is just picked back out
+		// of that text and, when it's there, rendered as a compact link instead of the raw
+		// hex — same elision `formatStreamId` already gives every stream id elsewhere in the
+		// app, so a result here reads the same as everywhere else.
+		resultStreamMatch() {
+			return this.resultSummary?.match(STREAM_ID_RE) || null;
+		},
+		resultStreamIdShort() {
+			return this.resultStreamMatch ? formatStreamId(this.resultStreamMatch[0]) : '';
+		},
+		// Only a link when the CLI also told us which network — see `network` in data().
+		resultStreamLink() {
+			if (!this.resultStreamMatch || !this.network) return null;
+			return streamPath(this.resultStreamMatch[0], { networkId: this.network });
+		},
+		resultPrefix() {
+			if (!this.resultStreamMatch) return this.resultSummary;
+			return this.resultSummary.slice(0, this.resultStreamMatch.index);
+		},
+		resultSuffix() {
+			if (!this.resultStreamMatch) return '';
+			return this.resultSummary.slice(this.resultStreamMatch.index + this.resultStreamMatch[0].length);
 		},
 	},
 	mounted() {
@@ -265,6 +304,12 @@ export default {
 
 .hint--fail {
 	color: var(--q-negative, #e57373);
+}
+
+.result-link {
+	color: inherit;
+	text-decoration: underline;
+	text-underline-offset: 2px;
 }
 
 .warning {
