@@ -110,6 +110,19 @@ export default {
 			hasRememberedCredential: !!getRememberedPasskeyCredential(),
 		};
 	},
+	mounted() {
+		// A pinned credential means this browser has already connected before — worth trying
+		// that sign-in right away instead of making someone re-click through Create/Sign-in
+		// for an account they've already used. Still a real WebAuthn ceremony, not silent: the
+		// browser's own passkey prompt still appears. Falls straight back to this card's normal
+		// two-button state on any failure (wrong/missing credential, cancelled, timed out) —
+		// `run()` already resets connectingMode and surfaces `error` on its own, so there's
+		// nothing extra to unwind here. Safe as a direct call (not a click) because it only
+		// ever runs right after the click that revealed this card in the first place (see
+		// WalletConnect.vue's fingerprint toggle) — still within that click's transient
+		// activation, which is what WebAuthn actually requires, not literally a click handler.
+		if (this.hasRememberedCredential) this.run('signin');
+	},
 	methods: {
 		async run(mode) {
 			if (this.connectingMode) return;

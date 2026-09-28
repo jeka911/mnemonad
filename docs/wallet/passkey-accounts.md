@@ -83,6 +83,16 @@ completely unchanged.
   link is the deliberate, explicit way out of a wrong pin instead — it forgets the stored id
   and immediately retries fully open.
 
+  The same pin also decides what happens the moment this card opens: with one remembered,
+  `PasskeyCard.vue` fires that "sign in" itself on mount, before either button is clicked —
+  the click that opened the card (the fingerprint toggle in `WalletConnect.vue`) is still
+  what satisfies WebAuthn's user-activation requirement, so no separate click is needed to
+  actually trigger the browser's passkey prompt. A real ceremony still runs; this only skips
+  making someone choose Create/Sign-in for an account this browser has already used. Any
+  failure (declined, no matching credential, timed out) falls straight back to this card's
+  normal two-button state — `run()` already resets `connectingMode` and surfaces `error` on
+  its own, so there's nothing else gating that fallback.
+
 ## What this improves on Local Signer
 
 Local Signer's raw private-key string just falls out of scope for garbage collection on

@@ -18,7 +18,7 @@
 			class="passkey-badge"
 		>
 			<q-tooltip>
-				Connected with a passkey-derived account.
+				Connected with a passkey-derived account, via Mera.
 			</q-tooltip>
 		</q-icon>
 		<span class="wallet-btn-wrap">
