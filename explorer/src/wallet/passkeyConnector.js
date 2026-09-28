@@ -204,14 +204,24 @@ export function passkeyConnector({ mode, chainId }) {
  * `WalletConnect.vue` already makes for a rejected extension connection (its
  * `UserRejectedRequestError`/code 4001 check), just one level further in since this failure
  * comes from `navigator.credentials` instead of an injected provider.
+ *
+ * `PASSKEY_OPERATION_FAILED` is Mera's own catch-all — `createPasskeyWithPrfOutput`/
+ * `getPasskeyPrfOutput` wrap *any* thrown error into it (see passkey.ts), from the user
+ * dismissing the prompt to the browser refusing the call outright for a reason that has
+ * nothing to do with the user's choice (insecure origin, no authenticator configured, …).
+ * `error.cause` is where the real DOMException actually is; always logged, and folded into
+ * the message too, since a blank "cancelled or unavailable" for every one of those cases
+ * left both the user and whoever's debugging it with nothing to go on.
  */
 function describeError(error) {
 	if (isMeraError(error)) {
+		console.error('[passkeyConnector]', error.code, error.message, error.cause);
+		const causeDetail = error.cause instanceof Error ? ` (${error.cause.name}: ${error.cause.message})` : '';
 		if (error.code === 'PRF_UNAVAILABLE') {
 			return new Error("This authenticator doesn't support the security feature passkey accounts need here.");
 		}
 		if (error.code === 'PASSKEY_OPERATION_FAILED') {
-			return new Error('Passkey request cancelled or unavailable.');
+			return new Error(`Passkey request cancelled or unavailable.${causeDetail}`);
 		}
 		if (error.code === 'CRYPTO_UNAVAILABLE') {
 			return new Error('This browser is missing a required security feature (Web Crypto).');
