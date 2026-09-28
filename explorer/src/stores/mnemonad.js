@@ -257,15 +257,23 @@ export const useMnemonadStore = defineStore('mnemonad', {
 		 * Keying by address (not just id) means an account switch is naturally a cache miss
 		 * rather than needing its own explicit invalidation.
 		 *
-		 * @param {bigint} id
+		 * Takes the live instance directly rather than looking one up in `streamCache` by id
+		 * — same reasoning as `unlockStreamWithWallet` above: connecting a wallet mid-visit
+		 * can clear that cache via `wallet.js`'s account-change sync out from under a page
+		 * that's already holding a perfectly good instance, and silently answering `false` in
+		 * that case (what a plain cache-miss used to do here) reads as "you can't write to
+		 * this stream" even for its own owner, right after connecting on the very page that's
+		 * asking.
+		 *
+		 * @param {Object} stream - a live, already-`initialize()`d `Mnemonad` instance
 		 * @param {string} address
 		 * @returns {Promise<boolean>}
 		 */
-		async checkCanWrite(id, address) {
-			const key = `${id}:${address}`;
+		async checkCanWrite(stream, address) {
+			if (!stream) return false;
+			const key = `${stream.id}:${address}`;
 			if (canWriteCache.has(key)) return canWriteCache.get(key);
-			const stream = streamCache.get(String(id));
-			if (!stream) return false; // loadStream() always runs first in practice
+			if (!streamCache.has(String(stream.id))) streamCache.set(String(stream.id), stream);
 			const canWrite = await stream.canWrite(address);
 			canWriteCache.set(key, canWrite);
 			return canWrite;

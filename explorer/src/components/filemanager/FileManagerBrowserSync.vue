@@ -160,7 +160,7 @@ export default {
                 return;
             }
             try {
-                this.canWrite = await this.mnemonadStore.checkCanWrite(this.stream.id, this.walletStore.address);
+                this.canWrite = await this.mnemonadStore.checkCanWrite(this.stream, this.walletStore.address);
             } catch {
                 this.canWrite = false;
             }
