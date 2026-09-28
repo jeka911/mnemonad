@@ -61,7 +61,7 @@
 		</span>
 
 		<q-dialog v-model="showModal" position="standard">
-			<JPanel accent="header" icon="wallet" iconColor="var(--q-primary)" title="Connect Wallet" style="min-width: 420px;">
+			<JPanel accent="header" icon="wallet" iconColor="var(--q-primary)" title="Sign In" style="min-width: 420px;">
 				<div class="dialog-content q-pa-md">
 					<q-btn
 						v-for="connector in connectors"
@@ -186,7 +186,7 @@ export default {
 			// "Connecting..." is handled by GradientButton's loading state.
 			return this.walletStore.isConnected
 				? this.walletStore.formattedAddress
-				: 'Connect Wallet';
+				: 'Sign In';
 		},
 		// Whichever session is live — real extension or local signer — this only ever
 		// reads `connectorName`, which every connector (including ours) already reports
