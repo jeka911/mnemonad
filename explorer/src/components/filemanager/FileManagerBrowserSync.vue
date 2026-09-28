@@ -468,8 +468,8 @@ export default {
                 this.initialize();
             }
         },
-        // The page's own unlock dialog flips this once submitUnlock() succeeds — same
-        // instance, now with a usable key, so just continue rather than re-fetching.
+        // The page's own UnlockStreamDialog flips this once it succeeds — same instance,
+        // now with a usable key, so just continue rather than re-fetching.
         async unlocked(isUnlocked) {
             if (isUnlocked && this.status === 'locked') {
                 try {

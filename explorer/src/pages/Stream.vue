@@ -84,64 +84,27 @@
 			</div>
 		</div>
 
-		<q-dialog v-model="unlockDialog">
-			<JPanel accent="header" icon="lock" iconColor="var(--q-primary)" title="Unlock stream" style="min-width: 360px;">
-				<div class="unlock-content q-pa-md">
-					<template v-if="kekMethod === 'password'">
-						<p class="unlock-hint">
-							Enter the password this stream was encrypted with to view its items.
-						</p>
-						<q-input
-							v-model="unlockPassword"
-							label="Password"
-							type="password"
-							dense
-							outlined
-							autofocus
-							:disable="unlocking"
-							:error="!!unlockError"
-							:error-message="unlockError"
-							@keyup.enter="submitUnlock"
-						/>
-					</template>
-					<template v-else>
-						<p class="unlock-hint">
-							This stream is encrypted to its owner's wallet. Sign the prompt to
-							derive its key — the signature never leaves your browser, and costs
-							nothing.
-						</p>
-						<p v-if="unlockError" class="unlock-error">{{ unlockError }}</p>
-					</template>
-					<GradientButton
-						:label="kekMethod === 'password' ? 'Unlock' : 'Unlock with wallet'"
-						loading-label="Unlocking..."
-						:loading="unlocking"
-						@click="submitUnlock"
-					/>
-				</div>
-
-				<template #header-action>
-					<q-btn flat round icon="close" size="sm" v-close-popup />
-				</template>
-			</JPanel>
-		</q-dialog>
+		<UnlockStreamDialog
+			v-model="unlockDialog"
+			:stream="_stream"
+			purpose="view its items"
+			@unlocked="onUnlocked"
+		/>
 	</div>
 </template>
 
 <script>
 import { mapStores } from 'pinia';
 import { getActiveNetwork } from '../settings.js';
-import { useWalletStore } from '../stores/wallet.js';
 import { useMnemonadStore } from '../stores/mnemonad.js';
-import { methodOf } from '../mnemonad/kek.js';
 import { parseStreamRouteId, syncStreamRouteNetwork } from '../includes/streamRoute.js';
-import { JPanel } from 'themed_varmory';
 import GradientPanel from '../components/GradientPanel.vue';
 import GradientButton from '../components/GradientButton.vue';
 import StreamSummary from '../mnemonad/StreamSummary.vue';
 import ItemList from '../mnemonad/ItemList.vue';
 import AddPanel from '../mnemonad/explorer/add/AddPanel.vue';
 import DebugPanel from '../mnemonad/DebugPanel.vue';
+import UnlockStreamDialog from '../mnemonad/UnlockStreamDialog.vue';
 
 /** Items beyond this are counted, never silently dropped — see ItemList's `omitted`. */
 const ITEM_DISPLAY_CAP = 50;
@@ -210,8 +173,8 @@ export default {
 	path: '/stream/:id',
 	title: 'Stream',
 	components: {
-		JPanel, GradientPanel, GradientButton, StreamSummary,
-		ItemList, AddPanel, DebugPanel,
+		GradientPanel, GradientButton, StreamSummary,
+		ItemList, AddPanel, DebugPanel, UnlockStreamDialog,
 	},
 	data() {
 		return {
@@ -240,18 +203,15 @@ export default {
 			// header label below only shows while that loop is genuinely still running, not
 			// for the whole page-load window `itemsLoading` covers.
 			loadStrategy: null,
-			// Password-unlock dialog state — see openUnlock/submitUnlock. Shared across every
-			// item card the same way ItemList's own "View" dialog is: only one can be open at
-			// a time, and unlocking is stream-wide (one key), not per-item.
+			// Whether UnlockStreamDialog.vue is open — see openUnlock/onUnlocked. Shared
+			// across every item card the same way ItemList's own "View" dialog is: only one
+			// can be open at a time, and unlocking is stream-wide (one key), not per-item.
 			unlockDialog: false,
-			unlockPassword: '',
-			unlockError: null,
-			unlocking: false,
 			// Mirrors whether `this._stream.crypto` actually has a usable key, refreshed at
 			// load time (mnemonadStore.loadStream() may hand back an already-unlocked cached
-			// instance from earlier this session) and flipped true the moment submitUnlock()
-			// succeeds. A plain reactive boolean, not a re-derivation of `_stream.crypto`
-			// state on every read: `_stream` itself is deliberately non-reactive (see
+			// instance from earlier this session) and flipped true the moment UnlockStreamDialog
+			// emits `unlocked` (see onUnlocked). A plain reactive boolean, not a re-derivation
+			// of `_stream.crypto` state on every read: `_stream` itself is deliberately non-reactive (see
 			// created() below), so isLocked (and AddPanel's own copy, via its `unlocked`
 			// prop) need an actual reactive value to depend on, not a live object it can't
 			// see mutate.
@@ -259,7 +219,7 @@ export default {
 		};
 	},
 	computed: {
-		...mapStores(useWalletStore, useMnemonadStore),
+		...mapStores(useMnemonadStore),
 		loadStrategyLabel: function() {
 			const labels = {
 				asc: 'loading in order',
@@ -292,19 +252,13 @@ export default {
 		},
 		// True when this stream is encrypted and this session doesn't have a usable key for
 		// it yet (see `unlocked` in data()) — method-agnostic, because both methods have an
-		// unlock affordance now. `kekMethod` below decides which credential to ask for.
+		// unlock affordance now. UnlockStreamDialog.vue decides which credential to ask for.
 		//
 		// `this.streamInfo.encrypted` and `this.unlocked` are both reactive data (also what
 		// makes this computed re-run at all on load/unload/unlock — `this._stream` alone is
 		// deliberately non-reactive, see created() below).
 		isLocked: function() {
 			return !!(this.streamInfo?.encrypted && !this.unlocked);
-		},
-		// 'password' or 'signature' — see mnemonad/kek.js for why an encrypted stream with
-		// no published `kek` block reads as the signature method.
-		kekMethod: function() {
-			if (!this.streamInfo?.encrypted) return null;
-			return methodOf(this._stream);
 		},
 	},
 	created() {
@@ -370,9 +324,10 @@ export default {
 					maxChunkBytes: v.maxChunkBytes,
 					name: v.streamMeta.name,
 					// kek deliberately not copied here — nothing reads it off streamInfo
-					// anymore (see isLocked/submitUnlock below), both read the live
-					// `this._stream.streamMeta.kek` directly instead, same as AddPanel's own
-					// `kek` computed already does off its own `stream` prop.
+					// anymore. `isLocked` below only needs `encrypted`; which credential to ask
+					// for is UnlockStreamDialog.vue's own concern now, reading the live
+					// `this._stream.streamMeta.kek` directly off the `stream` prop it's handed,
+					// same as AddPanel's own `kek` computed already does off its own `stream` prop.
 				};
 
 				// Deliberately not awaited — see loadItems()'s own comment on why it streams
@@ -586,52 +541,12 @@ export default {
 		isItemLoaded(index) {
 			return this._stream?.isItemLoaded(index) ?? false;
 		},
-		/** Opens the shared password-unlock dialog — triggered by any locked item's click. */
+		/** Opens the shared unlock dialog — triggered by any locked item's click. */
 		openUnlock() {
 			this.unlockDialog = true;
-			this.unlockPassword = '';
-			this.unlockError = null;
 		},
-		async submitUnlock() {
-			// Deliberately not gated on `streamMeta.kek` existing: metadata is written once
-			// at creation and can never be corrected, and a stream encrypted before the
-			// method marker existed publishes no block at all — gating here would lock those
-			// out permanently. Whether the credential is right is the GCM tag's call.
-			if (this.unlocking || !this._stream) return;
-			if (this.kekMethod === 'password' && !this.unlockPassword) {
-				this.unlockError = 'Password is required.';
-				return;
-			}
-			this.unlocking = true;
-			this.unlockError = null;
-			try {
-				if (this.kekMethod === 'password') {
-					// unlockWithPassword owns the whole sequence, salt/iterations included —
-					// it reads those off this stream's own streamMeta.kek (the exact block
-					// create() published when this stream was made), derives, verifies (a
-					// wrong password throws, its unwrap's GCM tag check being the validity
-					// check itself) and adopts the key onto `this._stream.crypto` — the same
-					// cached instance mnemonadStore hands back for this id from now on, so
-					// nothing else needs to remember this key.
-					await this._stream.unlockWithPassword(this.unlockPassword);
-				} else {
-					// Same adoption, one wallet signature instead of a password. The store
-					// checks ownership before prompting, so the common "wrong account
-					// connected" case never costs the user a popup.
-					await this.mnemonadStore.unlockStreamWithWallet(
-						this._stream.id,
-						this.walletStore.address
-					);
-				}
-				this.unlocked = true;
-				this.unlockDialog = false;
-			} catch (error) {
-				this.unlockError = this.kekMethod === 'password'
-					? 'Incorrect password.'
-					: (error?.message || 'Could not unlock with this wallet.');
-			} finally {
-				this.unlocking = false;
-			}
+		onUnlocked() {
+			this.unlocked = true;
 		},
 		/**
 		 * Starts (restarting if one's already running) a light poll recomputing how many
@@ -687,27 +602,6 @@ function sleep(ms) {
 
 .items-panel__strategy--locked:hover {
 	text-decoration: underline;
-}
-
-.unlock-content {
-	display: flex;
-	flex-direction: column;
-	gap: 12px;
-	margin: 16px 0;
-}
-
-.unlock-hint {
-	margin: 0;
-	font-size: 12px;
-	opacity: 0.75;
-}
-
-/* The wallet branch has no q-input to carry an :error-message, so the failure renders
-   here instead. */
-.unlock-error {
-	margin: 0;
-	font-size: 12px;
-	color: var(--q-negative);
 }
 
 .stream-layout {

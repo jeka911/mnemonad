@@ -82,28 +82,26 @@
 						/>
 						<span>{{ connector.name }}</span>
 					</q-btn>
-					<div v-if="!connectors.length" class="no-wallets">
-						No wallet extensions detected. Install MetaMask or another browser wallet.
-					</div>
-
 					<template v-if="passkeySignerEnabled">
-						<q-separator />
+						<div v-if="connectors.length" class="wallet-divider"><span>or</span></div>
 						<q-btn
 							v-if="!showPasskeySigner"
 							flat
-							round
+							no-caps
+							size="lg"
 							color="primary"
 							class="passkey-toggle"
 							@click="showPasskeySigner = true"
 						>
-							<q-icon name="fingerprint" size="48px" />
-							<q-tooltip>Use a passkey instead, powered by Mera</q-tooltip>
+							<q-icon name="fingerprint" size="32px" class="q-mr-sm" />
+							<span>Passkey</span>
+							<q-tooltip>Use a passkey, powered by Mera</q-tooltip>
 						</q-btn>
 						<PasskeyCard v-else @connected="onPasskeySignerConnected" />
 					</template>
 
 					<template v-if="localSignerEnabled">
-						<q-separator />
+						<div v-if="connectors.length || passkeySignerEnabled" class="wallet-divider"><span>or</span></div>
 						<q-btn
 							v-if="!showLocalSigner"
 							flat
@@ -116,6 +114,11 @@
 						/>
 						<LocalSignerCard v-else @connected="onLocalSignerConnected" />
 					</template>
+
+					<p v-if="!connectors.length" class="no-wallets">
+						No wallet extension detected — you can also install any EVM-compatible
+						browser wallet (MetaMask, Rabby, …) to sign in that way.
+					</p>
 				</div>
 
 				<template #header-action>
@@ -311,9 +314,28 @@ export default {
 }
 
 .no-wallets {
+	margin: 4px 0 0;
 	text-align: center;
-	font-size: 13px;
-	opacity: 0.8;
+	font-size: 12px;
+	opacity: 0.7;
+}
+
+.wallet-divider {
+	display: flex;
+	align-items: center;
+	gap: 10px;
+	color: var(--q-text-muted, #8a94a6);
+	font-size: 11px;
+	text-transform: uppercase;
+	letter-spacing: 0.06em;
+}
+
+.wallet-divider::before,
+.wallet-divider::after {
+	content: '';
+	flex: 1;
+	height: 1px;
+	background: rgba(255, 255, 255, 0.12);
 }
 
 .local-signer-toggle {

@@ -124,47 +124,12 @@
 			:kek-method="cloneKekMethod"
 		/>
 
-		<q-dialog v-model="unlockDialog">
-			<JPanel accent="header" icon="lock" iconColor="var(--q-primary)" title="Unlock stream" style="min-width: 360px;">
-				<div class="unlock-content q-pa-md">
-					<template v-if="kekMethod === 'password'">
-						<p class="unlock-hint">
-							Enter the password this stream was encrypted with to browse its files.
-						</p>
-						<q-input
-							v-model="unlockPassword"
-							label="Password"
-							type="password"
-							dense
-							outlined
-							autofocus
-							:disable="unlocking"
-							:error="!!unlockError"
-							:error-message="unlockError"
-							@keyup.enter="submitUnlock"
-						/>
-					</template>
-					<template v-else>
-						<p class="unlock-hint">
-							This stream is encrypted to its owner's wallet. Sign the prompt to
-							derive its key — the signature never leaves your browser, and costs
-							nothing.
-						</p>
-						<p v-if="unlockError" class="unlock-error">{{ unlockError }}</p>
-					</template>
-					<GradientButton
-						:label="kekMethod === 'password' ? 'Unlock' : 'Unlock with wallet'"
-						loading-label="Unlocking..."
-						:loading="unlocking"
-						@click="submitUnlock"
-					/>
-				</div>
-
-				<template #header-action>
-					<q-btn flat round icon="close" size="sm" v-close-popup />
-				</template>
-			</JPanel>
-		</q-dialog>
+		<UnlockStreamDialog
+			v-model="unlockDialog"
+			:stream="_stream"
+			purpose="browse its files"
+			@unlocked="onUnlocked"
+		/>
 	</div>
 </template>
 
@@ -172,16 +137,15 @@
 import { shallowRef } from 'vue';
 import { mapStores } from 'pinia';
 import { getActiveNetwork } from '../settings.js';
-import { useWalletStore } from '../stores/wallet.js';
 import { useMnemonadStore } from '../stores/mnemonad.js';
 import { methodOf, isEncrypted } from '../mnemonad/kek.js';
 import { formatStreamId } from '../includes/formatStreamId.js';
 import { parseStreamRouteId, streamPath, syncStreamRouteNetwork } from '../includes/streamRoute.js';
-import { JPanel } from 'themed_varmory';
 import GradientPanel from '../components/GradientPanel.vue';
 import GradientButton from '../components/GradientButton.vue';
 import ExplorerLink from '../mnemonad/ExplorerLink.vue';
 import CloneStreamDialog from '../mnemonad/CloneStreamDialog.vue';
+import UnlockStreamDialog from '../mnemonad/UnlockStreamDialog.vue';
 import StreamSearchBox from '../mnemonad/StreamSearchBox.vue';
 import FileManagerBrowserSync from '../components/filemanager/FileManagerBrowserSync.vue';
 
@@ -193,8 +157,8 @@ export default {
 	path: '/stream/:id/files',
 	title: 'File Browser',
 	components: {
-		JPanel, GradientPanel, GradientButton, ExplorerLink, FileManagerBrowserSync, CloneStreamDialog,
-		StreamSearchBox,
+		GradientPanel, GradientButton, ExplorerLink, FileManagerBrowserSync, CloneStreamDialog,
+		UnlockStreamDialog, StreamSearchBox,
 	},
 	data() {
 		return {
@@ -203,9 +167,6 @@ export default {
 			error: null,
 
 			unlockDialog: false,
-			unlockPassword: '',
-			unlockError: null,
-			unlocking: false,
 			// Same reasoning as Stream.vue's own `unlocked`: `_stream` is deliberately
 			// non-reactive (see created() below), so FileManagerBrowserSync's `unlocked`
 			// prop needs an actual reactive value to depend on.
@@ -240,18 +201,11 @@ export default {
 		};
 	},
 	computed: {
-		...mapStores(useWalletStore, useMnemonadStore),
-		// Which credential the unlock dialog should ask for — 'password' or 'signature'.
-		// Hung off `unlockDialog` (and `unlocked`) rather than `_stream`, which is
-		// deliberately non-reactive (see created()): those are the reactive flags that flip
-		// exactly when this answer is needed — when the dialog opens, and after it succeeds.
-		kekMethod: function() {
-			if (!this.unlockDialog && !this.unlocked) return null;
-			return methodOf(this._stream);
-		},
-		// Same pattern as `kekMethod` above, gated on `cloneDialog` instead: only read
-		// `_stream` (deliberately non-reactive, see created()) at the one moment its answer
-		// is needed, off a flag that's guaranteed to flip when it is.
+		...mapStores(useMnemonadStore),
+		// Gated on `cloneDialog` rather than reading `_stream` (deliberately non-reactive,
+		// see created()) unconditionally — only read at the one moment its answer is needed,
+		// off a flag that's guaranteed to flip when it is. Same trick
+		// UnlockStreamDialog.vue's own `kekMethod` uses, gated on its `modelValue` instead.
 		cloneEncrypted: function() {
 			if (!this.cloneDialog) return false;
 			return isEncrypted(this._stream);
@@ -353,37 +307,9 @@ export default {
 		},
 		openUnlock() {
 			this.unlockDialog = true;
-			this.unlockPassword = '';
-			this.unlockError = null;
 		},
-		async submitUnlock() {
-			// Never gated on `streamMeta.kek` existing — see Stream.vue's own copy for why
-			// (a stream encrypted before the method marker existed publishes no block).
-			if (this.unlocking || !this._stream) return;
-			if (this.kekMethod === 'password' && !this.unlockPassword) {
-				this.unlockError = 'Password is required.';
-				return;
-			}
-			this.unlocking = true;
-			this.unlockError = null;
-			try {
-				if (this.kekMethod === 'password') {
-					await this._stream.unlockWithPassword(this.unlockPassword);
-				} else {
-					await this.mnemonadStore.unlockStreamWithWallet(
-						this._stream.id,
-						this.walletStore.address
-					);
-				}
-				this.unlocked = true;
-				this.unlockDialog = false;
-			} catch (error) {
-				this.unlockError = this.kekMethod === 'password'
-					? 'Incorrect password.'
-					: (error?.message || 'Could not unlock with this wallet.');
-			} finally {
-				this.unlocking = false;
-			}
+		onUnlocked() {
+			this.unlocked = true;
 		},
 		onStreamInfo(info) {
 			this.$q.notify({
@@ -447,14 +373,6 @@ export default {
 </script>
 
 <style scoped>
-/* The wallet branch of the unlock dialog has no q-input to carry an :error-message, so the
-   failure renders as its own line instead. */
-.unlock-error {
-	margin: 0;
-	font-size: 12px;
-	color: var(--q-negative);
-}
-
 /* Strictly one line: the panel's dense header is a fixed 40px row with `overflow: hidden`,
    so a second line isn't shortened, it's cut off mid-glyph (seen live at 375px before this
    was pinned to nowrap). Everything here either fits, ellipsises, or drops out at a
