@@ -60,7 +60,7 @@ async function resolveAccount(args) {
 	}
 	if (key) return privateKeyToAccount(normalizeKey(key));
 	if (args.phrase) return mnemonicToAccount(args.phrase);
-	if (args.passkey) return openPasskeyBridge(args.authOrigin);
+	if (args.passkey) return openPasskeyBridge(args);
 	return null;
 }
 

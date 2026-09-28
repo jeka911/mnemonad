@@ -201,7 +201,10 @@ a WebAuthn ceremony itself. `--passkey` works around that by borrowing a browser
    [`/cli-auth`](../../explorer/src/pages/CliAuth.vue) page in the system browser at that
    deployment's own domain — has to be that exact domain, not a placeholder, since the
    ceremony's `rp.id` is whatever domain the page is actually served from (see above); a page
-   served from anywhere else would either fail outright or produce an unrelated account.
+   served from anywhere else would either fail outright or produce an unrelated account. The
+   URL also carries a one-line `desc` (e.g. `mnemonad push ~/my-data`, built by
+   `describeCommand()` from the command name plus its stream id/path — no flags), so the tab
+   says what it's actually signing in for rather than just "a CLI command."
 2. `/cli-auth` runs the same sign-in ceremony `passkeyConnector.js` uses for the dApp (no
    "create" — this only ever signs in to a passkey that already exists), then opens
    `ws://127.0.0.1:<port>` back to the CLI's server and holds the resulting Mera session in a
@@ -214,8 +217,11 @@ a WebAuthn ceremony itself. `--passkey` works around that by borrowing a browser
    [`explorer/src/wallet/bridgeCodec.js`](../../explorer/src/wallet/bridgeCodec.js) exist only
    to carry a transaction's `BigInt` fields (`value`, `gas`, the fee fields) across that JSON
    socket, which can't represent `BigInt` natively.
-4. When the command finishes (success or failure), `bin/mnemonad.js` tells the tab it's done;
-   the page ends the session (zeroing the key) and the CLI closes the loopback server.
+4. When the command finishes, `bin/mnemonad.js` tells the tab it's done — with whether it
+   actually succeeded and a one-line result (the command's own last `console.log` line, the
+   same thing the terminal itself just showed, or the error message on failure), so the tab
+   shows what happened instead of a bare "done" before the page ends the session (zeroing the
+   key) and the CLI closes the loopback server.
 
 This is deliberately a one-shot bridge, scoped to a single command: no daemon, no state file,
 nothing that persists once the command exits. The next `--passkey` command opens a fresh tab

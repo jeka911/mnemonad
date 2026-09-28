@@ -328,6 +328,22 @@ console.log(`mnemonad v${VERSION}`);
 // anything in the RPC/fetch stack unref's its own I/O (see the process.exit note above).
 const keepAlive = setInterval(() => {}, 60_000);
 
+// --passkey's browser tab shows a result line when the command finishes (see
+// closePasskeyBridge()) rather than a bare "done" — commands don't return a summary
+// explicitly, so this captures their own last console.log line instead, the same thing this
+// terminal already sees. Only wired up when --passkey is in play; every other run's
+// console.log is untouched.
+const logLines = [];
+const originalConsoleLog = console.log;
+if (args.passkey) {
+    console.log = (...parts) => {
+        originalConsoleLog(...parts);
+        logLines.push(parts.join(' '));
+    };
+}
+let succeeded = true;
+let errorMessage = null;
+
 try {
     if (args.command === 'push') {
         await push(args);
@@ -355,18 +371,26 @@ try {
 } catch (err) {
     if (err._isProcessExit) {
         process.exitCode = err._exitCode;
+        succeeded = err._exitCode === 0;
     } else if (err._isUserError) {
         // Expected, actionable failure — message only, no stack trace.
         console.error('Error:', err.message);
         process.exitCode = 1;
+        succeeded = false;
     } else {
         console.error('Error:', err.message);
         if (err.stack) console.error(err.stack);
         process.exitCode = 1;
+        succeeded = false;
     }
+    errorMessage = err.message;
 } finally {
+    console.log = originalConsoleLog;
     // No-op when --passkey was never used — see passkeyBridge.js. Runs whether the command
     // succeeded or failed, so a browser tab left open on a failed push doesn't linger.
-    closePasskeyBridge();
+    closePasskeyBridge({
+        ok: succeeded,
+        summary: succeeded ? (logLines.filter(Boolean).pop() || 'Done.') : (errorMessage || 'Failed.'),
+    });
     clearInterval(keepAlive);
 }

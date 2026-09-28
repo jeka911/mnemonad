@@ -12,6 +12,15 @@ const CONNECT_TIMEOUT_MS = 3 * 60 * 1000;
 // invocation (see resolveAccount in chainClient.js), so there's nothing to key this by.
 let active = null;
 
+/** A one-line "what's this for" the browser tab shows while it waits — just the command
+ *  shape, not the flags, so it stays short. */
+function describeCommand(args) {
+	const parts = ['mnemonad', args.command];
+	if (args.streamId) parts.push(args.streamId);
+	if (args.path) parts.push(args.path);
+	return parts.join(' ');
+}
+
 /**
  * The CLI half of `--passkey`: opens the explorer's `/cli-auth` page in the system browser
  * to run the WebAuthn ceremony there (this process has no `navigator.credentials` — passkeys
@@ -21,10 +30,12 @@ let active = null;
  * (rp.id) and why this is a one-shot-per-command bridge rather than something that persists
  * across separate CLI invocations.
  *
- * @param {string} authOrigin - the explorer deployment to open, e.g. https://mnemonad.vercel.app
+ * @param {Object} args - parsed CLI args: `authOrigin` (the explorer deployment to open, e.g.
+ *   https://mnemonad.vercel.app), plus `command`/`streamId`/`path` to build the one-line
+ *   description the page shows while it waits.
  * @returns {Promise<Object>} a viem Account whose signMessage/signTransaction proxy to the tab
  */
-export async function openPasskeyBridge(authOrigin) {
+export async function openPasskeyBridge(args) {
 	if (active) return active.account;
 
 	const token = randomBytes(24).toString('hex');
@@ -87,7 +98,8 @@ export async function openPasskeyBridge(authOrigin) {
 		});
 	});
 
-	const authUrl = `${authOrigin.replace(/\/$/, '')}/cli-auth?port=${port}&token=${token}`;
+	const desc = describeCommand(args);
+	const authUrl = `${args.authOrigin.replace(/\/$/, '')}/cli-auth?port=${port}&token=${token}&desc=${encodeURIComponent(desc)}`;
 	console.log('  opening', authUrl, 'to sign in with a passkey...');
 	try {
 		await open(authUrl);
@@ -135,14 +147,22 @@ export async function openPasskeyBridge(authOrigin) {
  * command succeeded or failed — a no-op when --passkey was never used. Tells the browser tab
  * it's done so it can end its session and zero the key, mirroring the explorer's own
  * disconnect() lifecycle instead of just abandoning the connection.
+ *
+ * `result` lets the tab show something more useful than a bare "done" before it closes —
+ * whether the command actually succeeded, and the one line of output that says what
+ * happened (bin/mnemonad.js captures its own last console.log line for this rather than
+ * every command needing to return a summary explicitly).
+ *
+ * @param {{ok: boolean, summary: string}} [result]
  */
-export function closePasskeyBridge() {
+export function closePasskeyBridge(result) {
 	if (!active) return;
 	const { wss, httpServer } = active;
 	active = null;
+	const payload = JSON.stringify({ type: 'done', ok: result?.ok ?? true, summary: result?.summary || '' });
 	for (const ws of wss.clients) {
 		try {
-			ws.send(JSON.stringify({ type: 'done' }));
+			ws.send(payload);
 		} catch {
 			// Nothing to tell a socket that's already gone.
 		}

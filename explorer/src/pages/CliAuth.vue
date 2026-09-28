@@ -16,7 +16,10 @@
 					</p>
 				</template>
 				<template v-else-if="status === 'done'">
-					<p class="hint">Done — the CLI command finished. You can close this tab.</p>
+					<p v-if="resultOk === true" class="hint hint--ok">✓ {{ resultSummary }}</p>
+					<p v-else-if="resultOk === false" class="hint hint--fail">✗ {{ resultSummary }}</p>
+					<p v-else class="hint">Disconnected.</p>
+					<p class="hint hint--small">You can close this tab.</p>
 				</template>
 				<template v-else>
 					<p class="hint">
@@ -25,6 +28,7 @@
 						running locally. Powered by
 						<a href="https://mera.category.xyz/" target="_blank" rel="noopener noreferrer">Mera</a>.
 					</p>
+					<p v-if="description" class="hint hint--small"><code>{{ description }}</code></p>
 
 					<GradientButton
 						v-if="status === 'idle' || status === 'signing'"
@@ -87,11 +91,18 @@ export default {
 		return {
 			supported: typeof navigator !== 'undefined' && !!navigator.credentials && !!window.PublicKeyCredential,
 			bridgeParams: port && token ? { port, token } : null,
+			// What the waiting CLI command actually is (`mnemonad push ~/my-data`) — cli/lib/
+			// passkeyBridge.js's own `describeCommand()` builds this into the URL it opens.
+			description: searchParams?.get('desc') || null,
 			status: 'idle', // idle | signing | connected | done
 			address: null,
 			error: null,
 			ws: null,
 			session: null,
+			// Set from the CLI's own `done` message (null for a manual Disconnect click,
+			// which has no result to report — see disconnect()).
+			resultOk: null,
+			resultSummary: '',
 		};
 	},
 	beforeUnmount() {
@@ -138,6 +149,8 @@ export default {
 				} else if (msg.type === 'sign-transaction') {
 					this.respond(msg.id, () => account.signTransaction(decodeFromBridge(msg.transaction)));
 				} else if (msg.type === 'done') {
+					this.resultOk = msg.ok;
+					this.resultSummary = msg.summary || '';
 					this.status = 'done';
 					this.teardown();
 				}
@@ -207,6 +220,14 @@ export default {
 .hint--small {
 	font-size: 12px;
 	opacity: 0.7;
+}
+
+.hint--ok {
+	color: var(--q-positive, #66bb6a);
+}
+
+.hint--fail {
+	color: var(--q-negative, #e57373);
 }
 
 .warning {
