@@ -99,7 +99,8 @@ export async function openPasskeyBridge(args) {
 	});
 
 	const desc = describeCommand(args);
-	const authUrl = `${args.authOrigin.replace(/\/$/, '')}/cli-auth?port=${port}&token=${token}&desc=${encodeURIComponent(desc)}`;
+	const ttl = Math.floor(CONNECT_TIMEOUT_MS / 1000);
+	const authUrl = `${args.authOrigin.replace(/\/$/, '')}/cli-auth?port=${port}&token=${token}&desc=${encodeURIComponent(desc)}&ttl=${ttl}`;
 	console.log('  opening', authUrl, 'to sign in with a passkey...');
 	try {
 		await open(authUrl);

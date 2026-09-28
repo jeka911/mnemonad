@@ -29,6 +29,14 @@
 						<a href="https://mera.category.xyz/" target="_blank" rel="noopener noreferrer">Mera</a>.
 					</p>
 					<p v-if="description" class="hint hint--small"><code>{{ description }}</code></p>
+					<p
+						v-if="countdownLabel && (status === 'idle' || status === 'signing')"
+						class="hint hint--small"
+						:class="{ 'hint--fail': remainingSeconds <= 30 }"
+					>
+						The CLI gives up waiting in {{ countdownLabel }} — sign in before then, or
+						just re-run the command if it's too late.
+					</p>
 
 					<GradientButton
 						v-if="status === 'idle' || status === 'signing'"
@@ -88,12 +96,17 @@ export default {
 		const searchParams = typeof window !== 'undefined' ? new URLSearchParams(window.location.search) : null;
 		const port = searchParams?.get('port');
 		const token = searchParams?.get('token');
+		// How long cli/lib/passkeyBridge.js will wait for `hello` before giving up on the
+		// whole command — shown as a live countdown below so someone doesn't wander off
+		// mid-prompt with no idea there's a clock running at all.
+		const ttlSeconds = parseInt(searchParams?.get('ttl'), 10);
 		return {
 			supported: typeof navigator !== 'undefined' && !!navigator.credentials && !!window.PublicKeyCredential,
 			bridgeParams: port && token ? { port, token } : null,
 			// What the waiting CLI command actually is (`mnemonad push ~/my-data`) — cli/lib/
 			// passkeyBridge.js's own `describeCommand()` builds this into the URL it opens.
 			description: searchParams?.get('desc') || null,
+			remainingSeconds: Number.isFinite(ttlSeconds) ? ttlSeconds : null,
 			status: 'idle', // idle | signing | connected | done
 			address: null,
 			error: null,
@@ -105,7 +118,31 @@ export default {
 			resultSummary: '',
 		};
 	},
+	computed: {
+		countdownLabel() {
+			if (this.remainingSeconds == null) return null;
+			const m = Math.floor(this.remainingSeconds / 60);
+			const s = this.remainingSeconds % 60;
+			return `${m}:${String(s).padStart(2, '0')}`;
+		},
+	},
+	mounted() {
+		// Only meaningful before the CLI actually connects — the bridge's own timeout is
+		// specifically for that `hello` round trip (see passkeyBridge.js), not the command as
+		// a whole, so this stops itself the moment `status` moves past idle/signing.
+		if (this.remainingSeconds != null) {
+			this._countdownTimer = setInterval(() => {
+				if (this.status !== 'idle' && this.status !== 'signing') {
+					clearInterval(this._countdownTimer);
+					return;
+				}
+				this.remainingSeconds = Math.max(0, this.remainingSeconds - 1);
+				if (this.remainingSeconds === 0) clearInterval(this._countdownTimer);
+			}, 1000);
+		}
+	},
 	beforeUnmount() {
+		clearInterval(this._countdownTimer);
 		this.teardown();
 	},
 	methods: {
