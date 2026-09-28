@@ -7,6 +7,7 @@ import {
 	isMeraError,
 } from '@category-labs/mera';
 import { toViemAccount } from '@category-labs/mera/viem';
+import { rememberPasskeyCredential, getRememberedPasskeyCredential } from './passkeyIdentity.js';
 
 /**
  * The connector's `id`/`name`, exported so other components can recognize a passkey session
@@ -35,9 +36,24 @@ function relyingPartyId() {
 	return window.location.hostname;
 }
 
-/** One passkey is meant to hold one Mnemonad account; not user-facing beyond the
- *  authenticator's own UI, which may show it. */
+/** One passkey is meant to hold one Mnemonad account. `user.name` stays fixed — it isn't
+ *  what disambiguates entries in the OS picker, `displayName` is (see passkeyLabel below). */
 const USER_NAME = 'mnemonad-account';
+
+const passkeyLabelFormat = new Intl.DateTimeFormat(undefined, { dateStyle: 'medium', timeStyle: 'medium' });
+
+/**
+ * `createPasskeyWithPrfOutput` makes a new, identically-named credential on every call — a
+ * fixed `displayName` left every one of them showing as the exact same unlabeled
+ * "mnemonad-account" entry in the OS passkey picker, with no way to tell which is which once
+ * there's more than one (creating twice by accident, or after an earlier attempt failed
+ * partway — the passkey from a failed ceremony is still left behind on the authenticator).
+ * A creation-time timestamp is the cheapest thing that actually distinguishes them, matching
+ * Mera's own reference demo (`demos/web/src/account.ts`).
+ */
+function passkeyLabel() {
+	return `Account ${passkeyLabelFormat.format(new Date())}`;
+}
 
 /**
  * A wagmi connector backed by a WebAuthn passkey instead of a browser wallet extension or a
@@ -88,13 +104,26 @@ export function passkeyConnector({ mode, chainId }) {
 			 * we rely on; passing a custom one here would be one more constant this project
 			 * would then have to pin and never change, for no benefit at the one-account-per-
 			 * passkey scope this connector covers.
+			 *
+			 * On 'signin', a remembered credential (see passkeyIdentity.js) is passed as an
+			 * `allowCredential` hint whenever this browser has one — the only thing that keeps
+			 * "Sign in" landing on the same account every time once more than one similarly-
+			 * labeled passkey exists. It's a preference, not a filter we invent a fallback
+			 * around: WebAuthn's own privacy rules make "that credential isn't here" and "the
+			 * user cancelled" indistinguishable from the result alone (both surface as the same
+			 * NotAllowedError), so retrying without the hint on any failure would silently
+			 * re-prompt someone who'd genuinely just declined. `PasskeyCard.vue`'s "Not this
+			 * passkey?" link is the deliberate, explicit way out of a wrong pin instead.
 			 */
 			async connect() {
 				try {
 					const rp = { id: relyingPartyId(), name: RELYING_PARTY_NAME };
-					const { prfOutput } = mode === 'create'
-						? await createPasskeyWithPrfOutput({ rp, user: { name: USER_NAME, displayName: USER_NAME } })
-						: await getPasskeyPrfOutput({ rpId: rp.id });
+					const remembered = mode === 'signin' ? getRememberedPasskeyCredential() : null;
+					const result = mode === 'create'
+						? await createPasskeyWithPrfOutput({ rp, user: { name: USER_NAME, displayName: passkeyLabel() } })
+						: await getPasskeyPrfOutput({ rpId: rp.id, ...(remembered ? { credential: remembered } : {}) });
+					const { prfOutput } = result;
+					rememberPasskeyCredential(result);
 
 					session = createSecp256k1SigningSession({ privateKey: prfOutput });
 					prfOutput.fill(0);
