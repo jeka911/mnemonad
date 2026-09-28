@@ -64,11 +64,6 @@
 			</button>
 
 			<p class="hint hint--small">
-				Creating one may prompt twice — some authenticators need a second check right
-				after registering.
-			</p>
-
-			<p class="hint hint--small">
 				Powered by <a href="https://mera.category.xyz/" target="_blank" rel="noopener noreferrer">Mera</a>,
 				which turns your passkey into the signing key for this account.
 			</p>
