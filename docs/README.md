@@ -15,14 +15,17 @@ so the search box above searches them by meaning.
 
 ## How it works
 
+- [Passkey-derived accounts](wallet/passkey-accounts.md): a wallet-picker option in the
+  explorer where the account itself, not just a stream's key, is derived from a passkey, via
+  [Mera](https://mera.category.xyz/).
 - [Encryption](encryption/encryption.md): public and encrypted streams, and how an encrypted
   stream's key is wrapped.
   - [Password-based](encryption/password.md): a key-encryption key derived from a password.
     It can be shared without handing over a wallet.
   - [Signature-based](encryption/signature.md): a key-encryption key derived from the
     owner's wallet signature. Nothing to remember, and no recovery if the wallet is lost.
-- [Passkey-derived accounts](wallet/passkey-accounts.md): a wallet-picker option in the
-  explorer where the account itself, not just a stream's key, is derived from a passkey.
+  - [With a passkey-derived signer](encryption/passkey.md): the same signature method, but the
+    signer itself is a [Mera](https://mera.category.xyz/) passkey account.
 - [Item caching](caching.md): what the SDK caches, how each entry is keyed, and why only
   as-stored bytes are ever cached.
 - [Vector search](search.md): how a folder's search index is built, shared, and searched from

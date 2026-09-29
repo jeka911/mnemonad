@@ -143,6 +143,60 @@ const SNIPPET_CHARS = 260;
 let mermaidSeq = 0;
 
 /**
+ * Reads the site's own CSS custom properties (explorer/src/themes/monad/{dark,light}.css)
+ * rather than hardcoding a second copy of Monad's palette here — whichever theme is active
+ * on `<body>` right now is what these resolve to, so light/dark switching (see
+ * onThemeChange()) stays in sync automatically instead of drifting from the real tokens.
+ *
+ * Deliberately light-touch: only the *un-classed* structural bits (default node fill/border,
+ * arrows, canvas background, text, font) are themed. A diagram's own explicit
+ * `classDef`/`class` styling (terms.md's tier/chunk/pointer/store colors, for instance) is
+ * how it draws real semantic distinctions between node kinds, and always wins over these
+ * theme defaults in mermaid regardless — nothing here overrides that on purpose.
+ */
+function mermaidThemeVariables() {
+	const styles = getComputedStyle(document.body);
+	const v = (name, fallback) => styles.getPropertyValue(name).trim() || fallback;
+	const primary = v('--q-primary', '#836ef9');
+	const surfaceBg = v('--q-surface-1', '#150c33');
+	const nodeBg = v('--q-surface-2', '#1e1147');
+	const border = v('--q-surface-border', '#33246b');
+	const textBright = v('--q-text-bright', '#fbfaf9');
+	const text = v('--q-text', '#d8d3ea');
+	const fontFamily = v('--font-body', 'inherit');
+	return {
+		background: surfaceBg,
+		fontFamily,
+		textColor: text,
+		lineColor: primary,
+		primaryColor: nodeBg,
+		primaryBorderColor: primary,
+		primaryTextColor: textBright,
+		secondaryColor: nodeBg,
+		tertiaryColor: nodeBg,
+		mainBkg: nodeBg,
+		nodeBorder: primary,
+		clusterBkg: surfaceBg,
+		clusterBorder: border,
+		edgeLabelBackground: surfaceBg,
+		// Sequence-diagram specific — cascades from the above in mermaid's own themes, but
+		// spelled out since search.md's diagram is one and this is worth getting right too.
+		actorBkg: nodeBg,
+		actorBorder: primary,
+		actorTextColor: textBright,
+		signalColor: primary,
+		signalTextColor: text,
+		labelBoxBkgColor: nodeBg,
+		labelBoxBorderColor: primary,
+		labelTextColor: text,
+		loopTextColor: text,
+		noteBkgColor: nodeBg,
+		noteBorderColor: border,
+		noteTextColor: text,
+	};
+}
+
+/**
  * A docs site read straight out of a Mnemonad stream: every markdown file in the stream's
  * folder becomes a page, the folder structure becomes the navigation, and the stream's own
  * `search_index.db` (if it has one) powers search. Nothing is bundled with the app — change
@@ -325,6 +379,7 @@ export default {
 				// as untrusted as the rest of the stream's markdown.
 				securityLevel: 'strict',
 				theme: document.body.classList.contains('body--light') ? 'default' : 'dark',
+				themeVariables: mermaidThemeVariables(),
 			});
 			for (const block of blocks) {
 				if (!block.isConnected) continue;
