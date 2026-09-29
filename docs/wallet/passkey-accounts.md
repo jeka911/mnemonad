@@ -13,6 +13,12 @@ behind `VITE_ENABLE_PASSKEY_SIGNER` — not because the feature is less safe tha
 alternatives (if anything, more: see "What this improves on Local Signer" below), but because
 the library is still pre-1.0 and its own docs say the API may change.
 
+## Using a passkey from the CLI (`--passkey`)
+
+See [cli-passkey.md](cli-passkey.md) — the CLI borrows a browser to run the same ceremony
+described below, then relays signatures back to itself over a loopback WebSocket for the rest
+of that one command.
+
 ## How the account is derived
 
 The WebAuthn **PRF extension** gives a passkey a way to return 32 bytes that are a
@@ -141,104 +147,3 @@ uses the one honest signal it actually has — `hasRememberedCredential`, the sa
 [`passkeyIdentity.js`](../../explorer/src/wallet/passkeyIdentity.js) keeps for sign-in
 disambiguation — to decide which button leads: "Sign in" first and filled once this browser
 has pinned a credential, "Create" first otherwise.
-
-## Real-world failures hit while testing this — none of them fixable from our side
-
-Live testing turned up several distinct, well-documented platform failures. All of them are
-genuine device/browser/authenticator-side issues, confirmed against current sources rather
-than guessed — there was nothing wrong in this connector or in how it calls Mera in any of
-these cases, and `describeError()` already surfaces the most detail the platform will ever
-hand a webpage for any of them.
-
-- **Android Chrome: `NotReadableError`, "An unknown error occurred while talking to the
-  credential manager."** Chrome doesn't implement WebAuthn itself on Android — it hands the
-  request to Google Play Services' Credential Manager and remaps whatever internal error code
-  comes back into one of a handful of generic `DOMException`s, by design (so a page can't
-  fingerprint device state from a fine-grained error). The real cause only exists in the
-  device's own system logs — there's nothing more for us to extract. Commonly caused by more
-  than one credential provider being registered on the device (Google Password Manager
-  alongside Samsung Pass, Bitwarden, 1Password, …), outdated Google Play Services, or an
-  Android version below 14 (the modern Credential Manager path). Worth trying: disable all
-  but one credential provider, update Play Services, or just retry — some of these are
-  transient. See [Android & Google Play Services Passkey Error Codes (2026) —
-  Corbado](https://www.corbado.com/blog/google-play-services-passkey-error-codes) and
-  [bitwarden/android#5384](https://github.com/bitwarden/android/issues/5384).
-- **`PRF_UNAVAILABLE` with Bitwarden as the credential provider.** Bitwarden's own PRF support
-  is real but incomplete and platform-dependent as of mid-2026 — their tracking issue
-  ([bitwarden/discussions#13838](https://github.com/orgs/bitwarden/discussions/13838)) shows
-  the underlying support landed in their `passkey-rs` fork but isn't fully wired through yet;
-  one third-party compatibility survey measured 100% success on Linux/Firefox but 0% on
-  iOS/Safari for the same feature. The ceremony completes (a credential is created) but no PRF
-  output comes back with it — exactly what Mera's `PRF_UNAVAILABLE` check exists to catch.
-  Practical fix: use the device's own built-in passkey manager (Google Password Manager,
-  iCloud Keychain, Windows Hello) rather than Bitwarden — those are consistently reported as
-  full support. See [Passkeys & WebAuthn PRF for End-to-End Encryption (2026) —
-  Corbado](https://www.corbado.com/blog/passkeys-prf-webauthn).
-- **Desktop-to-phone via QR code (the "hybrid transport"/caBLE flow) is just inherently less
-  reliable**, independent of PRF or anything else. The Corbado Passkey Benchmark's Q1 2026
-  data puts hybrid-transport completion at only 60–78% (Windows) / 66–86% (macOS) even under
-  normal conditions, against high-90s for on-device flows. A `NotAllowedError` ("timed out or
-  was not allowed") here is consistent with the multi-step ceremony (scan → unlock → biometric
-  → relay back) simply not completing in time, not a capability gap — Chrome's PRF support
-  does extend to the hybrid path. If this matters for real usage, prefer testing (and
-  encouraging users to connect) directly on the device that holds the passkey, not via a
-  desktop QR scan. See [WebAuthn Passkey QR Codes & Bluetooth: Hybrid Transport —
-  Corbado](https://www.corbado.com/blog/webauthn-passkey-qr-code).
-- **`assetlinks.json` is unrelated to any of the above.** Digital Asset Links'
-  `delegate_permission/common.get_login_creds` is specifically for letting a *native Android
-  app* share the same passkey as its associated website. Mnemonad has no native app, and none
-  of the failures above involve one — every one of them happens entirely inside a browser
-  talking to this website directly (or, for hybrid, to another browser). There is nothing to
-  configure here for that reason.
-
-## Using a passkey from the CLI (`--passkey`)
-
-The CLI (`cli/`) is a Node process — there's no `navigator.credentials` there, so it can't run
-a WebAuthn ceremony itself. `--passkey` works around that by borrowing a browser for it:
-
-1. [`cli/lib/passkeyBridge.js`](../../cli/lib/passkeyBridge.js) starts a loopback WebSocket
-   server on `127.0.0.1` with a random one-time token, and opens the explorer's
-   [`/cli-auth`](../../explorer/src/pages/CliAuth.vue) page in the system browser at that
-   deployment's own domain — has to be that exact domain, not a placeholder, since the
-   ceremony's `rp.id` is whatever domain the page is actually served from (see above); a page
-   served from anywhere else would either fail outright or produce an unrelated account. The
-   URL also carries a one-line `desc` (e.g. `mnemonad push ~/my-data`, built by
-   `describeCommand()` from the command name plus its stream id/path — no flags), so the tab
-   says what it's actually signing in for rather than just "a CLI command." This is also the
-   one structural way this differs from the usual CLI-auth-via-browser pattern (`gh auth
-   login`, most OAuth loopback flows per RFC 8252 §7.3): those hand the whole auth UI to a
-   *remote* provider and only ever touch localhost once, for a single redirect at the very
-   end. There's no remote provider here — the ceremony is WebAuthn, running in the browser
-   against this domain directly — so the page has to talk back to the loopback server itself.
-2. Before running the ceremony, the page polls `GET /ping?token=…` on that same loopback
-   server every 10s (and once immediately on load) — the one thing available before a real
-   connection exists, since the WS below doesn't open until sign-in actually completes. A
-   working pong doubles as "the CLI is still there" and hands back its authoritative view of
-   how much of the connect-timeout is left, which the page uses to correct the countdown for
-   whatever drift built up since either side started counting (the CLI's clock starts before
-   the browser tab has even finished loading). A failing ping shows a plain "can't reach the
-   CLI" instead of only finding that out after a completed passkey prompt.
-3. `/cli-auth` runs the same sign-in ceremony `passkeyConnector.js` uses for the dApp (no
-   "create" — this only ever signs in to a passkey that already exists), then opens
-   `ws://127.0.0.1:<port>` back to the CLI's server and holds the resulting Mera session in a
-   closure for as long as the tab stays open.
-4. Every signature the CLI's command needs (a `personal_sign` for wallet-keyed-stream
-   encryption, a transaction signature for any write) goes out over that socket as a request
-   and comes back as just the signature — the raw key never leaves the browser tab, the same
-   "session with a real, zeroed lifetime" property described above, just relayed instead of
-   called in-process. `cli/lib/bridgeCodec.js` /
-   [`explorer/src/wallet/bridgeCodec.js`](../../explorer/src/wallet/bridgeCodec.js) exist only
-   to carry a transaction's `BigInt` fields (`value`, `gas`, the fee fields) across that JSON
-   socket, which can't represent `BigInt` natively.
-5. When the command finishes, `bin/mnemonad.js` tells the tab it's done — with whether it
-   actually succeeded and a one-line result (the command's own last `console.log` line, the
-   same thing the terminal itself just showed, or the error message on failure), so the tab
-   shows what happened instead of a bare "done" before the page ends the session (zeroing the
-   key) and the CLI closes the loopback server.
-
-This is deliberately a one-shot bridge, scoped to a single command: no daemon, no state file,
-nothing that persists once the command exits. The next `--passkey` command opens a fresh tab
-and repeats the sign-in. That's a real tradeoff — a human has to be there to click through the
-prompt every time, so it's a fit for someone running a command by hand, not for scripts or CI
-(which should keep using `--key`/`MNEMONAD_KEY`) — but it keeps the whole thing to "one bridge,
-one browser tab, one command" with nothing left running or stored anywhere after.

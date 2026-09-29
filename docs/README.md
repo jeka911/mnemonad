@@ -39,3 +39,15 @@ so the search box above searches them by meaning.
 
 - [Local signer in the dApp](testing/local-signer.md): connecting the explorer with a raw
   private key, for testing multi-transaction flows without wallet popups.
+
+## Subprojects
+
+Each package's own README, copied in as-is (relative links rewritten to still resolve from
+here — see `scripts/push_docs.js`'s `relinkReadme`) whenever this stream is pushed:
+
+- [`mnemonad` (SDK)](js/README.md)
+- [`monadsync`](monadsync/README.md)
+- [`mnemonad-cli`](cli/README.md)
+- [Contracts](contracts/README.md)
+- [Presign server](presign-server/README.md)
+- [Search transformers extension](mnemonad-search-transformers/README.md)

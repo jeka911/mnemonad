@@ -69,7 +69,6 @@ export default {
 	data() {
 		return {
 			SOURCE_BASE_URL,
-			tree: null,
 			source: null,
 		};
 	},
@@ -91,24 +90,39 @@ export default {
 		query() {
 			return typeof this.$route.query.q === 'string' ? this.$route.query.q : '';
 		},
-		// The header's cards: the stream's own top-level sections, on every docs page, with the
-		// one the current page belongs to marked active (none on the landing page).
+		// The header's cards. A fixed, curated set rather than one entry per top-level doc/
+		// folder in the stream — that grew to a full page of cards once the subproject READMEs
+		// (see scripts/push_docs.js) started giving the tree a dozen top-level entries, most of
+		// which nobody's looking for from here; the sidebar (DocsNav.vue) already lists
+		// everything for whoever wants to browse the whole tree.
 		cards() {
-			if (!this.tree) return [];
-			return this.tree.children
-				.map((node) => ({
-					key: node.kind === 'doc' ? node.route : (node.route ?? firstDocRoute(node)),
-					title: node.title,
-					subtitle: node.summary,
-					icon: node.kind === 'folder' ? 'o_folder' : 'o_article',
-					active: containsRoute(node, this.docRoute),
-				}))
-				.filter((card) => card.key !== null);
+			return [
+				{
+					key: '',
+					title: 'Overview',
+					subtitle: 'Everything you need to build with Mnemonad',
+					icon: 'o_article',
+					active: this.docRoute === '',
+				},
+				{
+					key: 'terms',
+					title: 'Terms',
+					subtitle: 'What stream, item, chunk, pointer and frame mean here',
+					icon: 'o_article',
+					active: this.docRoute === 'terms',
+				},
+				{
+					key: 'search',
+					title: 'Vector search',
+					subtitle: 'How a folder\'s search index is built, shared, and searched',
+					icon: 'o_article',
+					active: this.docRoute === 'search',
+				},
+			];
 		},
 	},
 	methods: {
-		onLoaded({ tree, source }) {
-			this.tree = tree;
+		onLoaded({ source }) {
 			this.source = source;
 		},
 		onNavigate({ route, hash }) {
@@ -131,23 +145,6 @@ export default {
 		},
 	},
 };
-
-/** Whether the page at `route` is `node` itself or, for a folder, anywhere inside it. */
-function containsRoute(node, route) {
-	if (!route) return false;
-	if (node.kind === 'doc') return node.route === route;
-	return node.route === route || route.startsWith(`${node.path}/`);
-}
-
-/** A folder with no README of its own opens its first doc. */
-function firstDocRoute(folder) {
-	for (const child of folder.children) {
-		if (child.kind === 'doc') return child.route;
-		const nested = child.route ?? firstDocRoute(child);
-		if (nested !== null) return nested;
-	}
-	return null;
-}
 </script>
 
 <style scoped>
