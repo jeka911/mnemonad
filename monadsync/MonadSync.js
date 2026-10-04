@@ -162,6 +162,9 @@ export default class MonadSync {
 	 * First push produces a full `DoubleSyncPatch`; every subsequent push
 	 * produces a `DoubleSyncDiffPatch` against the previous snapshot.
 	 *
+	 * Same as `preparePush()` followed by `commitPush()` — call those two directly to build a
+	 * patch now and send it later (or from another process).
+	 *
 	 * @param {import('@fizzyflow/doublesync').DoubleSyncFolder} root - sender's current folder tree
 	 * @param {Object} [params]
 	 * @param {bigint} [params.value] - passed straight through to Mnemonad's `push()`, in case
@@ -169,13 +172,39 @@ export default class MonadSync {
 	 * @returns {Promise<{version: number}>}
 	 */
 	async push(root, params = {}) {
+		return await this.commitPush(await this.preparePush(root), params);
+	}
+
+	/**
+	 * Builds the next patch document from `root` without writing anything to chain.
+	 *
+	 * The result is self-contained: `commitPush()` can send it from this instance, or from a
+	 * fresh `MonadSync` on a fresh `Mnemonad` in another process, with no chain replay —
+	 * `patchBytes` is the exact (already compressed) document `push()` would have sent.
+	 *
+	 * `baseLength` is the stream length the patch was built against. A diff only makes sense on
+	 * top of that exact version, so `commitPush()` refuses to send it anywhere else.
+	 *
+	 * @param {import('@fizzyflow/doublesync').DoubleSyncFolder} root - sender's current folder tree
+	 * @returns {Promise<{
+	 *   patchBytes: Uint8Array,
+	 *   kind: 'patch'|'diff-patch',
+	 *   baseLength: number,
+	 *   itemCount: number,
+	 *   version: number,
+	 *   newSnapshot: Uint8Array,
+	 *   newChunks: Array<{hash: Uint8Array, bytes: Uint8Array}>,
+	 * }>}
+	 */
+	async preparePush(root) {
 		if (!this._isInitialized) await this.initialize();
 
 		let patchBytes;
 		let newSnapshot = null;
-		let newChunks = [];
+		const newChunks = [];
+		const kind = this._lastSnapshot ? 'diff-patch' : 'patch';
 
-		if (!this._lastSnapshot) {
+		if (kind === 'patch') {
 			patchBytes = await this._sync.buildPatch({
 				root,
 				senderStore: this._senderStore,
@@ -208,17 +237,64 @@ export default class MonadSync {
 			patchBytes = await DoubleSyncCompressed.encode(patchBytes, this._compress);
 		}
 
+		// Building fills _senderStore with this patch's chunks; reset it to what the receiver
+		// actually holds, so a prepared-but-never-committed patch leaves this instance exactly
+		// as it found it. commitPush() adds the chunks back once they're really on chain.
 		this._senderStore = this._cloneReceiverMirror();
-		const pushedItems = await this._pushPatchDocument(patchBytes, params);
 
-		this._lastSnapshot = newSnapshot;
-		for (const { hash, bytes } of newChunks) {
-			this._receiverMirror.putWithHash(hash, bytes);
-			this._senderStore.putWithHash(hash, bytes);
+		const baseLength = this._mn.length;
+		const itemCount = this._patchItemCount(patchBytes.length);
+		return {
+			patchBytes,
+			kind,
+			baseLength,
+			itemCount,
+			version: baseLength + itemCount,
+			newSnapshot,
+			newChunks,
+		};
+	}
+
+	/**
+	 * Sends a patch built by `preparePush()`.
+	 *
+	 * Works on an instance that never replayed the chain (a fresh one in another process):
+	 * only `patchBytes` and `baseLength` are needed to send. `newSnapshot`/`newChunks` update
+	 * this instance's own state afterwards, and are only used when it was initialized.
+	 *
+	 * Throws without writing anything when the stream no longer has `baseLength` items — the
+	 * patch was built against that version, and appended on top of a different one it would
+	 * leave the chain unreadable. The contract enforces the same thing on every write (each
+	 * push names the index it expects to land at), so a stream that moves between this check
+	 * and the transaction reverts instead of landing on the wrong base.
+	 *
+	 * @param {Awaited<ReturnType<MonadSync['preparePush']>>} prepared
+	 * @param {Object} [params] - forwarded to Mnemonad's `push()`
+	 * @returns {Promise<{version: number}>}
+	 */
+	async commitPush(prepared, params = {}) {
+		await this._mn.initialize();
+		if (this._mn.length !== prepared.baseLength) {
+			const err = new Error(
+				`MonadSync.commitPush: stream has ${this._mn.length} item(s), but this patch was built ` +
+				`against ${prepared.baseLength} — rebuild it on top of the current version`
+			);
+			err.code = 'STREAM_MOVED';
+			throw err;
 		}
-		this._replayedCount += pushedItems;
 
-		return { version: this._replayedCount };
+		const pushedItems = await this._pushPatchDocument(prepared.patchBytes, params);
+
+		if (this._isInitialized) {
+			this._lastSnapshot = prepared.newSnapshot;
+			for (const { hash, bytes } of prepared.newChunks || []) {
+				this._receiverMirror.putWithHash(hash, bytes);
+				this._senderStore.putWithHash(hash, bytes);
+			}
+			this._replayedCount = prepared.baseLength + pushedItems;
+		}
+
+		return { version: prepared.baseLength + pushedItems };
 	}
 
 	/**
@@ -465,6 +541,13 @@ export default class MonadSync {
 		}
 
 		this._replayedCount = to;
+	}
+
+	/** How many stream items `_pushPatchDocument` turns a patch of `byteLength` bytes into. */
+	_patchItemCount(byteLength) {
+		if (!this._maxPatchItemBytes || byteLength <= this._maxPatchItemBytes) return 1;
+		const segmentPayloadBytes = Math.max(1, this._maxPatchItemBytes - SEGMENT_HEADER_SIZE);
+		return Math.ceil(byteLength / segmentPayloadBytes);
 	}
 
 	async _pushPatchDocument(patchBytes, params) {

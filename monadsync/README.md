@@ -148,7 +148,21 @@ Load the Mnemonad stream's state and rebuild internal CDC store + session by rep
 
 ### `push(root, params?): Promise<{ version: number }>`
 
-Build the next patch from `root` and push it to the Mnemonad stream. Auto-initializes if needed. `params` is forwarded to `Mnemonad.push()` (e.g. a fee override via `value`).
+Build the next patch from `root` and push it to the Mnemonad stream. Auto-initializes if needed. `params` is forwarded to `Mnemonad.push()` (e.g. a fee override via `value`). Same as `preparePush()` followed by `commitPush()`.
+
+### `preparePush(root): Promise<PreparedPush>`
+
+Build the next patch from `root` without writing anything to chain. Returns `{ patchBytes, kind, baseLength, itemCount, version, newSnapshot, newChunks }`. `patchBytes` is the exact, already compressed document `push()` would send, and `baseLength` is the stream length it was built against.
+
+### `commitPush(prepared, params?): Promise<{ version: number }>`
+
+Send a patch built by `preparePush()`. It needs no chain replay, so a fresh `MonadSync` on a fresh `Mnemonad` can send a patch prepared somewhere else (the CLI's `push --detach` sends it from a background process this way). Throws with `err.code === 'STREAM_MOVED'`, writing nothing, when the stream no longer has `baseLength` items. The contract checks the same thing on every write, so a stream that moves between that check and the transaction reverts instead of landing on the wrong base.
+
+```js
+const prepared = await m.preparePush(root);   // local work only
+// … later, or in another process with its own Mnemonad instance:
+await new MonadSync({ mnemonad }).commitPush(prepared);
+```
 
 ### `restore(version?): Promise<DoubleSyncMemoryFolder>`
 

@@ -31,6 +31,24 @@ export interface MonadSyncPushResult {
 	version: number;
 }
 
+/** A patch built by `preparePush()`, ready for `commitPush()` — here or in another process. */
+export interface MonadSyncPreparedPush {
+	/** The exact (already compressed) patch document to send. */
+	patchBytes: Uint8Array;
+	/** `'patch'` for a full snapshot, `'diff-patch'` for a diff against the previous version. */
+	kind: 'patch' | 'diff-patch';
+	/** Stream length the patch was built against; `commitPush()` refuses any other. */
+	baseLength: number;
+	/** Stream items the patch occupies once sent (more than 1 only for a segmented patch). */
+	itemCount: number;
+	/** The version this patch produces once sent: `baseLength + itemCount`. */
+	version: number;
+	/** Snapshot after this patch — only used to update an initialized instance's state. */
+	newSnapshot: Uint8Array;
+	/** Chunks this patch adds — only used to update an initialized instance's state. */
+	newChunks: Array<{ hash: Uint8Array; bytes: Uint8Array }>;
+}
+
 /**
  * Combines Mnemonad (on-chain append-only storage on Monad) with DoubleSync (CDC-based
  * folder-tree delta sync) to store snapshots and patches on-chain and reconstruct folder
@@ -59,6 +77,16 @@ export default class MonadSync {
 	 * produces a full patch; every subsequent push produces a diff patch.
 	 */
 	push(root: DoubleSyncFolder, params?: MonadSyncPushParams): Promise<MonadSyncPushResult>;
+
+	/** Build the next patch from `root` without writing anything to chain. */
+	preparePush(root: DoubleSyncFolder): Promise<MonadSyncPreparedPush>;
+
+	/**
+	 * Send a patch built by `preparePush()`. Needs no chain replay, so a fresh instance can
+	 * send it. Throws (`err.code === 'STREAM_MOVED'`) without writing when the stream no
+	 * longer has `prepared.baseLength` items.
+	 */
+	commitPush(prepared: MonadSyncPreparedPush, params?: MonadSyncPushParams): Promise<MonadSyncPushResult>;
 
 	/** Raw patch bytes at the given chain index. */
 	getPatch(index: number): Promise<Uint8Array>;
