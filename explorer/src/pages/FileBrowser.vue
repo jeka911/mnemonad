@@ -86,6 +86,13 @@
 			<template #body>
 				<div v-if="!mnemonadStore.isDeployed && !switchingNetwork" class="state">
 					<p>Mnemonad isn't deployed on {{ activeNetwork.label }}.</p>
+					<GradientButton
+						v-if="activeNetwork.id !== 'testnet'"
+						label="Switch to Testnet"
+						size="sm"
+						outline
+						@click="setActiveNetworkId('testnet')"
+					/>
 				</div>
 				<div v-else-if="switchingNetwork" class="state">
 					<q-spinner color="primary" size="28px" />
@@ -136,7 +143,7 @@
 <script>
 import { shallowRef } from 'vue';
 import { mapStores } from 'pinia';
-import { getActiveNetwork } from '../settings.js';
+import { getActiveNetwork, setActiveNetworkId } from '../settings.js';
 import { useMnemonadStore } from '../stores/mnemonad.js';
 import { methodOf, isEncrypted } from '../mnemonad/kek.js';
 import { formatStreamId } from '../includes/formatStreamId.js';
@@ -271,6 +278,7 @@ export default {
 	methods: {
 		// Exposed for the template: an Options-API render function can't see module imports.
 		streamPath,
+		setActiveNetworkId,
 		async load() {
 			if (!this.validId) return;
 			// The URL names a network as well as a stream. If it disagrees with the app's,
@@ -458,6 +466,21 @@ export default {
 	   (the material-icons ligature), and a descendant selector blanks the button entirely. */
 	.head-btn :deep(.gradient-btn__content > span) {
 		display: none;
+	}
+
+	/* With no label left, the button should read as an icon button — a circle sized to the
+	   icon, not a rectangular pill still carrying the left/right padding it had room for the
+	   text in. That unclaimed padding (GradientButton's own 64px min-width, 16px sides) was
+	   the actual space three of these buttons were eating on a narrow phone, not the icons
+	   themselves. */
+	.head-btn :deep(.gradient-btn) {
+		min-width: 2.572em;
+		padding: 4px;
+		border-radius: 50%;
+	}
+
+	.panel-head {
+		gap: 6px;
 	}
 }
 

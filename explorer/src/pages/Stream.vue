@@ -15,6 +15,13 @@
 					<template #body>
 						<div v-if="!mnemonadStore.isDeployed && !switchingNetwork" class="state">
 							<p>Mnemonad isn't deployed on {{ activeNetwork.label }}.</p>
+							<GradientButton
+								v-if="activeNetwork.id !== 'testnet'"
+								label="Switch to Testnet"
+								size="sm"
+								outline
+								@click="setActiveNetworkId('testnet')"
+							/>
 						</div>
 						<div v-else-if="switchingNetwork" class="state">
 							<q-spinner color="primary" size="28px" />
@@ -95,7 +102,7 @@
 
 <script>
 import { mapStores } from 'pinia';
-import { getActiveNetwork } from '../settings.js';
+import { getActiveNetwork, setActiveNetworkId } from '../settings.js';
 import { useMnemonadStore } from '../stores/mnemonad.js';
 import { parseStreamRouteId, syncStreamRouteNetwork } from '../includes/streamRoute.js';
 import GradientPanel from '../components/GradientPanel.vue';
@@ -279,6 +286,8 @@ export default {
 		clearInterval(this._loadedPollTimer);
 	},
 	methods: {
+		// Exposed for the template: an Options-API render function can't see module imports.
+		setActiveNetworkId,
 		// The stream this page was showing no longer exists — nothing left here to stay
 		// on. /select, same destination the header's own back link already uses, is where
 		// you'd pick a different one.

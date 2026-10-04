@@ -4,6 +4,13 @@
 		     canvas-era placeholder. -->
 		<div v-if="!mnemonadStore.isDeployed" class="my-streams__state">
 			<p>Mnemonad isn't deployed on {{ activeNetwork.label }} yet.</p>
+			<GradientButton
+				v-if="activeNetwork.id !== 'testnet'"
+				label="Switch to Testnet"
+				size="sm"
+				outline
+				@click="setActiveNetworkId('testnet')"
+			/>
 		</div>
 
 		<!-- Disconnected: nothing to list without an address to list it for. -->
@@ -85,7 +92,7 @@ import CreateStreamDialog from './CreateStreamDialog.vue';
 import WalletConnect from '../WalletConnect.vue';
 import { useWalletStore } from '../stores/wallet.js';
 import { useMnemonadStore } from '../stores/mnemonad.js';
-import { getActiveNetwork } from '../settings.js';
+import { getActiveNetwork, setActiveNetworkId } from '../settings.js';
 
 export default {
 	name: 'MyStreams',
@@ -118,6 +125,8 @@ export default {
 		},
 	},
 	methods: {
+		// Exposed for the template: an Options-API render function can't see module imports.
+		setActiveNetworkId,
 		load: function() {
 			if (this.walletStore.isConnected) {
 				this.mnemonadStore.fetchOwnedStreams(this.walletStore.address);

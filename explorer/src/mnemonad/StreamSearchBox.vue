@@ -15,6 +15,7 @@
 			v-if="compact"
 			icon="search"
 			size="sm"
+			round
 			aria-label="Search files"
 			title="Search files"
 			@click="openCompact"

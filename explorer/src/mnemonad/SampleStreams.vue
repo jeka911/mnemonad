@@ -2,6 +2,13 @@
 	<div class="sample-streams">
 		<div v-if="!mnemonadStore.isDeployed" class="sample-streams__state">
 			<p>Mnemonad isn't deployed on {{ activeNetwork.label }} yet.</p>
+			<GradientButton
+				v-if="activeNetwork.id !== 'testnet'"
+				label="Switch to Testnet"
+				size="sm"
+				outline
+				@click="setActiveNetworkId('testnet')"
+			/>
 		</div>
 
 		<div v-else-if="!samples.length" class="sample-streams__state">
@@ -33,8 +40,9 @@
 <script>
 import { mapStores } from 'pinia';
 import StreamRow from './StreamRow.vue';
+import GradientButton from '../components/GradientButton.vue';
 import { useMnemonadStore } from '../stores/mnemonad.js';
-import { getActiveNetwork, getActiveNetworkId } from '../settings.js';
+import { getActiveNetwork, getActiveNetworkId, setActiveNetworkId } from '../settings.js';
 import { sampleStreamsFor } from './sampleStreams.js';
 
 /**
@@ -49,7 +57,7 @@ import { sampleStreamsFor } from './sampleStreams.js';
  */
 export default {
 	name: 'SampleStreams',
-	components: { StreamRow },
+	components: { StreamRow, GradientButton },
 	data() {
 		return {
 			activeNetwork: getActiveNetwork(),
@@ -68,6 +76,8 @@ export default {
 		this.loadCounts();
 	},
 	methods: {
+		// Exposed for the template: an Options-API render function can't see module imports.
+		setActiveNetworkId,
 		/**
 		 * Reads each sample's current state. Goes through the store's own `loadStream`, so
 		 * these share the same cached instances the stream page will use a click later —

@@ -13,6 +13,19 @@ so the search box above searches them by meaning.
 - [Terms](terms.md): what *stream*, *item*, *chunk*, *pointer* and *frame* mean here. They look
   interchangeable and aren't.
 
+## Use cases
+
+- [Verifiable backups and data history](use_cases/backups_and_data_history.md): encrypted,
+  versioned backups of databases, files and app state, restorable at any earlier version.
+- [Data layer for dApps](use_cases/data_layer_for_dapps.md): files, databases and media next to
+  contract state, with SDK samples.
+- [Synced folders and app state](use_cases/decentralized_app_state.md): an app's working folder
+  synced to a stream with the CLI, version by version.
+- [Persistent memory for AI agents](use_cases/persistent_ai_agents_memory.md): an agent's
+  workspace that survives the process, searchable by meaning.
+- [Encrypted personal and shared storage](use_cases/personal_and_shared_storage.md): private
+  workspaces, and folders shared with a password.
+
 ## How it works
 
 - [Passkey-derived accounts](wallet/passkey-accounts.md): a wallet-picker option in the

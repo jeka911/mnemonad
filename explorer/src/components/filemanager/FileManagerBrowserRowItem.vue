@@ -223,6 +223,37 @@
         }
     }
 
+    /* Matches FileManagerBrowserRow.vue's own phone breakpoint — the two have to agree, or
+       the row's own height stops matching the tile it's laying out. `.rowItemFolder` (folder/
+       text/generic-file icons — everything except a real image/video preview, which is
+       `.imageContainer` above) was missing from this breakpoint entirely: its height still
+       came from the unshrunk `--row-height` custom property, so its content kept centering
+       inside the old, taller box even after `.rowItem`'s own height clipped around it — the
+       actual cause of the visible gap between rows of folder/file icons on a phone. */
+    @media screen and (max-width: 480px) {
+        .imageContainer,
+        .rowItemFolder {
+            height: 64px;
+        }
+
+        .rowItemBack img {
+            height: 64px;
+        }
+
+        /* A bigger share of a shorter tile — keeps the icon itself close to its previous
+           size while what actually shrinks is the empty space centered around it, which is
+           the gap this is for. */
+        .rowItemIcon {
+            width: 62%;
+            height: 62%;
+        }
+
+        .rowItemFolderTitle {
+            font-size: 11px;
+            padding: 2px 4px;
+        }
+    }
+
 </style>
 <script>
 import FolderIcon from './helpers/FolderIcon.vue';

@@ -176,4 +176,28 @@ export default {
             height: 100px;
         }
     }
+
+    /* Phone widths, not just "narrower desktop" — 100px tiles plus a name line leave only
+       2-3 per row with a lot of dead icon padding around each. Shrinking the row height
+       further here is what actually improves density on a real phone. */
+    @media screen and (max-width: 480px) {
+        /* `.rowRow` itself was missing from every breakpoint here and above — it sets its
+           own height straight from the unshrunk --row-height custom property (see the prop
+           chain from FileManagerBrowserSync.vue), so it kept reserving the old, taller
+           height regardless of how small `.rowItem` below was told to render. That reserved-
+           but-unused space between one row's content and the next row's is what actually
+           read as "the gap" — not spacing between the tiles themselves. */
+        .rowRow {
+            height: 64px;
+        }
+        .rowItem {
+            height: 64px;
+        }
+        .rowItem img {
+            height: 64px;
+        }
+        .rowItem .q-img {
+            height: 64px;
+        }
+    }
 </style>
