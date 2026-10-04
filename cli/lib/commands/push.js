@@ -60,6 +60,10 @@ export async function push(args) {
     if (args.rebuild && !args.index) {
         throw userError('--rebuild only applies with --index (it starts the search index over)');
     }
+    if (args.detach && args.index) {
+        await detachPrepare(args, destPath, streamId);
+        return;
+    }
     if (args.index) {
         console.log(args.rebuild ? '  rebuilding search index...' : '  updating search index...');
         try {
@@ -188,6 +192,85 @@ export async function push(args) {
         // versa) still matches; streamIdsEqual() above is the belt to this suspenders.
         await writeManifest(destPath, { streamId: formatStreamId(streamId), version: result.version, files: localFiles });
     }
+}
+
+/**
+ * `push --detach --index`: indexing can't run here and still be "detached" — the updated index
+ * is part of the version being pushed, so building the patch has to wait for it, and the
+ * sending waits for the patch. So this hands off all three, and keeps only the checks that
+ * need no folder scan and no chain replay: the signer owns the stream, the credential unlocks
+ * it, and the wallet isn't empty. Everything else — "no changes", an indexing error, the
+ * version number — shows up in the job (`mnemonad info`).
+ *
+ * Unlike a plain `--detach`, the folder isn't frozen here: the job reads it when its own turn
+ * comes, so edits made before then go into this version.
+ */
+async function detachPrepare(args, destPath, streamId) {
+    const client = await makeChainClient(args);
+    requireWalletClient(client);
+    await waitForJobs(
+        { signer: client.account.address, chain: args.chain },
+        { reason: 'so the two pushes don\'t race for the same wallet nonce' },
+    );
+
+    // Flag combinations are checked here too, not left for the job to trip over.
+    resolveEncryptMethod(args);
+
+    const mn = new Mnemonad({
+        publicClient: client.publicClient,
+        walletClient: client.walletClient,
+        contractAddress: client.contractAddress,
+        id: streamId,
+        ...resolveOffloadParams(args, client.account),
+    });
+    await assertStreamOwner(mn, client.account.address);
+    await unlockStream(mn, { password: args.password, signer: client.walletClient });
+
+    const balance = await client.publicClient.getBalance({ address: client.account.address });
+    if (balance === 0n) {
+        throw userError(`${client.account.address} has no MON to pay for the push. Nothing was started.`);
+    }
+
+    const job = await startPushJob(
+        {
+            mode: 'prepare',
+            streamId: formatStreamId(streamId),
+            streamKey: streamKey({ chain: args.chain, contractAddress: args.contractAddress, streamId }),
+            chain: args.chain,
+            signer: client.account.address,
+            folder: destPath,
+            baseLength: null,
+            version: null,
+            manifest: args.manifest ? {} : null,
+            args: {
+                chain: args.chain,
+                rpcUrl: args.rpcUrl,
+                contractAddress: args.contractAddress,
+                gatewayUrl: args.gatewayUrl,
+                presignUrl: args.presignUrl,
+                exclude: args.exclude,
+                compress: args.compress,
+                forceSnapshot: args.forceSnapshot,
+                searchDb: args.searchDb,
+                model: args.model,
+                chunkSize: args.chunkSize,
+                chunkOverlap: args.chunkOverlap,
+                rebuild: args.rebuild,
+            },
+        },
+        null,
+        {
+            key: args.key || process.env.MNEMONAD_KEY || null,
+            phrase: args.phrase,
+            password: args.password,
+            pinataJwt: args.pinataJwt,
+        },
+    );
+
+    console.log('  stream:', formatStreamId(streamId));
+    console.log('  indexing, building and sending in the background: job', job.id, '(pid ' + job.pid + ')');
+    console.log('  log:  ', formatPath(job.dir + '/push.log'));
+    console.log('  check: mnemonad info', formatPath(destPath) + (args.manifest ? ' --manifest' : ''));
 }
 
 /**

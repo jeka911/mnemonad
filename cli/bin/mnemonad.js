@@ -108,7 +108,8 @@ Options:
   --detach                  push: build the next version here, send it from a background process,
                             and return right away. Existing streams only (an id, or --manifest).
                             Later pushes and pulls of that stream wait for it; \`mnemonad info\`
-                            shows how it went
+                            shows how it went. With --index, indexing and building the version
+                            move to the background too
   --index                   push/watch: update the folder's search index (search_index.db)
                             before every push, so the stream is searchable right after a pull.
                             Takes --db/--model/--chunk-size/--chunk-overlap like \`index\`

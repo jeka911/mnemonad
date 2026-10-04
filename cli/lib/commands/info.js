@@ -1,5 +1,6 @@
 import Mnemonad, { kekMethodOf } from 'mnemonad';
 import { MonadSync } from 'monadsync';
+import { formatEther } from 'viem';
 import { makeChainClient } from '../chainClient.js';
 import {
     resolvePath,
@@ -19,6 +20,9 @@ export async function info(args) {
 
     console.log('  chain:          ', args.chain);
     console.log('  your wallet:    ', client.account?.address || '(none)');
+    if (client.account) {
+        console.log('  balance:        ', await walletBalance(client));
+    }
 
     // Peek at .mnemonad whenever a path is given, regardless of --manifest and regardless
     // of whether an id was given — info is read-only, so surfacing what's there costs
@@ -168,5 +172,20 @@ export async function info(args) {
     } else {
         console.log('  local matches:   no known version (local modifications?)');
         console.log('  latest remote:   version', totalVersions);
+    }
+}
+
+/**
+ * The signing wallet's native balance, in the chain's own unit (MON on Monad, ETH on a local
+ * Hardhat node). A failed RPC read is shown as such rather than failing `info` — the balance
+ * is a convenience next to the stream report, not something the rest depends on.
+ */
+async function walletBalance(client) {
+    const symbol = client.chain.nativeCurrency?.symbol || 'MON';
+    try {
+        const wei = await client.publicClient.getBalance({ address: client.account.address });
+        return `${formatEther(wei)} ${symbol}`;
+    } catch {
+        return '(could not read)';
     }
 }

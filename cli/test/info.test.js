@@ -37,6 +37,7 @@ describe('info', () => {
 		const { lines } = await captureLogs(() => info({ ...baseArgs, streamId: null }));
 		expect(lines.some((l) => l.includes('chain:') && l.includes('local'))).toBe(true);
 		expect(lines.some((l) => l.includes('your wallet:') && l.toLowerCase().includes(baseArgs.accountAddress.toLowerCase()))).toBe(true);
+		expect(lines.some((l) => /balance:\s+\d+(\.\d+)? ETH$/.test(l))).toBe(true);
 	});
 
 	it('shows owner (marked as you), version count and up-to-date status for a matching local folder', async () => {

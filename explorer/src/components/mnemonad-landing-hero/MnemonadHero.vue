@@ -1,9 +1,8 @@
 <template>
   <section class="mn-hero" :style="sectionStyle">
 
-    <div class="mn-art" aria-hidden="true" :style="artStyle">
-      <img class="mn-art-img mn-art-img--dark" :src="resolvedBackground" alt="" />
-      <img class="mn-art-img mn-art-img--light" :src="resolvedBackgroundLight" alt="" />
+    <div class="mn-art" :style="artStyle">
+      <MnemonadArchitecture :theme="artTheme" :links="artLinks" />
     </div>
 
     <div class="mn-hero-inner">
@@ -47,10 +46,9 @@
 </template>
 
 <script>
-import defaultBackground from './assets/mnemonad-hero-bg.jpg'
-import defaultBackgroundLight from './assets/mnemonad-hero-bg-light.jpg'
 import GradientButton from '../GradientButton.vue'
 import ScrambleCycler from '../ScrambleCycler.vue'
+import MnemonadArchitecture from '../mnemonad-architecture/MnemonadArchitecture.vue'
 
 const ICONS = {
   bolt: '<svg viewBox="0 0 24 24"><path d="M13.5 2 5 13h6l-.5 9L19 11h-6l.5-9Z"/></svg>',
@@ -62,15 +60,13 @@ const ICONS = {
 export default {
   name: 'MnemonadHero',
 
-  components: { GradientButton, ScrambleCycler },
+  components: { GradientButton, ScrambleCycler, MnemonadArchitecture },
 
   emits: ['network-click', 'wallet-click', 'primary-click', 'secondary-click'],
 
   props: {
     brand: { type: String, default: 'Mnemonad' },
     brandHref: { type: String, default: '/' },
-    backgroundImage: { type: String, default: '' },
-    backgroundImageLight: { type: String, default: '' },
     eyebrow: { type: String, default: 'PERSISTENT DATA LAYER FOR THE NEXT INTERNET' },
     /** Demo of ScrambleCycler: rotates in place of `eyebrow`'s first word, the rest of
      * `eyebrow` renders as static text after it. Swap this out (or drop back to plain
@@ -119,17 +115,31 @@ export default {
       // Left edge of the art panel, in px relative to the section — null until measured
       // (or below the breakpoint where CSS takes over entirely, see measureArtLeft()), so
       // artStyle() falls back to the plain CSS-positioned default with no inline override.
-      artLeftPx: null
+      artLeftPx: null,
+      // The architecture diagram's theme. Read from body.body--light (and kept in sync by a
+      // MutationObserver in mounted()) rather than $q.dark.isActive — same reason as every
+      // other light/dark switch in this file: a production build can carry two Quasar
+      // instances, and only the body class is guaranteed to match what's on screen.
+      artTheme: 'dark',
+      // Diagram cards that open a page — see MnemonadArchitecture's `links` prop.
+      artLinks: {
+        users: '/docs/use_cases/personal_and_shared_storage',
+        agents: '/docs/use_cases/persistent_ai_agents_memory',
+        dapps: '/docs/use_cases/data_layer_for_dapps',
+        integrations: '/docs/use_cases/backups_and_data_history',
+        sdk: '/docs/js',
+        encrypt: '/docs/encryption/encryption',
+        cdc: '/docs/monadsync',
+        monad: '/docs/contracts',
+        data: '/docs/use_cases/decentralized_app_state',
+        sync: '/docs/cli',
+        built: '/docs/terms',
+        offchain: '/docs/research/upload-methods-optimization'
+      }
     }
   },
 
   computed: {
-    resolvedBackground() {
-      return this.backgroundImage || defaultBackground
-    },
-    resolvedBackgroundLight() {
-      return this.backgroundImageLight || defaultBackgroundLight
-    },
     // Everything in `eyebrow` after its first word — kept derived from the prop (rather
     // than a second hardcoded string) so a caller overriding `eyebrow` still gets a
     // sensible suffix instead of the demo's own default text.
@@ -154,6 +164,13 @@ export default {
   },
 
   mounted() {
+    const syncTheme = () => {
+      this.artTheme = document.body.classList.contains('body--light') ? 'light' : 'dark'
+    }
+    syncTheme()
+    this._themeObserver = new MutationObserver(syncTheme)
+    this._themeObserver.observe(document.body, { attributes: true, attributeFilter: ['class'] })
+
     this._onResize = () => this.measureArtLeft()
     window.addEventListener('resize', this._onResize)
     // Measured once after this render settles, and again once webfonts finish loading —
@@ -166,6 +183,7 @@ export default {
   },
 
   beforeUnmount() {
+    this._themeObserver?.disconnect()
     window.removeEventListener('resize', this._onResize)
   },
 
@@ -389,48 +407,34 @@ body.body--light .mn-hero {
   right: 0px;
   width: min(820px, 70vw);
   height: calc(100% - var(--mn-copy-top));
-  pointer-events: none;
+  /* Lets the diagram size itself against this panel's height as well as its width — see
+     the :deep(.mn) rule below. */
+  container-type: size;
 }
 
-.mn-art-img {
-  position: absolute;
-  inset: 0;
-  width: 100%;
-  height: 100%;
-  object-fit: contain;
-  object-position: top right;
-  /* No filter here — even a subtle contrast/saturate push shifts the image's own
-     background pixels (recolored to match the page background exactly, see
-     assets/mnemonad-hero-bg*.jpg) away from that match, which reads as a faint edge. */
-  transform: scale(1.03);
-}
-
-/* Light/dark switched purely via body.body--light (not a JS $q.dark computed) — a
-   production build can end up with two Quasar instances (themed_varmory ships its own),
-   desyncing $q.dark.isActive from the class actually written to <body>. Keying off the
-   class here matches GradientButton / GradientPanel / BlockNumber / AppFooter. Both
-   images stay in the DOM (no v-if) so the swap is instant, no re-fetch on toggle. */
-.mn-art-img--light {
-  display: none;
-}
-
-body.body--light .mn-art-img--dark {
-  display: none;
-}
-
-body.body--light .mn-art-img--light {
-  display: block;
+/* "object-fit: contain, top right" for the diagram: as wide as the panel allows, unless
+   that would make it taller than the panel, in which case its height decides — never
+   cropped, never stretched (1600x980 is the SVG's own viewBox). Its own background is
+   dropped so it sits on the hero's, the way the image it replaced did. */
+.mn-art :deep(.mn) {
+  width: min(100cqw, 100cqh * 1600 / 980);
+  margin-left: auto;
+  background: transparent;
 }
 
 .mn-hero-inner {
   position: relative;
   z-index: 3;
+  /* Spans the full width over the art panel, so it would swallow the diagram's hover —
+     only the copy column itself takes pointer events (re-enabled on .mn-copy below). */
+  pointer-events: none;
   width: min(1480px, calc(100% - 56px));
   padding-top: var(--mn-copy-top);
   padding-bottom: 94px;
 }
 
 .mn-copy {
+  pointer-events: auto;
   width: min(620px, 35vw);
   /* Makes this the containing block for .mn-eyebrow's `width: 100%` below — without it,
      that absolutely positioned line's containing block is a wider ancestor further up,

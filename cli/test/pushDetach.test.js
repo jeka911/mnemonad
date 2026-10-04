@@ -6,6 +6,7 @@ import { join } from 'node:path';
 import { push } from '../lib/commands/push.js';
 import { pull } from '../lib/commands/pull.js';
 import { info } from '../lib/commands/info.js';
+import { search } from '../lib/commands/search.js';
 import { readManifest } from '../lib/commands/shared.js';
 import { jobsRoot, waitForJob, listJobs, startPushJob, streamKey } from '../lib/jobs.js';
 import {
@@ -151,6 +152,64 @@ describe('push --detach', () => {
 		expect(jobJson).not.toContain(keyHex);
 		expect(readFileSync(join(jobDir, 'push.log'), 'utf8')).not.toContain(keyHex);
 		expect(JSON.parse(jobJson).args).not.toHaveProperty('key');
+	}, TEST_TIMEOUT);
+});
+
+describe('push --detach --index', () => {
+	it('indexes, builds and sends in the background, and returns before any of it', async () => {
+		const baseArgs = await makeBaseArgs();
+		const streamId = await createStream(baseArgs);
+
+		await writeTestFile(srcDir, 'finance.txt', 'The stock market and economy saw major inflation this year.\n');
+		await writeTestFile(srcDir, 'animals.txt', 'Foxes and dogs are common household pets and animals.\n');
+		const { lines } = await captureLogs(() =>
+			push({ ...baseArgs, path: srcDir, manifest: true, detach: true, index: true })
+		);
+		expect(lines.some((l) => l.includes('indexing, building and sending in the background'))).toBe(true);
+		expect(lines.some((l) => l.includes('prepared'))).toBe(false);
+
+		const job = await waitForJob(jobDirFrom(lines));
+		expect(job.status).toBe('done');
+		expect(job.version).toBe(2);
+		expect((await readManifest(srcDir)).version).toBe(2);
+
+		await pull({ ...baseArgs, streamId, path: destDir });
+		const { lines: hits } = await captureLogs(() =>
+			search({ ...baseArgs, path: destDir, query: 'money and the economy', limit: 1 })
+		);
+		expect(hits.find((l) => /^\n1\. /.test(l))).toContain('finance.txt');
+	}, TEST_TIMEOUT);
+
+	it('finishes as "no changes" when the folder already matches the latest version', async () => {
+		const baseArgs = await makeBaseArgs();
+		await writeTestFile(srcDir, 'a.txt', 'indexed and pushed once\n');
+		const { lines: created } = await captureLogs(() => push({ ...baseArgs, path: srcDir, index: true }));
+		const streamId = createdId(created);
+
+		const { lines } = await captureLogs(() => push({ ...baseArgs, streamId, path: srcDir, detach: true, index: true }));
+		const job = await waitForJob(jobDirFrom(lines));
+		expect(job.status).toBe('done');
+		expect(job.noChanges).toBe(true);
+
+		const { lines: infoLines } = await captureLogs(() => info({ ...baseArgs, streamId, path: srcDir }));
+		expect(infoLines.some((l) => l.includes('background push: no changes, nothing pushed'))).toBe(true);
+	}, TEST_TIMEOUT);
+
+	it('reports an indexing failure in the job, having pushed nothing', async () => {
+		const baseArgs = await makeBaseArgs();
+		const streamId = await createStream(baseArgs);
+
+		await writeTestFile(srcDir, 'a.txt', 'version 2\n');
+		// Overlap ≥ size is rejected by the chunker before any file is read.
+		const { lines } = await captureLogs(() =>
+			push({ ...baseArgs, streamId, path: srcDir, detach: true, index: true, chunkSize: 100, chunkOverlap: 100 })
+		);
+		const job = await waitForJob(jobDirFrom(lines));
+		expect(job.status).toBe('failed');
+		expect(job.error).toMatch(/indexing failed, so nothing was pushed/);
+
+		const { lines: infoLines } = await captureLogs(() => info({ ...baseArgs, streamId, path: destDir }));
+		expect(infoLines.some((l) => l.includes('versions:') && l.trim().endsWith('1'))).toBe(true);
 	}, TEST_TIMEOUT);
 });
 

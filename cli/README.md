@@ -118,7 +118,7 @@ Every command prints the installed CLI version as its first line of output.
 | `--pinata-jwt <jwt>` | Pinata JWT for IPFS offload of large files (or `PINATA_JWT` env var) |
 | `--manifest` | Write/use `.mnemonad` manifest for faster change detection. With no stream-id given, every command recovers it from an existing `.mnemonad` in the folder instead of requiring it explicitly |
 | `--force-snapshot` | Push a full snapshot regardless of prior history (repairs a corrupt stream) |
-| `--detach` | `push`: build the next version here, send it from a background process, and return right away. Existing streams only. See "Push in the background" below |
+| `--detach` | `push`: build the next version here, send it from a background process, and return right away. With `--index`, indexing and building move to the background too. Existing streams only. See "Push in the background" below |
 | `--index` | `push`/`watch`: update the folder's search index before every push (takes `--db`/`--model`/`--chunk-size`/`--chunk-overlap`); if indexing fails, nothing is pushed |
 | `--poll-interval <s>` | `watch`: seconds between remote version checks (default: `2`) |
 | `--debounce <ms>` | `watch`: quiet period in ms before pushing after a local change (default: `1000`) |
@@ -231,7 +231,7 @@ mnemonad pull 123 ~/restored --version 1
 ### Inspect a stream
 
 ```bash
-# check your wallet + chain (no stream id needed)
+# check your wallet, its MON balance, and the chain (no stream id needed)
 mnemonad info
 
 # full stream metadata + local sync status
@@ -241,6 +241,7 @@ mnemonad info 123 ~/my-data
 ```
   chain:           testnet
   your wallet:     0x06bc6420b37a4898424429dcfa236f0065e12279
+  balance:         4.2183 MON
 
 stream: 0x68d9736257f0d2da3c848666a4b36c4b9f18eda7e4dfba655599c47560d8a4b5
   owner:           0x06bc6420b37a4898424429dcfa236f0065e12279 (you)
@@ -388,6 +389,27 @@ mnemonad push ~/my-data --manifest --detach
   command looks at it. A large push that was staged over several transactions, or paid for an
   IPFS upload, can't be resumed. A paid but unused upload can be refunded after the gateway's
   time limit, with the SDK's `MnemonadUploadGateway.refund()` (the CLI has no command for it).
+
+**With `--index`, indexing goes to the background too.** The updated index is part of the
+version being pushed, so the version can only be built once indexing is done, and sent once
+it is built. `push --detach --index` therefore hands off all three, and returns after only the
+checks that need no folder scan: the signer owns the stream, the credential unlocks it, and the
+wallet isn't empty.
+
+```bash
+mnemonad push ~/my-data --manifest --index --detach
+#   stream: 0x68d9…
+#   indexing, building and sending in the background: job 3b9e07c1 (pid 41388)
+```
+
+The trade-offs, compared with a plain `--detach`:
+
+- No version number, size or cost estimate is printed. `mnemonad info` shows them once the job
+  has built the version, and shows "no changes, nothing pushed" if the folder already matched.
+- An indexing error, a model download that fails, and "no changes" show up in the job's status,
+  not in the terminal.
+- The folder is not frozen when the command runs. The job reads it when it starts building, so
+  edits made before then are part of this version.
 
 Jobs live in `~/.cache/mnemonad/jobs/` (set `MNEMONAD_JOBS_DIR` to move them). Finished ones are
 removed after 14 days.

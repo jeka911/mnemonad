@@ -82,9 +82,6 @@ npm install -g mnemonad-cli@latest   # needs Node.js 22 or newer
 mnemonad --help                      # the first line shows the version
 ```
 
-`index` and `search` need mnemonad-cli **0.3.0 or newer**. If either command is unknown,
-reinstall `@latest`.
-
 Optional, for better recall on paraphrased questions (about 450 MB, mostly ONNX Runtime). Do
 not install it unless the user agrees:
 
@@ -168,7 +165,7 @@ mnemonad push ~/agent-memory --manifest --index
 #   version 2 pushed (diff, gzip compressed)
 ```
 
-After a push or a pull, give the user a link to browse the memory:
+After a push, a pull, or any answer drawn from memory, give the user a link to browse the memory:
 `https://mnemonad.vercel.app/stream/testnet-<stream-id>/files`. An encrypted stream opens
 there only for its owner, after one wallet signature.
 
@@ -209,28 +206,34 @@ Write memory with your normal file tools. After each batch of writes, run
 ### 3. End: push once
 
 ```bash
-mnemonad push ~/agent-memory --manifest --index
+mnemonad push ~/agent-memory --manifest --index --encrypt --encrypt-with wallet
 ```
 
 One push sends the whole session as one compressed diff. If indexing fails, nothing is pushed.
 If nothing changed, nothing is sent and nothing is paid. Report the `version N pushed` line to
 the user.
 
-To end a session without waiting for the chain, add `--detach` (mnemonad-cli 0.3.1 or newer):
+Use `--detach` flag for pushing next items into memory (returns much faster if stream already has manifest, prefer this mode for subsequent pushes). The default way to push:
 
 ```bash
 mnemonad push ~/agent-memory --manifest --index --detach
-#   version 5 prepared (diff, gzip compressed, 1.8 KB)
-#   sending in the background: job 8f3c1a2b (pid 41210)
+#   indexing, building and sending in the background: job 3b9e07c1 (pid 41388)
 ```
 
-Every check that can fail still runs before it returns: ownership, unlocking, indexing, "no
-changes", and the balance. Only the sending happens in the background. Report the `version N
-prepared` line and the job id to the user. It only works on an existing stream, so the first
-push that creates the memory must run without it.
+With `--index`, indexing, building the version and sending all run in the background. Before
+it returns, the CLI checks only that the key owns the stream, unlocks it, and has some MON.
+The job reads the folder when it starts building, so edits made before then go into this
+version. At the end of a session that is usually what you want. Report the job id to the user. It only works on an existing stream, so the
+first push that creates the memory must run without it.
 
-At the start of the next session, `mnemonad info ~/agent-memory` shows how the background push
-went (`background push: version 5 sent …`, or `FAILED: <reason>`). A failed background push
+Without `--index`, `--detach` builds the version first and prints it (`version 5 prepared …`),
+so every check runs before it returns and the version is frozen at that moment. Use that form
+after running `mnemonad index` yourself if you want the version number right away.
+
+**Push and forget:** after a detached push, do not wait for it or check on it in the same
+session. The outcome is checked only on the next push or at the start of the next session.
+At that point, `mnemonad info ~/agent-memory` shows how the background push
+went (`background push: version 5 sent …`, `no changes, nothing pushed`, or `FAILED: <reason>`). A failed background push
 leaves the stream as it was. Push again. A `pull` or `push` of the same stream waits for a
 background push that is still sending, so you can never restore or build on the version before
 it.
@@ -274,6 +277,41 @@ Always put the stream id and the folder path **before** any flags.
 
 ---
 
+### Organize by subject and add search keywords
+
+When you write or change memory, split it by subject and make each file easy to find.
+
+1. **One subject per file.** Before writing a fact, decide its subject (food, tooling,
+   networks, projects, people, schedule, and so on). Put it in a file named for that subject,
+   such as `user_food.md` or `user_tooling.md`. Use `<scope>_<subject>.md`, or a folder such
+   as `projects/<name>.md` or `user_info/<topic>.md`. Do not append unrelated facts to a catch-all file like `user.md`.
+   If a file holds more than one subject, split it before you push.
+
+2. **Search first, then edit.** Run `mnemonad search` for the subject. If a file for it
+   exists, edit that file. Create a new file only when no existing one fits.
+
+3. **Add a keywords line to every file.** Directly under the title, add a line like this:
+
+       Keywords: food, eat, eating, favorite, favourite, meal, snack, diet, cuisine, pizza, hot dog
+
+   - Include the category word ("food") and the words someone would use when asking
+     ("what do I like to eat?").
+   - Include synonyms and variants, and the specific items named in the file.
+   - Use plain words, not sentences. The default search model matches words better than
+     meaning, so the keywords must literally appear.
+   - Update the keywords whenever you add a fact to the file.
+
+4. **Write each fact so it stands alone.** Use the category word in the fact itself, for
+   example "Favorite food: pizza (noted 2026-10-04)", not "Likes pizza". Date anything that
+   could change.
+
+5. **After a batch of edits:** run `mnemonad index <folder>`, then check recall by searching
+   with a natural question for each subject you touched. The right file should rank first with
+   a distance under about 0.55. If it doesn't, add keywords and index again.
+
+6. **Keep `user.md` for identity only:** name, email, role, timezone. Everything else goes in
+   a subject file.
+
 ## Memory Layout
 
 The CLI stores whatever is in the folder, so the layout is yours to choose. This one works
@@ -282,6 +320,8 @@ well with search:
 ```
 agent-memory/
   user.md                       stable facts and preferences about the user
+  user_info/
+    <topic>.md                  additional user information, one topic per file
   projects/
     <project>.md                one file per project: goals, constraints, current status
   decisions/
@@ -479,6 +519,13 @@ Confirm the destination folder with the user before any pull.
 - **Always run `mnemonad` commands as standalone Bash calls** — never chain them with `&&`, `;`, or combine with file creation commands in the same shell invocation. Create files first in a separate tool call, then push in a dedicated call.
 - **Keep user posted**, After a successful push to an mnemonad, inform the user about the vector ID stream and the version that was just pushed. Also propose they view the current state in the browser by providing a link to the explorer, e.g. https://mnemonad.vercel.app/stream/testnet-0x648f18ea13eaa4640b97a435a30d39d4f7af9c2105adb10217f8a8ae56e73ac8/files
 - **--manifest is critical on first push** — when a new stream is created, without it the stream ID can be lost. Only skip manifest if the user explicitly says no.
+- Prefer `--detach` for pushes, and treat it as **push and forget**. After a detached push, report the job id and stop. Do NOT run mnemonad info, poll, sleep, tail the push log, or wait for the job to finish. Check the result only at the start of the next session or before the next push, with a single mnemonad info <folder>, and report it then (version N sent, along with a link to the explorer, no changes, or FAILED). If it FAILED, push again.
+- **Point to the dApp on every memory answer.** Whenever you answer from memory (a recall
+question, "what do you remember about me?", a search result), end the reply with one line
+telling the user they can browse and edit their agent memory in the explorer dApp, with the
+link for their stream: `https://mnemonad.vercel.app/stream/testnet-<stream-id>/files`.
+Take the stream id from `.mnemonad` (`mnemonad info <folder>`). For an encrypted stream,
+mention that it opens only for the owner, after one wallet signature.
 
 ## Links
 

@@ -29,22 +29,36 @@ import { fileURLToPath } from 'node:url';
 import Mnemonad from 'mnemonad';
 import { MonadSync } from 'monadsync';
 import { makeChainClient, requireWalletClient } from './chainClient.js';
+import { FSFolder } from './FSFolder.js';
 import {
     formatStreamId,
     formatPath,
     unlockStream,
+    assertStreamOwner,
     resolveOffloadParams,
     writeManifest,
+    makeExcludes,
+    hashLocalTree,
+    localTreeHash,
     userError,
 } from './commands/shared.js';
+import { updateIndex } from './commands/buildIndex.js';
 
 const BIN_PATH = join(dirname(fileURLToPath(import.meta.url)), '..', 'bin', 'mnemonad.js');
 
 /** pending: written, child not started yet · waiting: queued behind an earlier job from the
- *  same signer · sending: transactions in flight · done / failed: finished. */
-export const JOB_STATUS = { PENDING: 'pending', WAITING: 'waiting', SENDING: 'sending', DONE: 'done', FAILED: 'failed' };
+ *  same signer · preparing: indexing and building the patch (`push --detach --index` only) ·
+ *  sending: transactions in flight · done / failed: finished. */
+export const JOB_STATUS = {
+    PENDING: 'pending', WAITING: 'waiting', PREPARING: 'preparing', SENDING: 'sending', DONE: 'done', FAILED: 'failed',
+};
 
-const ACTIVE = new Set([JOB_STATUS.PENDING, JOB_STATUS.WAITING, JOB_STATUS.SENDING]);
+const ACTIVE = new Set([JOB_STATUS.PENDING, JOB_STATUS.WAITING, JOB_STATUS.PREPARING, JOB_STATUS.SENDING]);
+
+/** "version 8", or what a job that hasn't built its version yet is doing instead. */
+function versionLabel(job) {
+    return job.version != null ? `version ${job.version}` : 'the next version';
+}
 
 /** A job still `pending` with no pid after this long never got its child started. */
 const SPAWN_GRACE_MS = 60_000;
@@ -176,7 +190,7 @@ export async function waitForJobs(selector, { reason = 'before continuing' } = {
 
     const job = first[first.length - 1];
     console.log(
-        `  waiting for background push ${job.id} (version ${job.version}) to finish ${reason}...\n` +
+        `  waiting for background push ${job.id} (${versionLabel(job)}) to finish ${reason}...\n` +
         `  log: ${formatPath(join(job.dir, 'push.log'))}`
     );
     while (first.length) {
@@ -195,7 +209,7 @@ export function reportFailedJob(key) {
     const job = latestJob(key);
     if (!job || job.status !== JOB_STATUS.FAILED || job.reported) return;
     console.log(
-        `  warning: background push ${job.id} (version ${job.version}) failed: ${job.error}\n` +
+        `  warning: background push ${job.id} (${versionLabel(job)}) failed: ${job.error}\n` +
         `           nothing from it reached the stream. Log: ${formatPath(join(job.dir, 'push.log'))}`
     );
     writeJobSync(job.dir, { ...readJobSync(job.dir), reported: true });
@@ -224,7 +238,7 @@ export async function settleStreamJobs(args, { wait = true, reason } = {}) {
     if (running.length) {
         const job = running[running.length - 1];
         console.log(
-            `  note: background push ${job.id} (version ${job.version}) is still sending —\n` +
+            `  note: background push ${job.id} (${versionLabel(job)}) is still running —\n` +
             '        this compares against the chain as it is before that version lands'
         );
     }
@@ -235,13 +249,17 @@ export function describeJob(job) {
     const log = formatPath(join(job.dir, 'push.log'));
     switch (job.status) {
         case JOB_STATUS.DONE:
-            return `version ${job.version} sent ${job.finishedAt} (job ${job.id})`;
+            return job.noChanges
+                ? `no changes, nothing pushed ${job.finishedAt} (job ${job.id})`
+                : `version ${job.version} sent ${job.finishedAt} (job ${job.id})`;
         case JOB_STATUS.FAILED:
-            return `version ${job.version} FAILED: ${job.error} (job ${job.id}, log: ${log})`;
+            return `${versionLabel(job)} FAILED: ${job.error} (job ${job.id}, log: ${log})`;
         case JOB_STATUS.WAITING:
-            return `version ${job.version} queued behind another push from the same wallet (job ${job.id}, log: ${log})`;
+            return `${versionLabel(job)} queued behind another push from the same wallet (job ${job.id}, log: ${log})`;
+        case JOB_STATUS.PREPARING:
+            return `indexing and building the next version (job ${job.id}, pid ${job.pid ?? '?'}, log: ${log})`;
         default:
-            return `version ${job.version} still sending (job ${job.id}, pid ${job.pid ?? '?'}, log: ${log})`;
+            return `${versionLabel(job)} still sending (job ${job.id}, pid ${job.pid ?? '?'}, log: ${log})`;
     }
 }
 
@@ -257,8 +275,9 @@ function pruneFinishedJobs() {
 /**
  * Writes a job and starts its detached child.
  *
- * @param {Object} job - everything the child needs except secrets; see push.js's detachPush
- * @param {Uint8Array} patchBytes
+ * @param {Object} job - everything the child needs except secrets; see push.js's detachPush.
+ *   `mode: 'prepare'` (push.js's detachPrepare) has the child index and build the patch too.
+ * @param {?Uint8Array} patchBytes - the prepared patch; null in `prepare` mode
  * @param {{key?: ?string, phrase?: ?string, password?: ?string, pinataJwt?: ?string}} secrets
  * @returns {Promise<{id: string, dir: string, pid: number}>}
  */
@@ -268,7 +287,7 @@ export async function startPushJob(job, patchBytes, secrets) {
     const id = randomBytes(4).toString('hex');
     const dir = join(jobsRoot(), id);
     await mkdir(dir, { recursive: true });
-    await writeFile(join(dir, 'patch.bin'), patchBytes);
+    if (patchBytes) await writeFile(join(dir, 'patch.bin'), patchBytes);
     writeJobSync(dir, { ...job, id, status: JOB_STATUS.PENDING, pid: null, createdAt: new Date().toISOString() });
 
     const logFd = openSync(join(dir, 'push.log'), 'a');
@@ -331,9 +350,6 @@ export async function runPushJob(dir) {
             while (earlier().length) await new Promise((r) => setTimeout(r, POLL_MS));
         }
 
-        update({ status: JOB_STATUS.SENDING, startedAt: new Date().toISOString() });
-        log(`sending version ${job.version} of ${job.streamId} on ${job.chain}...`);
-
         const args = { ...job.args, key: secrets.key ?? null, phrase: secrets.phrase ?? null, password: secrets.password ?? null, pinataJwt: secrets.pinataJwt ?? null, passkey: false };
         const client = await makeChainClient(args);
         requireWalletClient(client);
@@ -347,11 +363,31 @@ export async function runPushJob(dir) {
         });
         await unlockStream(mn, { password: args.password, signer: client.walletClient });
 
-        const patchBytes = new Uint8Array(await readFile(join(dir, 'patch.bin')));
-        const result = await new MonadSync({ mnemonad: mn }).commitPush({ patchBytes, baseLength: job.baseLength });
+        let sync;
+        let prepared;
+        let files = job.manifest?.files || null;
+        if (job.mode === 'prepare') {
+            update({ status: JOB_STATUS.PREPARING, startedAt: new Date().toISOString() });
+            await assertStreamOwner(mn, client.account.address);
+            const built = await prepareInBackground(job, args, mn);
+            if (!built) {
+                update({ status: JOB_STATUS.DONE, noChanges: true, version: mn.length, finishedAt: new Date().toISOString() });
+                log('no changes, nothing to push');
+                return;
+            }
+            ({ sync, prepared, files } = built);
+            update({ version: prepared.version, baseLength: prepared.baseLength, kind: prepared.kind, bytes: prepared.patchBytes.length });
+        } else {
+            sync = new MonadSync({ mnemonad: mn });
+            prepared = { patchBytes: new Uint8Array(await readFile(join(dir, 'patch.bin'))), baseLength: job.baseLength };
+        }
+
+        update({ status: JOB_STATUS.SENDING, sendingAt: new Date().toISOString() });
+        log(`sending version ${job.version} of ${job.streamId} on ${job.chain}...`);
+        const result = await sync.commitPush(prepared);
 
         if (job.manifest) {
-            await writeManifest(job.folder, { streamId: job.streamId, version: result.version, files: job.manifest.files });
+            await writeManifest(job.folder, { streamId: job.streamId, version: result.version, files });
         }
         update({ status: JOB_STATUS.DONE, version: result.version, finishedAt: new Date().toISOString() });
         log(`version ${result.version} pushed`);
@@ -365,6 +401,49 @@ export async function runPushJob(dir) {
     } finally {
         await rm(join(dir, 'patch.bin'), { force: true });
     }
+}
+
+/**
+ * The part of a foreground push that `push --detach --index` hands off along with the sending:
+ * update the search index, replay the chain, and build the patch — same steps, same order, as
+ * push.js. Runs after any earlier job from the same wallet has landed, so it builds on the
+ * real tip.
+ *
+ * @returns {Promise<?{sync: MonadSync, prepared: Object, files: ?Object}>} null when the folder
+ *   already matches the latest version
+ */
+async function prepareInBackground(job, args, mn) {
+    log('updating search index...');
+    try {
+        await updateIndex(job.folder, args, { quiet: true });
+    } catch (err) {
+        throw new Error(`indexing failed, so nothing was pushed: ${err.message}`);
+    }
+
+    const fsFolder = new FSFolder(job.folder, makeExcludes(args));
+    const sync = new MonadSync({ mnemonad: mn, compress: args.compress === false ? false : 'gzip' });
+
+    if (args.forceSnapshot) {
+        // Same escape hatch push.js uses — see monadsync/README.md "Repairing a corrupt chain".
+        await mn.initialize();
+        sync._isInitialized = true;
+        sync._lastSnapshot = null;
+        sync._replayedCount = mn.length;
+    } else {
+        await sync.initialize();
+        if (mn.length > 0) {
+            const localHash = await localTreeHash(job.folder);
+            const remoteHash = await sync.getTreeHash(mn.length);
+            if (localHash && remoteHash.length === localHash.length && localHash.every((b, i) => b === remoteHash[i])) {
+                return null;
+            }
+        }
+    }
+
+    log('building patch...');
+    const prepared = await sync.preparePush(fsFolder);
+    const files = job.manifest ? await hashLocalTree(fsFolder) : null;
+    return { sync, prepared, files };
 }
 
 /** For tests: blocks until a job has finished, and returns it. */
