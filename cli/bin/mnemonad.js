@@ -20,6 +20,7 @@ import { dirname, join } from 'node:path';
 import { push, pull, info, diff, watch, compact, burn, buildIndex, search } from '../lib/commands/index.js';
 import { parseQualifiedStreamId } from '../lib/commands/shared.js';
 import { closePasskeyBridge } from '../lib/passkeyBridge.js';
+import { runPushJob } from '../lib/jobs.js';
 import defaultConfig from '../mnemonad.config.js';
 
 const PKG_ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
@@ -104,6 +105,10 @@ Options:
                             With no stream-id given, every command recovers it from an
                             existing .mnemonad in <path> instead of requiring it explicitly
   --force-snapshot          Push a full snapshot regardless of prior history (repairs corrupt streams)
+  --detach                  push: build the next version here, send it from a background process,
+                            and return right away. Existing streams only (an id, or --manifest).
+                            Later pushes and pulls of that stream wait for it; \`mnemonad info\`
+                            shows how it went
   --index                   push/watch: update the folder's search index (search_index.db)
                             before every push, so the stream is searchable right after a pull.
                             Takes --db/--model/--chunk-size/--chunk-overlap like \`index\`
@@ -162,6 +167,7 @@ function parseArgs(argv) {
         index: false,
         rebuild: false,
         forceSnapshot: false,
+        detach: false,
         pollInterval: 2,
         debounce: 1000,
         pushOnly: false,
@@ -281,6 +287,8 @@ function parseArgs(argv) {
             args.rebuild = true;
         } else if (flag === '--force-snapshot') {
             args.forceSnapshot = true;
+        } else if (flag === '--detach') {
+            args.detach = true;
         } else if (flag === '--poll-interval' && i + 1 < raw.length) {
             args.pollInterval = Number(raw[++i]);
         } else if (flag === '--debounce' && i + 1 < raw.length) {
@@ -363,6 +371,9 @@ try {
         await buildIndex(args);
     } else if (args.command === 'search') {
         await search(args);
+    } else if (args.command === '__push-job') {
+        // The detached half of `push --detach` (lib/jobs.js) — never typed by a person.
+        await runPushJob(args.path);
     } else {
         console.error('Unknown command:', args.command);
         console.log(USAGE);

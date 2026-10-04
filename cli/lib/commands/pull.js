@@ -11,6 +11,7 @@ import {
     formatStreamId,
     discoverStreamId,
 } from './shared.js';
+import { settleStreamJobs } from '../jobs.js';
 
 export async function pull(args) {
     // Resolved up front (throws if missing) so a missing path fails fast, before any chain
@@ -23,6 +24,10 @@ export async function pull(args) {
     if (!args.streamId) {
         throw new Error('stream-id is required for pull');
     }
+
+    // Pulling while a background push of this folder is still sending would restore the
+    // version before it — and delete the very files that push is uploading.
+    await settleStreamJobs(args, { reason: 'so the pull includes it' });
 
     const client = await makeChainClient(args);
 

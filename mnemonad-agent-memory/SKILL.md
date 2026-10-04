@@ -105,6 +105,7 @@ read the memory.
 - Mnemonad runs on **Monad testnet** (chain id `10143`). This is the CLI default. There is no
   mainnet deployment yet, so never pass `--chain mainnet`.
 - Testnet MON comes from the faucet: https://faucet.monad.xyz
+- Check that the `MNEMONAD_KEY` environment variable is set and points to a funded testnet wallet. It may be in user environment variables or in a shell profile file like `~/.bashrc` or `~/.zshrc`. Check if it's available before asking user for setting it manually.
 - Ask the user for the key. Never generate one silently, never print it, and never write it
   into the memory folder.
 
@@ -215,6 +216,25 @@ One push sends the whole session as one compressed diff. If indexing fails, noth
 If nothing changed, nothing is sent and nothing is paid. Report the `version N pushed` line to
 the user.
 
+To end a session without waiting for the chain, add `--detach` (mnemonad-cli 0.3.1 or newer):
+
+```bash
+mnemonad push ~/agent-memory --manifest --index --detach
+#   version 5 prepared (diff, gzip compressed, 1.8 KB)
+#   sending in the background: job 8f3c1a2b (pid 41210)
+```
+
+Every check that can fail still runs before it returns: ownership, unlocking, indexing, "no
+changes", and the balance. Only the sending happens in the background. Report the `version N
+prepared` line and the job id to the user. It only works on an existing stream, so the first
+push that creates the memory must run without it.
+
+At the start of the next session, `mnemonad info ~/agent-memory` shows how the background push
+went (`background push: version 5 sent …`, or `FAILED: <reason>`). A failed background push
+leaves the stream as it was. Push again. A `pull` or `push` of the same stream waits for a
+background push that is still sending, so you can never restore or build on the version before
+it.
+
 For memory that must sync continuously (for example, a long-running agent), `watch` pushes
 after local changes settle and pulls new versions:
 
@@ -233,6 +253,7 @@ Always put the stream id and the folder path **before** any flags.
 | Command | What it does | Key needed |
 |---|---|---|
 | `mnemonad push <path> --manifest [--index]` | Push a new version. With no id and no `.mnemonad`, creates a new stream. | Yes, the owner |
+| `mnemonad push <path> --manifest --detach` | Prepare the next version, send it in the background, return at once. Existing streams only. | Yes, the owner |
 | `mnemonad pull <stream-id> <path> --manifest` | Restore the latest version into the folder | For wallet-encrypted streams |
 | `mnemonad pull <stream-id> <path> --version <n>` | Restore an older version. Use a separate, empty folder. | Same |
 | `mnemonad diff <path> --manifest` | Files added, modified or deleted locally, against the chain | Same |
@@ -448,8 +469,16 @@ Confirm the destination folder with the user before any pull.
 | `pull` deleted local files | `pull` mirrors the stream. Recover with `pull <id> <other-folder> --version <n>`, then copy the files back. |
 | Search needs the MiniLM extension | The index was built with MiniLM. Install `mnemonad-search-transformers`, or switch with `mnemonad index <path> --rebuild`. |
 | `index` / `search` unknown | The CLI is older than 0.3.0. Run `npm install -g mnemonad-cli@latest`. |
+| `--detach only pushes to an existing stream` | Create the stream with a normal push first, or pass `--manifest` so the id is found. |
+| `background push … failed` | Nothing from it reached the stream. Read the reason (and the log path it prints), fix it, and push again. |
 
 ---
+
+## Agent Guidelines
+
+- **Always run `mnemonad` commands as standalone Bash calls** — never chain them with `&&`, `;`, or combine with file creation commands in the same shell invocation. Create files first in a separate tool call, then push in a dedicated call.
+- **Keep user posted**, After a successful push to an mnemonad, inform the user about the vector ID stream and the version that was just pushed. Also propose they view the current state in the browser by providing a link to the explorer, e.g. https://mnemonad.vercel.app/stream/testnet-0x648f18ea13eaa4640b97a435a30d39d4f7af9c2105adb10217f8a8ae56e73ac8/files
+- **--manifest is critical on first push** — when a new stream is created, without it the stream ID can be lost. Only skip manifest if the user explicitly says no.
 
 ## Links
 

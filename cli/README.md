@@ -118,6 +118,7 @@ Every command prints the installed CLI version as its first line of output.
 | `--pinata-jwt <jwt>` | Pinata JWT for IPFS offload of large files (or `PINATA_JWT` env var) |
 | `--manifest` | Write/use `.mnemonad` manifest for faster change detection. With no stream-id given, every command recovers it from an existing `.mnemonad` in the folder instead of requiring it explicitly |
 | `--force-snapshot` | Push a full snapshot regardless of prior history (repairs a corrupt stream) |
+| `--detach` | `push`: build the next version here, send it from a background process, and return right away. Existing streams only. See "Push in the background" below |
 | `--index` | `push`/`watch`: update the folder's search index before every push (takes `--db`/`--model`/`--chunk-size`/`--chunk-overlap`); if indexing fails, nothing is pushed |
 | `--poll-interval <s>` | `watch`: seconds between remote version checks (default: `2`) |
 | `--debounce <ms>` | `watch`: quiet period in ms before pushing after a local change (default: `1000`) |
@@ -348,6 +349,48 @@ mnemonad burn 123
 
 mnemonad burn 123 --yes
 ```
+
+### Push in the background
+
+A push spends most of its time waiting for the chain. `--detach` does everything that can
+fail for your own reasons first, here and now: the owner check, unlocking, `--index`, "no
+changes", and the balance against the estimated cost. Then it hands only the sending to a
+background process and returns:
+
+```bash
+mnemonad push ~/my-data --manifest --detach
+#   version 8 prepared (diff, gzip compressed, 2.1 KB)
+#   estimated cost: 0.0041 MON
+#   stream: 0x68d9…
+#   sending in the background: job 8f3c1a2b (pid 41210)
+#   log:   ~/.cache/mnemonad/jobs/8f3c1a2b/push.log
+#   check: mnemonad info ~/my-data --manifest
+```
+
+- **The version is frozen when the command runs.** Edits made after it returns go into the
+  next push, not this one.
+- **Existing streams only.** It needs a stream id, or `--manifest` on a folder that has a
+  `.mnemonad`. Create a stream with a normal push first. `--passkey` can't be used: the browser
+  tab that signs for it closes when the command exits.
+- **The next command waits for it.** A `push`, `pull`, `compact` or `watch` of the same stream
+  waits until the background push has finished, so nothing builds on, or restores, the version
+  before it. A push from the same wallet to another stream waits too, so the two don't race for
+  one nonce. `diff` only notes that a push is still sending.
+- **Results:** `mnemonad info <path>` shows the last background push for the stream, and when
+  it failed, why. If one fails, the next command on that stream also prints a warning, once.
+- **Nothing half-lands.** The background process refuses to send a version whose base is gone
+  (the stream changed after it was prepared), and the contract rejects any write that doesn't
+  land at the index it names. A failed background push leaves the stream as it was. Push again.
+- **Secrets stay in memory.** The key, the password and a Pinata JWT are handed to the
+  background process over a pipe. They are never written to the job folder, the log, or the
+  process list.
+- If the background process is killed mid-send, the job is reported as failed the next time a
+  command looks at it. A large push that was staged over several transactions, or paid for an
+  IPFS upload, can't be resumed. A paid but unused upload can be refunded after the gateway's
+  time limit, with the SDK's `MnemonadUploadGateway.refund()` (the CLI has no command for it).
+
+Jobs live in `~/.cache/mnemonad/jobs/` (set `MNEMONAD_JOBS_DIR` to move them). Finished ones are
+removed after 14 days.
 
 ### Repair a corrupt stream with a force snapshot
 

@@ -51,6 +51,7 @@ export async function makeBaseArgs(params = {}) {
 		pinataJwt: null,
 		manifest: false,
 		forceSnapshot: false,
+		detach: false,
 		pollInterval: 2,
 		debounce: 1000,
 		pushOnly: false,

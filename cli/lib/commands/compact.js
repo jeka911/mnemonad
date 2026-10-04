@@ -12,6 +12,7 @@ import {
     resolveOffloadParams,
     discoverStreamId,
 } from './shared.js';
+import { settleStreamJobs } from '../jobs.js';
 
 /**
  * Monad has no rebate/refund concept — truncating a stream's history here gives back no
@@ -28,6 +29,7 @@ export async function compact(args) {
     if (!args.streamId) {
         throw new Error('stream-id is required for compact');
     }
+    await settleStreamJobs(args, { reason: 'before replacing the history with a fresh snapshot' });
 
     const fsFolder = new FSFolder(destPath, makeExcludes(args));
 

@@ -18,6 +18,7 @@ import {
     discoverStreamId,
     userError,
 } from './shared.js';
+import { settleStreamJobs } from '../jobs.js';
 import { makeIndexer, updateIndex } from './buildIndex.js';
 
 function timestamp() {
@@ -37,6 +38,7 @@ export async function watch(args) {
     // no need to require it again.
     await discoverStreamId(args, cwd);
     if (!args.streamId) throw new Error('stream-id is required for watch');
+    await settleStreamJobs(args, { reason: 'before watching' });
     const debounceMs = args.debounce ?? 5000;
     const pollIntervalMs = (args.pollInterval ?? 2) * 1000;
     const pushEnabled = !args.pullOnly;

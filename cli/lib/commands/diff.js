@@ -12,6 +12,7 @@ import {
     folderExists,
     discoverStreamId,
 } from './shared.js';
+import { settleStreamJobs } from '../jobs.js';
 
 export function compareFileMaps(localFiles, remoteFiles) {
     const added = [];
@@ -55,6 +56,7 @@ export async function diff(args) {
     if (!args.streamId) {
         throw new Error('stream-id is required for diff');
     }
+    await settleStreamJobs(args, { wait: false });
 
     const client = await makeChainClient(args);
 

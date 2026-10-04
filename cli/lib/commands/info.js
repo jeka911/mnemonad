@@ -12,6 +12,7 @@ import {
     readManifest,
     streamIdsEqual,
 } from './shared.js';
+import { streamKey, latestJob, describeJob } from '../jobs.js';
 
 export async function info(args) {
     const client = await makeChainClient(args);
@@ -43,6 +44,14 @@ export async function info(args) {
                 '(differs from the id given:', formatStreamId(args.streamId) + ')'
             );
         }
+    }
+
+    // The last background push (`push --detach`) for this stream, whichever way its id is
+    // known — even with no --manifest, the folder's own manifest names the stream.
+    const jobStreamId = args.streamId || manifest?.streamId;
+    if (jobStreamId) {
+        const job = latestJob(streamKey({ chain: args.chain, contractAddress: args.contractAddress, streamId: jobStreamId }));
+        if (job) console.log('  background push:', describeJob(job));
     }
 
     if (!args.streamId) {
