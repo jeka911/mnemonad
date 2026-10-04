@@ -10,7 +10,7 @@ An encrypted stream keeps its contents unreadable to anyone who does not have th
 
 The examples on this page use the [`mnemonad` CLI](../cli/README.md), which syncs an encrypted folder with one command. Applications can also use the [JS SDK](../js/README.md) directly. Its snippets are marked "from code".
 
-To browse a stream without the CLI, open it in the [Mnemonad explorer](https://mnemonad.vercel.app) at `https://mnemonad.vercel.app/stream/testnet-<stream-id>/files`. Anyone can browse a public stream there. A wallet-encrypted stream opens only for its owner, after one wallet signature. A password stream opens for anyone who enters the password.
+To browse a stream without the CLI, open it in the [Mnemonad explorer](https://mnemonad.vercel.app) at `https://mnemonad.vercel.app/stream/testnet-<stream-id>/files`. Anyone can browse a public stream there. A wallet-encrypted stream opens only for its owner, after one wallet signature, and the owner can sign in with a wallet extension or a [passkey](#passkey-accounts). A password stream opens for anyone who enters the password.
 
 ## What can be stored
 
@@ -199,7 +199,48 @@ This allows encrypted storage to be tied to wallet access without exposing the w
 
 Only the owner's account can derive the key. No other wallet can read the stream.
 
-A passkey works too. The explorer can derive a wallet from a passkey through Mera, and the CLI can sign with it via `--passkey`. See [Passkey-encrypted streams](../encryption/passkey.md).
+The wallet does not have to be a browser extension or a key in a file. A passkey can be the wallet. See the next section.
+
+## Passkey accounts
+
+You do not need a wallet extension or a seed phrase to own encrypted storage. In the [explorer](https://mnemonad.vercel.app), you can sign in with a passkey: Face ID, Touch ID, Windows Hello, a phone, or a password manager that stores passkeys.
+
+The explorer uses [Mera](https://mera.category.xyz/) to turn the passkey into a normal Monad account. The passkey *is* the account. There is no separate key to store or to lose. The same passkey gives the same address on every device that it syncs to.
+
+Conceptually:
+
+```text
+passkey (Face ID, Touch ID, …)
+  ↓  WebAuthn PRF, through Mera
+Monad account
+  ↓  signs the stream's key message
+KEK
+  ↓
+data key → decrypt stream
+```
+
+A passkey account encrypts with the wallet-based method, exactly like any other wallet. Nothing in the stream is passkey-specific. What changes is how often you are asked:
+
+- **One prompt per session.** You confirm the passkey once, when you sign in. After that, Mera keeps the account's key in memory for the session. Creating an encrypted stream (a key signature and a transaction) and unlocking existing streams then need no more prompts.
+- **Nothing is stored after the session.** Close the tab, reload the page, or start a new CLI command, and you sign in with the passkey again. The passkey derives the same account and the same keys every time.
+
+From the CLI, `--passkey` signs with the same passkey account. It opens the explorer in your browser for the sign-in, and the browser signs for the CLI until the command ends:
+
+```bash
+mnemonad push /private --manifest --encrypt --encrypt-with wallet --passkey   # create, one sign-in
+mnemonad pull <stream-id> /private --passkey                                  # read, one sign-in
+```
+
+A person must confirm each sign-in, so `--passkey` is for commands that you type, not for scripts or CI.
+
+Before you rely on a passkey account, know these limits:
+
+- **The passkey is the only key.** It is the account and the stream's encryption key at the same time. If you lose the passkey and every synced copy of it, you lose the account and the data. Use a passkey that syncs (iCloud Keychain, Google Password Manager, or a password manager), so that it exists on more than one device.
+- **"Create" always makes a new account.** It cannot recover an old one. To get back to an existing account, use "Sign in".
+- **The account belongs to the explorer's domain.** A passkey works only on the site that created it, so a passkey account exists only on [mnemonad.vercel.app](https://mnemonad.vercel.app).
+- **The authenticator must support the WebAuthn PRF extension.** Not every one does: some password managers do not support it yet. When yours does not, the explorer says so, and you can use another authenticator, such as the passkey built into your device.
+
+For details, see [Passkey-derived accounts](../wallet/passkey-accounts.md), [encryption with a passkey account](../encryption/passkey.md), and [CLI + passkey](../wallet/cli-passkey.md).
 
 ## Same API after unlocking
 
@@ -237,6 +278,8 @@ mnemonad pull <stream-id> /user --manifest                       # on another de
 ```
 
 The workspace can be accessed from different devices or applications while remaining encrypted in decentralized storage.
+
+With a [passkey account](#passkey-accounts), the other device needs no key at all: sign in with the same synced passkey, and the account and its keys come back.
 
 The user is not tied to a particular backend provider or application database.
 
@@ -390,6 +433,12 @@ For wallet-based streams:
 - losing the wallet means losing access, and no one else can recover the data
 - only the owner can read, so the stream cannot be shared
 
+For passkey accounts, the same rules apply, because a passkey account is a wallet:
+
+- the passkey is the account and the encryption key, so it is a single point of failure
+- a synced passkey survives the loss of one device; a passkey on one device only does not
+- the account works only on the explorer's domain, where the passkey was created
+
 For both:
 
 - the owner, the sizes and the version count are public
@@ -406,6 +455,7 @@ It provides:
 
 - AES-256-GCM encryption
 - wallet-based key derivation
+- passkey accounts, with no extension and no seed phrase
 - password-based key derivation
 - arbitrary binary storage
 - folder-shaped organization

@@ -1095,7 +1095,7 @@ text { fill: var(--ink); }
 .linked:focus-visible :is(.frame, .face-top, .face-side) { stroke: var(--line-hot); stroke-dasharray: none; filter: var(--glow); }
 .sync.linked:focus-visible rect:not(.hit-area) { stroke: var(--strong); filter: var(--glow); }
 /* fill must be painted (not none) to catch the pointer; transparent paints nothing visible */
-.sync .hit-area { fill: transparent; stroke: none; animation: none; }
+.sync .hit-area { fill: transparent; stroke: none !important; filter: none !important; animation: none; }
 .card.hot { transform: translateY(-4px); }
 
 /* ------------------------------------------------------------- lists */
@@ -1210,7 +1210,7 @@ text { fill: var(--ink); }
 /* sync */
 .sync rect { fill: none; stroke: var(--ink); stroke-width: 2.2; animation: mn-sync 1s ease-in-out var(--sd) infinite; }
 @keyframes mn-sync { 0%, 100% { fill: transparent; } 20%, 40% { fill: #8f6ff0; } }
-.sync.hot rect { stroke: var(--strong); filter: var(--glow); }
+.sync.hot rect:not(.hit-area) { stroke: var(--strong); filter: var(--glow); }
 
 /* storage */
 .spin-y { transform-box: fill-box; transform-origin: center; animation: mn-spin-y 4s ease-in-out infinite; }
