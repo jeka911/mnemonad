@@ -180,7 +180,7 @@ Follow this in every session that uses memory.
 ```bash
 # Is this folder already linked to a stream? Safe, read-only.
 mnemonad info ~/agent-memory
-#   manifest: 0x68d9… (.mnemonad found — pass --manifest to use it without an id)
+#   using stream id from .mnemonad manifest: 0x68d9…
 
 # Restore the latest version (fresh machine, or another agent pushed since):
 mnemonad pull ~/agent-memory --manifest                 # id from .mnemonad
@@ -501,7 +501,7 @@ Confirm the destination folder with the user before any pull.
 | `search` returns unrelated results | There is no minimum similarity. Filter by distance. Consider `--model minilm --rebuild`. |
 | `search` misses a fact you just wrote | Run `mnemonad index <path>` after writing. |
 | A plain `push` warns that the index is out of date | Push with `--index`. A stale index returns old passages. |
-| `stream-id is required` | Pass the id, or pass `--manifest` on a folder that has `.mnemonad`. Check with `mnemonad info <path>`. |
+| `stream-id is required` | The folder has no `.mnemonad`. Pass the id. Check with `mnemonad info <path>`. |
 | `a folder path is required` | Every command that touches a folder needs its path. `info <stream-id>` needs one too. |
 | Push rejected: owned by another address | Only the owner can push. `mnemonad info` shows which wallet is in use. |
 | Cannot decrypt / password required | Encrypted stream. Use the owner's `MNEMONAD_KEY`, or pass `--password`. |
@@ -509,7 +509,7 @@ Confirm the destination folder with the user before any pull.
 | `pull` deleted local files | `pull` mirrors the stream. Recover with `pull <id> <other-folder> --version <n>`, then copy the files back. |
 | Search needs the MiniLM extension | The index was built with MiniLM. Install `mnemonad-search-transformers`, or switch with `mnemonad index <path> --rebuild`. |
 | `index` / `search` unknown | The CLI is older than 0.3.0. Run `npm install -g mnemonad-cli@latest`. |
-| `--detach only pushes to an existing stream` | Create the stream with a normal push first, or pass `--manifest` so the id is found. |
+| `--detach only pushes to an existing stream` | Create the stream with a normal push first, or pass its id. |
 | `background push … failed` | Nothing from it reached the stream. Read the reason (and the log path it prints), fix it, and push again. |
 
 ---

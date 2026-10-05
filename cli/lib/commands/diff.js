@@ -11,6 +11,7 @@ import {
     formatStreamId,
     folderExists,
     discoverStreamId,
+    requireStreamId,
 } from './shared.js';
 import { settleStreamJobs } from '../jobs.js';
 
@@ -53,9 +54,7 @@ export async function diff(args) {
     // With --manifest and no id, a folder pulled/pushed before already has one recorded —
     // no need to require it again.
     await discoverStreamId(args, destPath);
-    if (!args.streamId) {
-        throw new Error('stream-id is required for diff');
-    }
+    requireStreamId(args, 'diff');
     await settleStreamJobs(args, { wait: false });
 
     const client = await makeChainClient(args);

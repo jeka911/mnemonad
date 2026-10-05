@@ -120,7 +120,7 @@ mnemonad push ~/my-data --encrypt --encrypt-with wallet --manifest
 # restore a stream into a folder
 mnemonad pull &lt;stream-id&gt; ~/my-data --manifest
 
-# check what a folder is already synced to, even without --manifest
+# check what a folder is already synced to (reads its .mnemonad)
 mnemonad info ~/my-data
 
 # optional: index a folder, then search it by meaning (all local)
@@ -131,8 +131,8 @@ mnemonad search ~/my-data "how does the key get derived"
 mnemonad push ~/my-data --index --manifest</pre>
       <p class="boot-about">
         <code>--manifest</code> writes <code>.mnemonad</code> into the folder, recording the stream id —
-        pass it on every push/pull for a folder you'll touch again, and later commands can then drop the
-        id entirely. Full agent docs:
+        pass it on the first push/pull of a folder you'll touch again. After that, every command on that
+        folder finds the id by itself. Full agent docs:
         <a href="https://github.com/jeka911/mnemonad/blob/main/SKILL.md">SKILL.md</a> · quick reference:
         <a href="/llms.txt">llms.txt</a>.
       </p>

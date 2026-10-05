@@ -345,29 +345,54 @@ export async function writeManifest(destPath, manifest) {
 }
 
 /**
- * Recovers a stream id from the folder's own `.mnemonad` manifest when `--manifest` was
- * passed and no id was given on the command line — the whole point of writing the manifest
- * is that the id doesn't have to be remembered or re-typed for every later command on the
- * same folder. Mutates `args.streamId` in place (every call site reads it back off `args`
- * afterward) and is a no-op whenever an id was already given or `--manifest` wasn't passed —
- * so it's safe to call unconditionally right after resolving the folder path.
+ * Recovers a stream id from the folder's own `.mnemonad` manifest when no id was given on the
+ * command line — the whole point of the manifest is that the id doesn't have to be remembered
+ * or re-typed for every later command on the same folder. Doesn't need `--manifest`: a folder
+ * that has a manifest already says which stream it belongs to, and requiring a flag to read
+ * that made `mnemonad watch ./folder` fail with "stream-id is required" next to the very file
+ * that answers it. (For `push`, this also means a folder that has a manifest pushes to its own
+ * stream instead of quietly creating a second one; delete `.mnemonad` to start a new stream.)
  *
- * Silent when there's nothing to find (no `.mnemonad` yet, e.g. a folder's very first push,
- * or a manifest with no `streamId`) — the caller's own "stream-id is required" error covers
- * that case with the wording appropriate to its command.
+ * When it does use a manifest, it also turns `args.manifest` on, so this run keeps the file
+ * current as `--manifest` would: a folder that has one has opted in, and a manifest left
+ * behind at an old version would make later `--manifest` runs compare against stale hashes.
+ *
+ * Mutates `args` in place (every call site reads `args.streamId` back afterward) and is a
+ * no-op when an id was already given. Silent when there's nothing to find (no `.mnemonad`
+ * yet, e.g. a folder's very first push) — requireStreamId() covers that case.
  *
  * @param {Object} args - parsed CLI args, mutated in place
  * @param {string} destPath - resolved folder path to look for `.mnemonad` in
  * @returns {Promise<?string>} the resolved stream id, or whatever `args.streamId` already was
  */
 export async function discoverStreamId(args, destPath) {
-    if (args.streamId || !args.manifest) return args.streamId;
+    if (args.streamId) return args.streamId;
     const manifest = await readManifest(destPath);
     if (manifest?.streamId) {
         console.log('  using stream id from .mnemonad manifest:', formatStreamId(manifest.streamId));
         args.streamId = manifest.streamId;
+        args.manifest = true;
     }
     return args.streamId;
+}
+
+/**
+ * The "no stream id" failure for a command that can't run without one — a plain message (no
+ * stack trace) that says where an id can come from.
+ *
+ * @param {Object} args - parsed CLI args
+ * @param {string} command - e.g. 'watch'
+ * @param {Object} [opts]
+ * @param {boolean} [opts.folder=true] - false for a command that takes no folder (burn), so
+ *   the hint doesn't suggest a manifest it would never read
+ */
+export function requireStreamId(args, command, { folder = true } = {}) {
+    if (args.streamId) return;
+    throw userError(
+        folder
+            ? `stream-id is required for ${command} — pass it, or run this on a folder that has a .mnemonad manifest`
+            : `stream-id is required for ${command} — pass it as the first argument`
+    );
 }
 
 export const DISK_EXCLUDES = new Set(['.mnemonad', '.git', '.DS_Store', 'node_modules']);

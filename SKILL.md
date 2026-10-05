@@ -160,18 +160,21 @@ and pull for any folder that will be touched again**, not just the first one. It
 around.
 
 Before assuming a folder isn't synced to a stream yet, check it with `info` — safe and
-side-effect-free, even without `--manifest`:
+side-effect-free:
 
 ```bash
 mnemonad info ~/my-data
-# Reports whether a .mnemonad manifest exists in ~/my-data and what stream id it names,
-# even though no --manifest flag was passed.
+# If ~/my-data has a .mnemonad, prints "using stream id from .mnemonad manifest: 0x..."
+# and reports on that stream.
 ```
 
-With `--manifest`, any command resolves a missing id from `.mnemonad` automatically —
-`mnemonad info ~/my-data --manifest`, or `push`/`pull`/`diff`/`watch`/`compact` the same way,
-logged as `using stream id from .mnemonad manifest: 0x...`. And if an id is already in hand
-from elsewhere, `info` flags it when it doesn't match the folder's own manifest, rather than
+Once a folder has a `.mnemonad`, every command resolves a missing id from it, with or without
+`--manifest` (mnemonad-cli 0.3.3 or newer), and keeps the file current —
+`push`/`pull`/`diff`/`watch`/`compact`/`info`, each logged as
+`using stream id from .mnemonad manifest: 0x...`. A `push` to such a folder goes to its own
+stream, never a new one; delete `.mnemonad` only if the user wants a new stream. `burn` never
+reads the manifest — it needs the id typed explicitly. And if an id is already in hand from
+elsewhere, `info` flags it when it doesn't match the folder's own manifest, rather than
 silently trusting either one.
 
 ## API Surface

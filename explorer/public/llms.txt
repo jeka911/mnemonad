@@ -57,14 +57,16 @@ Before assuming a folder isn't synced yet, check it with `info`:
 
 ```bash
 mnemonad info ~/my-data
-# Safe and side-effect-free, even without --manifest — reports whether a manifest exists
-# in ~/my-data and what stream id it names.
+# Safe and side-effect-free — if ~/my-data has a .mnemonad, prints
+# "using stream id from .mnemonad manifest: 0x…" and reports on that stream.
 ```
 
-With `--manifest`, any command resolves the id from `.mnemonad` automatically when none is
-given — `mnemonad info ~/my-data --manifest`, or `push`/`pull`/`diff`/`watch`/`compact` the
-same way. And if you already have an id from elsewhere, `info` flags it when it doesn't match
-the folder's own manifest.
+Once a folder has a `.mnemonad`, every command resolves the id from it when none is given,
+with or without `--manifest` (mnemonad-cli 0.3.3 or newer), and keeps it current —
+`push`/`pull`/`diff`/`watch`/`compact`/`info ~/my-data`. A `push` to such a folder goes to
+its own stream, never a new one. `burn` is the exception: it only takes an explicit id. And if
+you already have an id from elsewhere, `info` flags it when it doesn't match the folder's own
+manifest.
 
 ## Search a folder by meaning (optional)
 

@@ -11,6 +11,7 @@ import {
     unlockStream,
     resolveOffloadParams,
     discoverStreamId,
+    requireStreamId,
 } from './shared.js';
 import { settleStreamJobs } from '../jobs.js';
 
@@ -26,9 +27,7 @@ export async function compact(args) {
     // With --manifest and no id, a folder pulled/pushed before already has one recorded —
     // no need to require it again.
     await discoverStreamId(args, destPath);
-    if (!args.streamId) {
-        throw new Error('stream-id is required for compact');
-    }
+    requireStreamId(args, 'compact');
     await settleStreamJobs(args, { reason: 'before replacing the history with a fresh snapshot' });
 
     const fsFolder = new FSFolder(destPath, makeExcludes(args));

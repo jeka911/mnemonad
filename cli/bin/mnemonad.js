@@ -101,12 +101,13 @@ Options:
                             signs for it). Implied by --password; required otherwise
   --password <pw>           Password to encrypt a new stream with, or decrypt an existing one
   --pinata-jwt <jwt>        Pinata JWT for IPFS offload of large files (or PINATA_JWT env var)
-  --manifest                Write/use .mnemonad manifest for faster change detection.
-                            With no stream-id given, every command recovers it from an
-                            existing .mnemonad in <path> instead of requiring it explicitly
+  --manifest                Write a .mnemonad manifest into the folder for faster change detection.
+                            A folder that already has one needs no flag: with no stream-id
+                            given, every command (except burn) reads the id from it and keeps
+                            it current. push to such a folder never creates a second stream
   --force-snapshot          Push a full snapshot regardless of prior history (repairs corrupt streams)
   --detach                  push: build the next version here, send it from a background process,
-                            and return right away. Existing streams only (an id, or --manifest).
+                            and return right away. Existing streams only (an id, or a .mnemonad).
                             Later pushes and pulls of that stream wait for it; \`mnemonad info\`
                             shows how it went. With --index, indexing and building the version
                             move to the background too

@@ -1,6 +1,6 @@
 import Mnemonad from 'mnemonad';
 import { makeChainClient, requireWalletClient } from '../chainClient.js';
-import { assertStreamOwner, formatStreamId, formatBytes } from './shared.js';
+import { assertStreamOwner, formatStreamId, formatBytes, requireStreamId } from './shared.js';
 
 /**
  * Destroys a stream permanently: burns the ERC-721 token and clears its metadata and
@@ -17,9 +17,9 @@ import { assertStreamOwner, formatStreamId, formatBytes } from './shared.js';
  * a script could accidentally click through.
  */
 export async function burn(args) {
-    if (!args.streamId) {
-        throw new Error('stream-id is required for burn');
-    }
+    // Never inferred from a folder's .mnemonad: an irreversible command only ever acts on an
+    // id that was typed out for it.
+    requireStreamId(args, 'burn', { folder: false });
 
     const client = await makeChainClient(args);
     requireWalletClient(client);

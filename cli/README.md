@@ -116,7 +116,7 @@ Every command prints the installed CLI version as its first line of output.
 | `--encrypt-with <method>` | How to key it: `password` (needs `--password`), or `wallet` — the `--key`/`--phrase` account signs for it, and only that account can ever decrypt it. Implied by `--password` |
 | `--password <pw>` | Password to encrypt a new stream with, or decrypt an existing one |
 | `--pinata-jwt <jwt>` | Pinata JWT for IPFS offload of large files (or `PINATA_JWT` env var) |
-| `--manifest` | Write/use `.mnemonad` manifest for faster change detection. With no stream-id given, every command recovers it from an existing `.mnemonad` in the folder instead of requiring it explicitly |
+| `--manifest` | Write `.mnemonad` into the folder (stream id, version, file hashes) for faster change detection. A folder that already has one is used automatically when no stream-id is given, and kept current, with or without this flag |
 | `--force-snapshot` | Push a full snapshot regardless of prior history (repairs a corrupt stream) |
 | `--detach` | `push`: build the next version here, send it from a background process, and return right away. With `--index`, indexing and building move to the background too. Existing streams only. See "Push in the background" below |
 | `--index` | `push`/`watch`: update the folder's search index before every push (takes `--db`/`--model`/`--chunk-size`/`--chunk-overlap`); if indexing fails, nothing is pushed |
@@ -285,21 +285,28 @@ mnemonad push 123 ~/my-data --manifest
 ```
 
 `--manifest` writes `.mnemonad` into the folder, recording the stream id, version and file
-hashes. With it, later commands on the same folder don't need the id typed again:
+hashes. After that, later commands on the same folder don't need the id typed again, with or
+without the flag:
 
 ```bash
-mnemonad push ~/my-data --manifest          # no id — read from .mnemonad
-mnemonad pull ~/my-data --manifest          # same
-mnemonad diff ~/my-data --manifest          # same
+mnemonad push ~/my-data           # no id — read from .mnemonad
+mnemonad pull ~/my-data           # same
+mnemonad watch ~/my-data          # same
+#   using stream id from .mnemonad manifest: 0x68d9…
 ```
 
-If no id is given and there's no `.mnemonad` yet (or `--manifest` wasn't passed), the usual
-`stream-id is required` error is thrown.
+A command that finds the id this way also keeps `.mnemonad` current, as `--manifest` would.
 
-`info` is the one exception that doesn't require `--manifest` to react to a manifest: being
-read-only, it always peeks at `.mnemonad` in `<path>` and reports what it finds — a note that
-one's available (with its id) if you left `--manifest` off, or a note if the id you gave
-doesn't match the one recorded in the folder's own manifest.
+This includes `push`: a folder that has a `.mnemonad` pushes to its own stream, never a new
+one. To start a new stream from that folder, delete `.mnemonad` first.
+
+If no id is given and there's no `.mnemonad`, the command stops with
+`stream-id is required for <command> — pass it, or run this on a folder that has a .mnemonad manifest`.
+(`push` is the exception: with neither, it creates a new stream.)
+
+An id given on the command line always wins over the manifest. `info` also notes when the id
+you gave doesn't match the one recorded in the folder's own manifest. `burn` never reads a
+manifest: it only destroys a stream whose id you typed.
 
 ### Watch a folder (auto push + pull)
 
@@ -370,8 +377,7 @@ mnemonad push ~/my-data --manifest --detach
 
 - **The version is frozen when the command runs.** Edits made after it returns go into the
   next push, not this one.
-- **Existing streams only.** It needs a stream id, or `--manifest` on a folder that has a
-  `.mnemonad`. Create a stream with a normal push first. `--passkey` can't be used: the browser
+- **Existing streams only.** It needs a stream id, or a folder that has a `.mnemonad`. Create a stream with a normal push first. `--passkey` can't be used: the browser
   tab that signs for it closes when the command exits.
 - **The next command waits for it.** A `push`, `pull`, `compact` or `watch` of the same stream
   waits until the background push has finished, so nothing builds on, or restores, the version

@@ -24,24 +24,15 @@ export async function info(args) {
         console.log('  balance:        ', await walletBalance(client));
     }
 
-    // Peek at .mnemonad whenever a path is given, regardless of --manifest and regardless
-    // of whether an id was given — info is read-only, so surfacing what's there costs
-    // nothing, and it's the only command where "you have a manifest but forgot the flag" or
-    // "you gave an id that doesn't match your own manifest" are worth a note rather than a
-    // silent mismatch.
+    // Read .mnemonad whenever a path is given: with no id, the folder's own manifest says
+    // which stream to report on (discoverStreamId, like every other command); with an id,
+    // a manifest naming a different stream is worth a note rather than a silent mismatch.
     const manifest = args.path ? await readManifest(resolvePath(args.path)) : null;
 
     if (manifest?.streamId) {
         if (!args.streamId) {
-            if (args.manifest) {
-                // Logs its own "using stream id from .mnemonad manifest: ..." line.
-                await discoverStreamId(args, resolvePath(args.path));
-            } else {
-                console.log(
-                    '  manifest:       ', formatStreamId(manifest.streamId),
-                    '(.mnemonad found — pass --manifest to use it without an id)'
-                );
-            }
+            // Logs its own "using stream id from .mnemonad manifest: ..." line.
+            await discoverStreamId(args, resolvePath(args.path));
         } else if (!streamIdsEqual(manifest.streamId, args.streamId)) {
             console.log(
                 '  manifest:       ', formatStreamId(manifest.streamId),

@@ -147,12 +147,22 @@ describe('discoverStreamId', () => {
 		expect(args.streamId).toBe('123');
 	});
 
-	it('does nothing when --manifest was not passed, even if a manifest file exists', async () => {
+	it('uses a manifest without --manifest, and turns manifest writing on for the run', async () => {
 		await withTempDir(async (dir) => {
 			await writeManifest(dir, { streamId: formatStreamId('123'), version: 1, files: {} });
 			const args = { streamId: null, manifest: false };
-			expect(await discoverStreamId(args, dir)).toBe(null);
-			expect(args.streamId).toBe(null);
+			expect(await discoverStreamId(args, dir)).toBe(formatStreamId('123'));
+			expect(args.streamId).toBe(formatStreamId('123'));
+			expect(args.manifest).toBe(true);
+		});
+	});
+
+	it('leaves an explicitly given id alone, manifest or not', async () => {
+		await withTempDir(async (dir) => {
+			await writeManifest(dir, { streamId: formatStreamId('123'), version: 1, files: {} });
+			const args = { streamId: '456', manifest: false };
+			expect(await discoverStreamId(args, dir)).toBe('456');
+			expect(args.manifest).toBe(false);
 		});
 	});
 

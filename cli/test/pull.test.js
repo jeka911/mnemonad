@@ -141,13 +141,21 @@ describe('pull', () => {
 		expect(destTree['readme.md'].toString('utf8')).toBe('from manifest\n');
 	}, TX_TIMEOUT);
 
-	it('still requires an explicit id when --manifest is not set, even with a manifest on disk', async () => {
+	it('finds the id in the folder\'s manifest without --manifest', async () => {
 		await writeTestFile(srcDir, 'readme.md', 'from manifest\n');
 		const baseArgs = await makeBaseArgs();
 		await push({ ...baseArgs, path: srcDir, manifest: true });
 
-		await expect(
+		const { lines } = await captureLogs(() =>
 			pull({ ...baseArgs, streamId: null, path: srcDir, manifest: false })
-		).rejects.toThrow(/stream-id is required/);
+		);
+		expect(lines.some((l) => l.includes('using stream id from .mnemonad manifest:'))).toBe(true);
+	}, TX_TIMEOUT);
+
+	it('says where an id can come from when there is neither an id nor a manifest', async () => {
+		const baseArgs = await makeBaseArgs();
+		const err = await pull({ ...baseArgs, streamId: null, path: srcDir }).catch((e) => e);
+		expect(err.message).toMatch(/stream-id is required for pull — pass it, or run this on a folder that has a \.mnemonad manifest/);
+		expect(err._isUserError).toBe(true);
 	}, TX_TIMEOUT);
 });

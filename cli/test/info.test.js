@@ -107,7 +107,7 @@ describe('info', () => {
 		expect(lines.some((l) => l.includes('stream:'))).toBe(false);
 	});
 
-	it('notes an available manifest and its id when no id is given and --manifest is not set', async () => {
+	it('reports on the folder\'s own stream from its manifest when no id is given, without --manifest', async () => {
 		await writeTestFile(srcDir, 'a.txt', 'content\n');
 		const baseArgs = await makeBaseArgs();
 		const { lines: pushLines } = await captureLogs(() =>
@@ -115,13 +115,13 @@ describe('info', () => {
 		);
 		const streamId = pushLines.find((l) => l.includes('created:')).split('created:')[1].trim();
 
-		// No --manifest this time, and no id — still returns early (just chain/wallet) for
-		// the on-chain report, but should say a manifest is sitting right there unused.
+		// No --manifest this time, and no id — the folder's own manifest names the stream,
+		// so this is the full on-chain report for it.
 		const { lines } = await captureLogs(() =>
 			info({ ...baseArgs, streamId: null, path: srcDir, manifest: false })
 		);
-		expect(lines.some((l) => l.includes('manifest:') && l.includes(streamId) && l.includes('pass --manifest'))).toBe(true);
-		expect(lines.some((l) => l.includes('stream:'))).toBe(false);
+		expect(lines.some((l) => l.includes('using stream id from .mnemonad manifest:') && l.includes(streamId))).toBe(true);
+		expect(lines.some((l) => l.includes('stream:') && l.includes(streamId))).toBe(true);
 	}, TX_TIMEOUT);
 
 	it('notes when an explicitly-given id differs from the folder\'s own manifest', async () => {

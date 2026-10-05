@@ -27,6 +27,23 @@ afterEach(async () => {
 const TX_TIMEOUT = 60_000;
 
 describe('push', () => {
+	it('pushes to the folder\'s own stream when it has a manifest and no id is given — never a second stream', async () => {
+		await writeTestFile(srcDir, 'a.txt', 'version 1\n');
+		const baseArgs = await makeBaseArgs();
+		const { lines: first } = await captureLogs(() => push({ ...baseArgs, path: srcDir, manifest: true }));
+		const streamId = first.find((l) => l.includes('created:')).split('created:')[1].trim();
+
+		await writeTestFile(srcDir, 'a.txt', 'version 2\n');
+		const { lines: second } = await captureLogs(() => push({ ...baseArgs, path: srcDir }));
+		expect(second.some((l) => l.includes('created:'))).toBe(false);
+		expect(second.some((l) => l.includes('using stream id from .mnemonad manifest:') && l.includes(streamId))).toBe(true);
+		expect(second.some((l) => l.includes('version 2 pushed'))).toBe(true);
+
+		// …and kept the manifest current, as --manifest would have.
+		const manifest = JSON.parse((await readTestFile(srcDir, '.mnemonad')).toString());
+		expect(manifest.version).toBe(2);
+	}, TX_TIMEOUT);
+
 	it('refuses to run without an explicit path — never falls back to cwd', async () => {
 		const args = { ...(await makeBaseArgs()), path: null };
 		await expect(push(args)).rejects.toThrow(/folder path is required/);

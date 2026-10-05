@@ -16,6 +16,7 @@ import {
     resolveOffloadParams,
     formatStreamId,
     discoverStreamId,
+    requireStreamId,
     userError,
 } from './shared.js';
 import { settleStreamJobs } from '../jobs.js';
@@ -37,7 +38,7 @@ export async function watch(args) {
     // With --manifest and no id, a folder pulled/pushed before already has one recorded —
     // no need to require it again.
     await discoverStreamId(args, cwd);
-    if (!args.streamId) throw new Error('stream-id is required for watch');
+    requireStreamId(args, 'watch');
     await settleStreamJobs(args, { reason: 'before watching' });
     const debounceMs = args.debounce ?? 5000;
     const pollIntervalMs = (args.pollInterval ?? 2) * 1000;

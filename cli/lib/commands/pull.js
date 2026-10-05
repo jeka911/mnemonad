@@ -10,6 +10,7 @@ import {
     unlockStream,
     formatStreamId,
     discoverStreamId,
+    requireStreamId,
 } from './shared.js';
 import { settleStreamJobs } from '../jobs.js';
 
@@ -21,9 +22,7 @@ export async function pull(args) {
     // With --manifest and no id, a folder pulled/pushed before already has one recorded —
     // no need to require it again.
     await discoverStreamId(args, destPath);
-    if (!args.streamId) {
-        throw new Error('stream-id is required for pull');
-    }
+    requireStreamId(args, 'pull');
 
     // Pulling while a background push of this folder is still sending would restore the
     // version before it — and delete the very files that push is uploading.
