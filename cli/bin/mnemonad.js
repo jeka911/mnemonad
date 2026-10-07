@@ -7,10 +7,10 @@
 // process.exit() mid-await, but cheap insurance if something eventually does.
 const _realExit = process.exit.bind(process);
 process.exit = (code) => {
-    const err = new Error(`process.exit(${code ?? 0})`);
-    err._isProcessExit = true;
-    err._exitCode = code ?? 0;
-    throw err;
+	const err = new Error(`process.exit(${code ?? 0})`);
+	err._isProcessExit = true;
+	err._exitCode = code ?? 0;
+	throw err;
 };
 
 import { readFileSync } from 'node:fs';
@@ -26,11 +26,11 @@ import defaultConfig from '../mnemonad.config.js';
 const PKG_ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 
 const VERSION = (() => {
-    try {
-        return JSON.parse(readFileSync(join(PKG_ROOT, 'package.json'), 'utf8')).version;
-    } catch {
-        return 'unknown';
-    }
+	try {
+		return JSON.parse(readFileSync(join(PKG_ROOT, 'package.json'), 'utf8')).version;
+	} catch {
+		return 'unknown';
+	}
 })();
 
 // Project-wide operational defaults — see mnemonad.config.js's own comments for what each
@@ -143,191 +143,191 @@ index works and stays diff-friendly on repeated pushes.
 `;
 
 function parseArgs(argv) {
-    const args = {
-        command: null,
-        streamId: null,
-        // No cwd fallback — every command that touches a folder requires it explicitly (see
-        // shared.js's resolvePath(), which throws a friendly error if it's still null here).
-        path: null,
-        chain: 'testnet',
-        rpcUrl: null,
-        contractAddress: null,
-        gatewayUrl: process.env.MNEMONAD_IPFS_GATEWAY || DEFAULT_IPFS_GATEWAY,
-        presignUrl: process.env.MNEMONAD_PRESIGN_URL || DEFAULT_PRESIGN_URL,
-        key: null,
-        phrase: null,
-        passkey: false,
-        authOrigin: process.env.MNEMONAD_AUTH_ORIGIN || DEFAULT_AUTH_ORIGIN,
-        version: null,
-        exclude: null,
-        compress: 'gzip',
-        encrypt: false,
-        encryptWith: null,
-        password: null,
-        pinataJwt: process.env.PINATA_JWT || null,
-        manifest: false,
-        index: false,
-        rebuild: false,
-        forceSnapshot: false,
-        detach: false,
-        pollInterval: 2,
-        debounce: 1000,
-        pushOnly: false,
-        pullOnly: false,
-        yes: false,
-        query: null,
-        searchDb: null,
-        model: null,
-        chunkSize: null,
-        chunkOverlap: null,
-        limit: null,
-    };
+	const args = {
+		command: null,
+		streamId: null,
+		// No cwd fallback — every command that touches a folder requires it explicitly (see
+		// shared.js's resolvePath(), which throws a friendly error if it's still null here).
+		path: null,
+		chain: 'testnet',
+		rpcUrl: null,
+		contractAddress: null,
+		gatewayUrl: process.env.MNEMONAD_IPFS_GATEWAY || DEFAULT_IPFS_GATEWAY,
+		presignUrl: process.env.MNEMONAD_PRESIGN_URL || DEFAULT_PRESIGN_URL,
+		key: null,
+		phrase: null,
+		passkey: false,
+		authOrigin: process.env.MNEMONAD_AUTH_ORIGIN || DEFAULT_AUTH_ORIGIN,
+		version: null,
+		exclude: null,
+		compress: 'gzip',
+		encrypt: false,
+		encryptWith: null,
+		password: null,
+		pinataJwt: process.env.PINATA_JWT || null,
+		manifest: false,
+		index: false,
+		rebuild: false,
+		forceSnapshot: false,
+		detach: false,
+		pollInterval: 2,
+		debounce: 1000,
+		pushOnly: false,
+		pullOnly: false,
+		yes: false,
+		query: null,
+		searchDb: null,
+		model: null,
+		chunkSize: null,
+		chunkOverlap: null,
+		limit: null,
+	};
 
-    const raw = argv.slice(2);
+	const raw = argv.slice(2);
 
-    if (raw.length === 0 || raw.includes('--help')) {
-        console.log(USAGE);
-        _realExit(0);
-    }
+	if (raw.length === 0 || raw.includes('--help')) {
+		console.log(USAGE);
+		_realExit(0);
+	}
 
-    args.command = raw[0];
+	args.command = raw[0];
 
-    let i = 1;
+	let i = 1;
 
-    // Collect up to two positional args: [streamId] [path]. `path` is left null when it
-    // isn't given here — never defaulted to cwd — so a command that needs one (every
-    // command except a bare `info`) fails fast with a clear error instead of silently
-    // operating on whatever directory the CLI happened to be run from.
-    // A stream id is a decimal bigint or a 0x-prefixed hex string; anything else is a path.
-    //
-    // Also accepted: the network-qualified form the explorer's own URLs use —
-    // `<network>-0x<hex>`, e.g. `testnet-0x648f18…` — since that's what an agent naturally
-    // has in hand after pulling an id straight out of a /stream/<id> link. A qualified id
-    // names the chain the same way the URL does; parseQualifiedStreamId (shared.js, same
-    // split the explorer's own parseStreamRouteId does) records which one (chainFromId,
-    // below) so it can settle --chain once flags are parsed too.
-    const isStreamId = (s) => /^\d+$/.test(s) || /^0x[0-9a-fA-F]+$/.test(s) || !!parseQualifiedStreamId(s);
+	// Collect up to two positional args: [streamId] [path]. `path` is left null when it
+	// isn't given here — never defaulted to cwd — so a command that needs one (every
+	// command except a bare `info`) fails fast with a clear error instead of silently
+	// operating on whatever directory the CLI happened to be run from.
+	// A stream id is a decimal bigint or a 0x-prefixed hex string; anything else is a path.
+	//
+	// Also accepted: the network-qualified form the explorer's own URLs use —
+	// `<network>-0x<hex>`, e.g. `testnet-0x648f18…` — since that's what an agent naturally
+	// has in hand after pulling an id straight out of a /stream/<id> link. A qualified id
+	// names the chain the same way the URL does; parseQualifiedStreamId (shared.js, same
+	// split the explorer's own parseStreamRouteId does) records which one (chainFromId,
+	// below) so it can settle --chain once flags are parsed too.
+	const isStreamId = (s) => /^\d+$/.test(s) || /^0x[0-9a-fA-F]+$/.test(s) || !!parseQualifiedStreamId(s);
 
-    let chainFromId = null;
-    // Strips a recognized `<network>-` prefix and records the network it named, so every
-    // downstream command only ever sees the bare id it already knows how to parse
-    // (formatStreamId, `new Mnemonad({id})`, etc. never learn this form exists).
-    const takeStreamId = (arg) => {
-        const qualified = parseQualifiedStreamId(arg);
-        if (!qualified) return arg;
-        chainFromId = qualified.network;
-        return qualified.id;
-    };
+	let chainFromId = null;
+	// Strips a recognized `<network>-` prefix and records the network it named, so every
+	// downstream command only ever sees the bare id it already knows how to parse
+	// (formatStreamId, `new Mnemonad({id})`, etc. never learn this form exists).
+	const takeStreamId = (arg) => {
+		const qualified = parseQualifiedStreamId(arg);
+		if (!qualified) return arg;
+		chainFromId = qualified.network;
+		return qualified.id;
+	};
 
-    // `-k` is the one short flag — it has to end the positionals too, or `search`'s
-    // join-the-rest query below swallows it (`search ./f slow and steady -k 3` once searched
-    // for "slow and steady -k 3").
-    const isFlag = (arg) => arg.startsWith('--') || arg === '-k';
-    const positionals = [];
-    while (i < raw.length && !isFlag(raw[i])) {
-        positionals.push(raw[i]);
-        i++;
-    }
-    if (args.command === 'search') {
-        // <path> <query...> — everything after the path is the query, joined back with spaces
-        // so an unquoted multi-word query (`mnemonad search ./docs how does chunking work`)
-        // works the same as a quoted one. Never a stream id — `search` doesn't take one.
-        args.path = positionals[0] || null;
-        args.query = positionals.length > 1 ? positionals.slice(1).join(' ') : null;
-    } else if (positionals.length === 2) {
-        args.streamId = takeStreamId(positionals[0]);
-        args.path = positionals[1];
-    } else if (positionals.length === 1) {
-        if (isStreamId(positionals[0])) {
-            args.streamId = takeStreamId(positionals[0]);
-        } else {
-            args.path = positionals[0];
-        }
-    }
+	// `-k` is the one short flag — it has to end the positionals too, or `search`'s
+	// join-the-rest query below swallows it (`search ./f slow and steady -k 3` once searched
+	// for "slow and steady -k 3").
+	const isFlag = (arg) => arg.startsWith('--') || arg === '-k';
+	const positionals = [];
+	while (i < raw.length && !isFlag(raw[i])) {
+		positionals.push(raw[i]);
+		i++;
+	}
+	if (args.command === 'search') {
+		// <path> <query...> — everything after the path is the query, joined back with spaces
+		// so an unquoted multi-word query (`mnemonad search ./docs how does chunking work`)
+		// works the same as a quoted one. Never a stream id — `search` doesn't take one.
+		args.path = positionals[0] || null;
+		args.query = positionals.length > 1 ? positionals.slice(1).join(' ') : null;
+	} else if (positionals.length === 2) {
+		args.streamId = takeStreamId(positionals[0]);
+		args.path = positionals[1];
+	} else if (positionals.length === 1) {
+		if (isStreamId(positionals[0])) {
+			args.streamId = takeStreamId(positionals[0]);
+		} else {
+			args.path = positionals[0];
+		}
+	}
 
-    let sawChainFlag = false;
-    while (i < raw.length) {
-        const flag = raw[i];
-        if (flag === '--chain' && i + 1 < raw.length) {
-            args.chain = raw[++i];
-            sawChainFlag = true;
-        } else if (flag === '--rpc-url' && i + 1 < raw.length) {
-            args.rpcUrl = raw[++i];
-        } else if (flag === '--contract-address' && i + 1 < raw.length) {
-            args.contractAddress = raw[++i];
-        } else if (flag === '--gateway-url' && i + 1 < raw.length) {
-            args.gatewayUrl = raw[++i];
-        } else if (flag === '--presign-url' && i + 1 < raw.length) {
-            args.presignUrl = raw[++i];
-        } else if (flag === '--key' && i + 1 < raw.length) {
-            args.key = raw[++i];
-        } else if (flag === '--phrase' && i + 1 < raw.length) {
-            args.phrase = raw[++i];
-        } else if (flag === '--passkey') {
-            args.passkey = true;
-        } else if (flag === '--auth-origin' && i + 1 < raw.length) {
-            args.authOrigin = raw[++i];
-        } else if (flag === '--version' && i + 1 < raw.length) {
-            args.version = raw[++i];
-        } else if (flag === '--exclude' && i + 1 < raw.length) {
-            args.exclude = raw[++i];
-        } else if (flag === '--no-compress') {
-            args.compress = false;
-        } else if (flag === '--encrypt') {
-            args.encrypt = true;
-        } else if (flag === '--encrypt-with' && i + 1 < raw.length) {
-            args.encryptWith = raw[++i];
-        } else if (flag === '--password' && i + 1 < raw.length) {
-            args.password = raw[++i];
-        } else if (flag === '--pinata-jwt' && i + 1 < raw.length) {
-            args.pinataJwt = raw[++i];
-        } else if (flag === '--manifest') {
-            args.manifest = true;
-        } else if (flag === '--index') {
-            args.index = true;
-        } else if (flag === '--rebuild') {
-            args.rebuild = true;
-        } else if (flag === '--force-snapshot') {
-            args.forceSnapshot = true;
-        } else if (flag === '--detach') {
-            args.detach = true;
-        } else if (flag === '--poll-interval' && i + 1 < raw.length) {
-            args.pollInterval = Number(raw[++i]);
-        } else if (flag === '--debounce' && i + 1 < raw.length) {
-            args.debounce = Number(raw[++i]);
-        } else if (flag === '--push-only') {
-            args.pushOnly = true;
-        } else if (flag === '--pull-only') {
-            args.pullOnly = true;
-        } else if (flag === '--yes') {
-            args.yes = true;
-        } else if (flag === '--db' && i + 1 < raw.length) {
-            args.searchDb = raw[++i];
-        } else if (flag === '--model' && i + 1 < raw.length) {
-            args.model = raw[++i];
-        } else if (flag === '--chunk-size' && i + 1 < raw.length) {
-            args.chunkSize = Number(raw[++i]);
-        } else if (flag === '--chunk-overlap' && i + 1 < raw.length) {
-            args.chunkOverlap = Number(raw[++i]);
-        } else if ((flag === '--limit' || flag === '-k') && i + 1 < raw.length) {
-            args.limit = Number(raw[++i]);
-        }
-        i++;
-    }
+	let sawChainFlag = false;
+	while (i < raw.length) {
+		const flag = raw[i];
+		if (flag === '--chain' && i + 1 < raw.length) {
+			args.chain = raw[++i];
+			sawChainFlag = true;
+		} else if (flag === '--rpc-url' && i + 1 < raw.length) {
+			args.rpcUrl = raw[++i];
+		} else if (flag === '--contract-address' && i + 1 < raw.length) {
+			args.contractAddress = raw[++i];
+		} else if (flag === '--gateway-url' && i + 1 < raw.length) {
+			args.gatewayUrl = raw[++i];
+		} else if (flag === '--presign-url' && i + 1 < raw.length) {
+			args.presignUrl = raw[++i];
+		} else if (flag === '--key' && i + 1 < raw.length) {
+			args.key = raw[++i];
+		} else if (flag === '--phrase' && i + 1 < raw.length) {
+			args.phrase = raw[++i];
+		} else if (flag === '--passkey') {
+			args.passkey = true;
+		} else if (flag === '--auth-origin' && i + 1 < raw.length) {
+			args.authOrigin = raw[++i];
+		} else if (flag === '--version' && i + 1 < raw.length) {
+			args.version = raw[++i];
+		} else if (flag === '--exclude' && i + 1 < raw.length) {
+			args.exclude = raw[++i];
+		} else if (flag === '--no-compress') {
+			args.compress = false;
+		} else if (flag === '--encrypt') {
+			args.encrypt = true;
+		} else if (flag === '--encrypt-with' && i + 1 < raw.length) {
+			args.encryptWith = raw[++i];
+		} else if (flag === '--password' && i + 1 < raw.length) {
+			args.password = raw[++i];
+		} else if (flag === '--pinata-jwt' && i + 1 < raw.length) {
+			args.pinataJwt = raw[++i];
+		} else if (flag === '--manifest') {
+			args.manifest = true;
+		} else if (flag === '--index') {
+			args.index = true;
+		} else if (flag === '--rebuild') {
+			args.rebuild = true;
+		} else if (flag === '--force-snapshot') {
+			args.forceSnapshot = true;
+		} else if (flag === '--detach') {
+			args.detach = true;
+		} else if (flag === '--poll-interval' && i + 1 < raw.length) {
+			args.pollInterval = Number(raw[++i]);
+		} else if (flag === '--debounce' && i + 1 < raw.length) {
+			args.debounce = Number(raw[++i]);
+		} else if (flag === '--push-only') {
+			args.pushOnly = true;
+		} else if (flag === '--pull-only') {
+			args.pullOnly = true;
+		} else if (flag === '--yes') {
+			args.yes = true;
+		} else if (flag === '--db' && i + 1 < raw.length) {
+			args.searchDb = raw[++i];
+		} else if (flag === '--model' && i + 1 < raw.length) {
+			args.model = raw[++i];
+		} else if (flag === '--chunk-size' && i + 1 < raw.length) {
+			args.chunkSize = Number(raw[++i]);
+		} else if (flag === '--chunk-overlap' && i + 1 < raw.length) {
+			args.chunkOverlap = Number(raw[++i]);
+		} else if ((flag === '--limit' || flag === '-k') && i + 1 < raw.length) {
+			args.limit = Number(raw[++i]);
+		}
+		i++;
+	}
 
-    if (chainFromId) {
-        if (sawChainFlag && args.chain !== chainFromId) {
-            console.error(
-                `Error: the stream id names network '${chainFromId}', but --chain '${args.chain}' was\n` +
-                `  also given — they disagree. Drop --chain to use the id's network, or pass\n` +
-                `  --chain ${chainFromId} to match it.`
-            );
-            _realExit(1);
-        }
-        args.chain = chainFromId;
-    }
+	if (chainFromId) {
+		if (sawChainFlag && args.chain !== chainFromId) {
+			console.error(
+				`Error: the stream id names network '${chainFromId}', but --chain '${args.chain}' was\n` +
+				`  also given — they disagree. Drop --chain to use the id's network, or pass\n` +
+				`  --chain ${chainFromId} to match it.`
+			);
+			_realExit(1);
+		}
+		args.chain = chainFromId;
+	}
 
-    return args;
+	return args;
 }
 
 const args = parseArgs(process.argv);
@@ -346,64 +346,64 @@ const keepAlive = setInterval(() => {}, 60_000);
 const logLines = [];
 const originalConsoleLog = console.log;
 if (args.passkey) {
-    console.log = (...parts) => {
-        originalConsoleLog(...parts);
-        logLines.push(parts.join(' '));
-    };
+	console.log = (...parts) => {
+		originalConsoleLog(...parts);
+		logLines.push(parts.join(' '));
+	};
 }
 let succeeded = true;
 let errorMessage = null;
 
 try {
-    if (args.command === 'push') {
-        await push(args);
-    } else if (args.command === 'pull') {
-        await pull(args);
-    } else if (args.command === 'info') {
-        await info(args);
-    } else if (args.command === 'diff') {
-        await diff(args);
-    } else if (args.command === 'watch') {
-        await watch(args);
-    } else if (args.command === 'compact') {
-        await compact(args);
-    } else if (args.command === 'burn') {
-        await burn(args);
-    } else if (args.command === 'index') {
-        await buildIndex(args);
-    } else if (args.command === 'search') {
-        await search(args);
-    } else if (args.command === '__push-job') {
-        // The detached half of `push --detach` (lib/jobs.js) — never typed by a person.
-        await runPushJob(args.path);
-    } else {
-        console.error('Unknown command:', args.command);
-        console.log(USAGE);
-        process.exitCode = 1;
-    }
+	if (args.command === 'push') {
+		await push(args);
+	} else if (args.command === 'pull') {
+		await pull(args);
+	} else if (args.command === 'info') {
+		await info(args);
+	} else if (args.command === 'diff') {
+		await diff(args);
+	} else if (args.command === 'watch') {
+		await watch(args);
+	} else if (args.command === 'compact') {
+		await compact(args);
+	} else if (args.command === 'burn') {
+		await burn(args);
+	} else if (args.command === 'index') {
+		await buildIndex(args);
+	} else if (args.command === 'search') {
+		await search(args);
+	} else if (args.command === '__push-job') {
+		// The detached half of `push --detach` (lib/jobs.js) — never typed by a person.
+		await runPushJob(args.path);
+	} else {
+		console.error('Unknown command:', args.command);
+		console.log(USAGE);
+		process.exitCode = 1;
+	}
 } catch (err) {
-    if (err._isProcessExit) {
-        process.exitCode = err._exitCode;
-        succeeded = err._exitCode === 0;
-    } else if (err._isUserError) {
-        // Expected, actionable failure — message only, no stack trace.
-        console.error('Error:', err.message);
-        process.exitCode = 1;
-        succeeded = false;
-    } else {
-        console.error('Error:', err.message);
-        if (err.stack) console.error(err.stack);
-        process.exitCode = 1;
-        succeeded = false;
-    }
-    errorMessage = err.message;
+	if (err._isProcessExit) {
+		process.exitCode = err._exitCode;
+		succeeded = err._exitCode === 0;
+	} else if (err._isUserError) {
+		// Expected, actionable failure — message only, no stack trace.
+		console.error('Error:', err.message);
+		process.exitCode = 1;
+		succeeded = false;
+	} else {
+		console.error('Error:', err.message);
+		if (err.stack) console.error(err.stack);
+		process.exitCode = 1;
+		succeeded = false;
+	}
+	errorMessage = err.message;
 } finally {
-    console.log = originalConsoleLog;
-    // No-op when --passkey was never used — see passkeyBridge.js. Runs whether the command
-    // succeeded or failed, so a browser tab left open on a failed push doesn't linger.
-    closePasskeyBridge({
-        ok: succeeded,
-        summary: succeeded ? (logLines.filter(Boolean).pop() || 'Done.') : (errorMessage || 'Failed.'),
-    });
-    clearInterval(keepAlive);
+	console.log = originalConsoleLog;
+	// No-op when --passkey was never used — see passkeyBridge.js. Runs whether the command
+	// succeeded or failed, so a browser tab left open on a failed push doesn't linger.
+	closePasskeyBridge({
+		ok: succeeded,
+		summary: succeeded ? (logLines.filter(Boolean).pop() || 'Done.') : (errorMessage || 'Failed.'),
+	});
+	clearInterval(keepAlive);
 }

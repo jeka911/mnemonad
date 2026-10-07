@@ -26,58 +26,58 @@ const SIGNATURE_TTL_SECONDS = 120;
  * @returns {MnemonadPresignProvider}
  */
 export function createPresignProvider({ presignUrl, gatewayUrl, account }) {
-    const baseUrl = presignUrl.replace(/\/$/, '');
-    let configPromise = null;
+	const baseUrl = presignUrl.replace(/\/$/, '');
+	let configPromise = null;
 
-    function fetchConfig() {
-        if (!configPromise) {
-            configPromise = fetch(`${baseUrl}/config`)
-                .then(async (res) => {
-                    if (!res.ok) throw new Error(`presign server /config failed (HTTP ${res.status})`);
-                    return await res.json();
-                })
-                .catch((err) => {
-                    configPromise = null; // don't cache a failure — the server may just be starting
-                    throw err;
-                });
-        }
-        return configPromise;
-    }
+	function fetchConfig() {
+		if (!configPromise) {
+			configPromise = fetch(`${baseUrl}/config`)
+				.then(async (res) => {
+					if (!res.ok) throw new Error(`presign server /config failed (HTTP ${res.status})`);
+					return await res.json();
+				})
+				.catch((err) => {
+					configPromise = null; // don't cache a failure — the server may just be starting
+					throw err;
+				});
+		}
+		return configPromise;
+	}
 
-    return new MnemonadPresignProvider({
-        gatewayUrl,
-        requestUploadUrl: async ({ hash, size }) => {
-            const serverConfig = await fetchConfig();
-            const deadline = Math.floor(Date.now() / 1000) + SIGNATURE_TTL_SECONDS;
+	return new MnemonadPresignProvider({
+		gatewayUrl,
+		requestUploadUrl: async ({ hash, size }) => {
+			const serverConfig = await fetchConfig();
+			const deadline = Math.floor(Date.now() / 1000) + SIGNATURE_TTL_SECONDS;
 
-            // Signed with the domain/types the server published, not a local copy — see
-            // presign-server/README.md's own reasoning for why (drift between two hardcoded
-            // copies would eventually produce signature failures that look like account bugs).
-            const signature = await account.signTypedData({
-                domain: serverConfig.eip712.domain,
-                types: serverConfig.eip712.types,
-                primaryType: serverConfig.eip712.primaryType,
-                message: {
-                    payer: account.address,
-                    contentHash: hash,
-                    size: BigInt(size),
-                    deadline: BigInt(deadline),
-                },
-            });
+			// Signed with the domain/types the server published, not a local copy — see
+			// presign-server/README.md's own reasoning for why (drift between two hardcoded
+			// copies would eventually produce signature failures that look like account bugs).
+			const signature = await account.signTypedData({
+				domain: serverConfig.eip712.domain,
+				types: serverConfig.eip712.types,
+				primaryType: serverConfig.eip712.primaryType,
+				message: {
+					payer: account.address,
+					contentHash: hash,
+					size: BigInt(size),
+					deadline: BigInt(deadline),
+				},
+			});
 
-            const res = await fetch(`${baseUrl}/upload-url`, {
-                method: 'POST',
-                headers: { 'content-type': 'application/json' },
-                body: JSON.stringify({ payer: account.address, contentHash: hash, size, deadline, signature }),
-            });
+			const res = await fetch(`${baseUrl}/upload-url`, {
+				method: 'POST',
+				headers: { 'content-type': 'application/json' },
+				body: JSON.stringify({ payer: account.address, contentHash: hash, size, deadline, signature }),
+			});
 
-            const body = await res.json().catch(() => ({}));
-            if (!res.ok) {
-                // The server's error codes are actionable (e.g. "no_escrow" means the payment
-                // step was skipped) — surface its message rather than a generic failure.
-                throw new Error(body.message || `presign server refused the upload (HTTP ${res.status})`);
-            }
-            return { url: body.url };
-        },
-    });
+			const body = await res.json().catch(() => ({}));
+			if (!res.ok) {
+				// The server's error codes are actionable (e.g. "no_escrow" means the payment
+				// step was skipped) — surface its message rather than a generic failure.
+				throw new Error(body.message || `presign server refused the upload (HTTP ${res.status})`);
+			}
+			return { url: body.url };
+		},
+	});
 }

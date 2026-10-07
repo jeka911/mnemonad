@@ -3,167 +3,167 @@ import { MonadSync } from 'monadsync';
 import { formatEther } from 'viem';
 import { makeChainClient } from '../chainClient.js';
 import {
-    resolvePath,
-    formatBytes,
-    localTreeHash,
-    unlockStream,
-    formatStreamId,
-    folderExists,
-    discoverStreamId,
-    readManifest,
-    streamIdsEqual,
+	resolvePath,
+	formatBytes,
+	localTreeHash,
+	unlockStream,
+	formatStreamId,
+	folderExists,
+	discoverStreamId,
+	readManifest,
+	streamIdsEqual,
 } from './shared.js';
 import { streamKey, latestJob, describeJob } from '../jobs.js';
 
 export async function info(args) {
-    const client = await makeChainClient(args);
+	const client = await makeChainClient(args);
 
-    console.log('  chain:          ', args.chain);
-    console.log('  your wallet:    ', client.account?.address || '(none)');
-    if (client.account) {
-        console.log('  balance:        ', await walletBalance(client));
-    }
+	console.log('  chain:          ', args.chain);
+	console.log('  your wallet:    ', client.account?.address || '(none)');
+	if (client.account) {
+		console.log('  balance:        ', await walletBalance(client));
+	}
 
-    // Read .mnemonad whenever a path is given: with no id, the folder's own manifest says
-    // which stream to report on (discoverStreamId, like every other command); with an id,
-    // a manifest naming a different stream is worth a note rather than a silent mismatch.
-    const manifest = args.path ? await readManifest(resolvePath(args.path)) : null;
+	// Read .mnemonad whenever a path is given: with no id, the folder's own manifest says
+	// which stream to report on (discoverStreamId, like every other command); with an id,
+	// a manifest naming a different stream is worth a note rather than a silent mismatch.
+	const manifest = args.path ? await readManifest(resolvePath(args.path)) : null;
 
-    if (manifest?.streamId) {
-        if (!args.streamId) {
-            // Logs its own "using stream id from .mnemonad manifest: ..." line.
-            await discoverStreamId(args, resolvePath(args.path));
-        } else if (!streamIdsEqual(manifest.streamId, args.streamId)) {
-            console.log(
-                '  manifest:       ', formatStreamId(manifest.streamId),
-                '(differs from the id given:', formatStreamId(args.streamId) + ')'
-            );
-        }
-    }
+	if (manifest?.streamId) {
+		if (!args.streamId) {
+			// Logs its own "using stream id from .mnemonad manifest: ..." line.
+			await discoverStreamId(args, resolvePath(args.path));
+		} else if (!streamIdsEqual(manifest.streamId, args.streamId)) {
+			console.log(
+				'  manifest:       ', formatStreamId(manifest.streamId),
+				'(differs from the id given:', formatStreamId(args.streamId) + ')'
+			);
+		}
+	}
 
-    // The last background push (`push --detach`) for this stream, whichever way its id is
-    // known — even with no --manifest, the folder's own manifest names the stream.
-    const jobStreamId = args.streamId || manifest?.streamId;
-    if (jobStreamId) {
-        const job = latestJob(streamKey({ chain: args.chain, contractAddress: args.contractAddress, streamId: jobStreamId }));
-        if (job) console.log('  background push:', describeJob(job));
-    }
+	// The last background push (`push --detach`) for this stream, whichever way its id is
+	// known — even with no --manifest, the folder's own manifest names the stream.
+	const jobStreamId = args.streamId || manifest?.streamId;
+	if (jobStreamId) {
+		const job = latestJob(streamKey({ chain: args.chain, contractAddress: args.contractAddress, streamId: jobStreamId }));
+		if (job) console.log('  background push:', describeJob(job));
+	}
 
-    if (!args.streamId) {
-        return;
-    }
+	if (!args.streamId) {
+		return;
+	}
 
-    // No `password` passed to the constructor — see shared.js's unlockStream() for why:
-    // this instance doesn't yet know whether the stream is even encrypted, let alone its
-    // published salt, so it's unlocked explicitly below once isEncrypted() is known.
-    const mn = new Mnemonad({
-        publicClient: client.publicClient,
-        walletClient: client.walletClient,
-        contractAddress: client.contractAddress,
-        id: args.streamId,
-        gatewayUrl: args.gatewayUrl,
-    });
+	// No `password` passed to the constructor — see shared.js's unlockStream() for why:
+	// this instance doesn't yet know whether the stream is even encrypted, let alone its
+	// published salt, so it's unlocked explicitly below once isEncrypted() is known.
+	const mn = new Mnemonad({
+		publicClient: client.publicClient,
+		walletClient: client.walletClient,
+		contractAddress: client.contractAddress,
+		id: args.streamId,
+		gatewayUrl: args.gatewayUrl,
+	});
 
-    await mn.initialize();
+	await mn.initialize();
 
-    const totalVersions = mn.length;
+	const totalVersions = mn.length;
 
-    console.log('\nstream:', formatStreamId(args.streamId));
+	console.log('\nstream:', formatStreamId(args.streamId));
 
-    const owner = await mn.owner().catch(() => null) || '(unknown)';
-    const isOwner = client.account && owner !== '(unknown)' && client.account.address.toLowerCase() === owner.toLowerCase();
+	const owner = await mn.owner().catch(() => null) || '(unknown)';
+	const isOwner = client.account && owner !== '(unknown)' && client.account.address.toLowerCase() === owner.toLowerCase();
 
-    const isEncrypted = await mn.isEncrypted();
-    const kekMethod = kekMethodOf({ kek: mn.streamMeta.kek, encrypted: isEncrypted });
-    // Unlike pull/diff (which have nothing useful to do at all without decrypting), info
-    // still has metadata worth showing on a stream it can't open — so this unlocks when the
-    // right credential happens to be at hand and otherwise just notes it, rather than
-    // throwing. `unlocked` then gates the local-version comparison further down.
-    let unlocked = false;
-    if (isEncrypted) {
-        try {
-            unlocked = await unlockStream(mn, { password: args.password, signer: client.walletClient });
-        } catch {
-            // Missing or wrong credential — reported below, not fatal for `info`.
-        }
-    }
-    console.log('  owner:          ', isOwner ? owner + ' (you)' : owner);
-    console.log(
-        '  encrypted:      ',
-        isEncrypted ? (kekMethod === 'password' ? 'yes (password)' : 'yes (owner wallet)') : 'no'
-    );
-    console.log('  versions:       ', totalVersions);
-    console.log('  binary size:    ', formatBytes(mn.binaryLength));
-    if (mn.firstAvailableIndex > 0) {
-        console.log('  history starts: ', 'index', mn.firstAvailableIndex, '(earlier history truncated — see `compact`)');
-    }
+	const isEncrypted = await mn.isEncrypted();
+	const kekMethod = kekMethodOf({ kek: mn.streamMeta.kek, encrypted: isEncrypted });
+	// Unlike pull/diff (which have nothing useful to do at all without decrypting), info
+	// still has metadata worth showing on a stream it can't open — so this unlocks when the
+	// right credential happens to be at hand and otherwise just notes it, rather than
+	// throwing. `unlocked` then gates the local-version comparison further down.
+	let unlocked = false;
+	if (isEncrypted) {
+		try {
+			unlocked = await unlockStream(mn, { password: args.password, signer: client.walletClient });
+		} catch {
+			// Missing or wrong credential — reported below, not fatal for `info`.
+		}
+	}
+	console.log('  owner:          ', isOwner ? owner + ' (you)' : owner);
+	console.log(
+		'  encrypted:      ',
+		isEncrypted ? (kekMethod === 'password' ? 'yes (password)' : 'yes (owner wallet)') : 'no'
+	);
+	console.log('  versions:       ', totalVersions);
+	console.log('  binary size:    ', formatBytes(mn.binaryLength));
+	if (mn.firstAvailableIndex > 0) {
+		console.log('  history starts: ', 'index', mn.firstAvailableIndex, '(earlier history truncated — see `compact`)');
+	}
 
-    // Deliberately NOT `{ mustExist: true }` like every other command that reads a folder:
-    // `info` is a read-only report, and "you haven't pulled this anywhere yet" is a state
-    // worth describing rather than refusing over — the stream metadata above is already
-    // printed and still useful on its own.
-    const destPath = resolvePath(args.path);
-    if (!folderExists(destPath)) {
-        console.log('\n  local folder:    missing (run `mnemonad pull` to fetch it)');
-        return;
-    }
+	// Deliberately NOT `{ mustExist: true }` like every other command that reads a folder:
+	// `info` is a read-only report, and "you haven't pulled this anywhere yet" is a state
+	// worth describing rather than refusing over — the stream metadata above is already
+	// printed and still useful on its own.
+	const destPath = resolvePath(args.path);
+	if (!folderExists(destPath)) {
+		console.log('\n  local folder:    missing (run `mnemonad pull` to fetch it)');
+		return;
+	}
 
-    const localHash = await localTreeHash(destPath);
+	const localHash = await localTreeHash(destPath);
 
-    if (!localHash) {
-        console.log('\n  local folder:    empty (run pull to fetch)');
-        return;
-    }
+	if (!localHash) {
+		console.log('\n  local folder:    empty (run pull to fetch)');
+		return;
+	}
 
-    // Same reasoning as pull.js/diff.js: an un-unlocked stream decrypts to nothing useful,
-    // so the tree-hash detection loop below would only ever compare garbage against garbage
-    // — better to say what's missing up front and stop.
-    if (isEncrypted && !unlocked) {
-        console.log(
-            kekMethod === 'password'
-                ? '\n  (encrypted — provide --password to compare against the local folder)'
-                : '\n  (encrypted to the owner\'s wallet — provide their --key / --phrase to\n' +
-                  '   compare against the local folder)'
-        );
-        return;
-    }
+	// Same reasoning as pull.js/diff.js: an un-unlocked stream decrypts to nothing useful,
+	// so the tree-hash detection loop below would only ever compare garbage against garbage
+	// — better to say what's missing up front and stop.
+	if (isEncrypted && !unlocked) {
+		console.log(
+			kekMethod === 'password'
+				? '\n  (encrypted — provide --password to compare against the local folder)'
+				: '\n  (encrypted to the owner\'s wallet — provide their --key / --phrase to\n' +
+				  '   compare against the local folder)'
+		);
+		return;
+	}
 
-    const localHex = Buffer.from(localHash).toString('hex').slice(0, 12);
-    console.log('\n  local tree hash: ', localHex + '...');
-    console.log('  detecting local version...');
+	const localHex = Buffer.from(localHash).toString('hex').slice(0, 12);
+	console.log('\n  local tree hash: ', localHex + '...');
+	console.log('  detecting local version...');
 
-    const monadSync = new MonadSync({ mnemonad: mn });
-    let matchedVersion = null;
+	const monadSync = new MonadSync({ mnemonad: mn });
+	let matchedVersion = null;
 
-    for (let v = totalVersions; v >= Math.max(mn.firstAvailableIndex, 1); v--) {
-        process.stdout.write('  checking version ' + v + '/' + totalVersions + '...          \r');
-        let remoteHash;
-        try {
-            remoteHash = await monadSync.getTreeHash(v);
-        } catch (err) {
-            if (err.code === 'KEK_MISMATCH' || err.message?.includes('decrypt') || err.message?.includes('invalid tag')) {
-                throw new Error('Could not decrypt this stream: ' + err.message);
-            }
-            throw err;
-        }
-        if (localHash.length === remoteHash.length && localHash.every((b, i) => b === remoteHash[i])) {
-            matchedVersion = v;
-            break;
-        }
-    }
+	for (let v = totalVersions; v >= Math.max(mn.firstAvailableIndex, 1); v--) {
+		process.stdout.write('  checking version ' + v + '/' + totalVersions + '...          \r');
+		let remoteHash;
+		try {
+			remoteHash = await monadSync.getTreeHash(v);
+		} catch (err) {
+			if (err.code === 'KEK_MISMATCH' || err.message?.includes('decrypt') || err.message?.includes('invalid tag')) {
+				throw new Error('Could not decrypt this stream: ' + err.message);
+			}
+			throw err;
+		}
+		if (localHash.length === remoteHash.length && localHash.every((b, i) => b === remoteHash[i])) {
+			matchedVersion = v;
+			break;
+		}
+	}
 
-    process.stdout.write('                                                \r');
-    if (matchedVersion !== null) {
-        console.log('  local matches:   version', matchedVersion, 'of', totalVersions);
-        if (matchedVersion < totalVersions) {
-            console.log('  behind by:      ', totalVersions - matchedVersion, 'version(s)');
-        } else {
-            console.log('  status:          up to date');
-        }
-    } else {
-        console.log('  local matches:   no known version (local modifications?)');
-        console.log('  latest remote:   version', totalVersions);
-    }
+	process.stdout.write('                                                \r');
+	if (matchedVersion !== null) {
+		console.log('  local matches:   version', matchedVersion, 'of', totalVersions);
+		if (matchedVersion < totalVersions) {
+			console.log('  behind by:      ', totalVersions - matchedVersion, 'version(s)');
+		} else {
+			console.log('  status:          up to date');
+		}
+	} else {
+		console.log('  local matches:   no known version (local modifications?)');
+		console.log('  latest remote:   version', totalVersions);
+	}
 }
 
 /**
@@ -172,11 +172,11 @@ export async function info(args) {
  * is a convenience next to the stream report, not something the rest depends on.
  */
 async function walletBalance(client) {
-    const symbol = client.chain.nativeCurrency?.symbol || 'MON';
-    try {
-        const wei = await client.publicClient.getBalance({ address: client.account.address });
-        return `${formatEther(wei)} ${symbol}`;
-    } catch {
-        return '(could not read)';
-    }
+	const symbol = client.chain.nativeCurrency?.symbol || 'MON';
+	try {
+		const wei = await client.publicClient.getBalance({ address: client.account.address });
+		return `${formatEther(wei)} ${symbol}`;
+	} catch {
+		return '(could not read)';
+	}
 }

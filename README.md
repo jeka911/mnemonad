@@ -6,82 +6,74 @@ On the base protocol layer, Mnemonad is an infinite bytes[] that lives entirely 
 
 As we extend it — sets of streams, version control, sync, richer per-item structure, more offload backends — that base layer is what stays fixed underneath.
 
-It ships as smart contracts, an SDK, a dApp, and a set of supporting tools — not just a protocol spec.
+It ships as smart contracts, an SDK, a CLI, a dApp, and a set of supporting tools — not just a protocol spec.
+
+## Try it
+
+- **Explorer dApp:** [mnemonad.vercel.app](https://mnemonad.vercel.app) — browse streams, create
+  and unlock them, push items, and read the [docs](https://mnemonad.vercel.app/docs), which are
+  themselves a Mnemonad stream, rendered with search.
+- **CLI:** sync any folder to a stream from a terminal:
+
+  ```bash
+  npm install -g mnemonad-cli
+  export MNEMONAD_KEY=0x...     # a funded Monad testnet key
+  mnemonad push ~/my-data --manifest --encrypt --encrypt-with wallet
+  ```
+
+- **AI agents:** [`SKILL.md`](SKILL.md) and the explorer's [`llms.txt`](https://mnemonad.vercel.app/llms.txt)
+  explain the CLI to an agent; [`mnemonad-agent-memory/`](mnemonad-agent-memory/SKILL.md) is a
+  skill for using a stream as an agent's long-term memory.
+
+Published on npm:
+
+| Package | Version | Source |
+|---|---|---|
+| [`mnemonad`](https://www.npmjs.com/package/mnemonad) | 0.0.1 | [`js/`](js/) — the SDK |
+| [`monadsync`](https://www.npmjs.com/package/monadsync) | 0.0.2 | [`monadsync/`](monadsync/README.md) — versioned folder sync |
+| [`mnemonad-cli`](https://www.npmjs.com/package/mnemonad-cli) | 0.3.3 | [`cli/`](cli/README.md) — the `mnemonad` command |
+
+`mnemonad-search-transformers` (the optional MiniLM model for vector search) is not on npm yet.
+
+## What's built
+
+- **Streams:** append-only, unbounded, ERC-721-owned `bytes[]` with automatic storage tiers
+  (slot, contract code, IPFS). See [`docs/terms.md`](docs/terms.md) for the vocabulary.
+- **Encryption:** AES-256-GCM, chosen per stream at creation, with the key wrapped by either a
+  **password** or the owner's **wallet signature**. See
+  [`docs/encryption/encryption.md`](docs/encryption/encryption.md).
+- **Passkey accounts:** sign in to the explorer with a passkey instead of a wallet extension,
+  through [Mera](https://mera.category.xyz/); the CLI can borrow the same account with
+  `--passkey`. See [`docs/wallet/passkey-accounts.md`](docs/wallet/passkey-accounts.md).
+- **Folder sync:** a folder as a versioned stream, each push a content-defined-chunking diff —
+  `push`, `pull`, `diff`, `watch`, `compact`, and `push --detach` to send in the background.
+  See [`cli/README.md`](cli/README.md).
+- **Vector search:** a local semantic index that travels with the folder, so a pulled stream is
+  searchable at once, from the CLI or in the explorer. See [`docs/search.md`](docs/search.md).
+- **Use cases:** backups, dApp data, app state, agent memory, and encrypted personal storage —
+  see the [use cases](docs/README.md#use-cases).
 
 ## Layout
 
 | Path | What |
 |---|---|
 | [`contracts/`](contracts/) | The Solidity registry contract + paid-upload gateway, Hardhat 3 project |
-| [`js/`](js/) | The JavaScript/TypeScript SDK |
-| [`explorer/`](explorer/README.md) | Vue 3 + Quasar block explorer / demo app |
-| [`presign-server/`](presign-server/) | Issues Pinata upload URLs against paid on-chain escrow |
+| [`js/`](js/) | The JavaScript/TypeScript SDK (`mnemonad` on npm) |
 | [`monadsync/`](monadsync/README.md) | DoubleSync + Mnemonad: versioned folder-tree sync on-chain |
-| [`scripts/`](scripts/) | Deployment and ABI-sync tooling |
+| [`cli/`](cli/README.md) | The `mnemonad` command: folder sync, encryption, passkeys, vector search |
+| [`mnemonad-search-transformers/`](mnemonad-search-transformers/README.md) | Optional MiniLM embedding model for the CLI's vector search |
+| [`explorer/`](explorer/README.md) | Vue 3 + Quasar block explorer / demo app, deployed at [mnemonad.vercel.app](https://mnemonad.vercel.app) |
+| [`presign-server/`](presign-server/) | Issues Pinata upload URLs against paid on-chain escrow |
+| [`docs/`](docs/README.md) | Documentation — published as its own stream and rendered at `/docs` |
+| [`mnemonad-agent-memory/`](mnemonad-agent-memory/SKILL.md) | Agent skill: a stream as an AI agent's long-term memory |
+| [`SKILL.md`](SKILL.md) | Agent skill: using the CLI |
+| [`scripts/`](scripts/) | Deployment, ABI-sync, docs and sample-dataset publishing |
+| [`sample_datasets/`](sample_datasets/) | Small example folders for the dataset scripts |
 
-## Paid off-chain uploads
-
-An item too large for the chain is stored as an `EXTERNAL` pointer — a CID plus a sha256 —
-and something has to pay a pinning service to hold the bytes. Two contracts and one service
-cover that:
-
-`MnemonadUploadGateway` sells upload quota for MON, priced in USD via Pyth's MON/USD feed.
-A client commits on-chain to `(contentHash, maxSize)` and escrows the quote;
-[`presign-server/`](presign-server/) reads that escrow and hands back a one-shot Pinata
-upload URL; the subsequent `pushExternal` settles the escrow and waives the registry's own
-`EXTERNAL` fee. The full flow:
-
-```
-payForUpload(hash, maxSize) ──► escrow        (client pays MON)
-POST /upload-url             ──► upload URL   (server checks escrow, EIP-712 signature)
-POST <url>                   ──► CID          (browser holds no Pinata credential)
-pushExternal(Pointer{hash})  ──► settled      (escrow consumed, EXTERNAL fee waived)
-```
-
-Escrow rather than immediate revenue is the load-bearing choice: it makes the server
-non-custodial and *optional*. If it never issues a URL, the payer reclaims their MON after
-`requestTtl` via `refund()`. A dead server delays uploads; it cannot strand funds.
-
-The gateway is a separate deployable from the registry, discovered at runtime through
-`Mnemonad.uploadGateway()`. The registry works fine with none wired — that path behaves
-exactly as it did before the hook existed. Keeping them separate also means Pyth stays
-swappable, which already mattered once: the MON/USD feed migrated off Pyth's beta contract,
-which stopped serving it.
-
-**Known gap:** Pinata accepts `maxFileSize` on a presigned URL and silently drops it
-(verified — a URL minted for 1024 bytes accepted 2048 and pinned it). So a paid ceiling is
-declared but not enforced; what bounds abuse is that each URL is single-use, short-lived,
-and cost a real payment. See [`presign-server/README.md`](presign-server/README.md) for the
-two ways to close it.
-
-## Conventions
-
-**Indentation is tabs, everywhere we author JS/TS/Vue.** That covers `js/` (the SDK and its
-tests), `explorer/` (the Vue app), and any Node scripts under `contracts/` (deploy scripts,
-tooling — not the Solidity itself, see below). This was a deliberate, repo-wide pass, not
-an accident of whichever editor touched a file first — if you find a file in one of those
-areas still on spaces, that's drift to fix, not a style to match.
-
-**Solidity stays 4-space**, per the ecosystem's near-universal convention — the Solidity
-style guide, `forge fmt`, `solhint`, and OpenZeppelin (which this project extends) all
-default to 4-space. Converting `contracts/src/*.sol` and `contracts/test/*.sol` to tabs
-would fight every Solidity tool's defaults for no real benefit, so it's the one deliberate
-exception to "everywhere."
-
-JSDoc comment continuation lines (` * ...`) inside tab-indented files keep a single literal
-space before the `*`, matching the enclosing code's tab depth — e.g. a doc comment on a
-method at one tab of indentation reads `\t * @param ...`, not `\t\t* @param ...`. This is
-the standard JSDoc alignment convention, just expressed with a tab prefix instead of spaces.
-
-Single quotes for strings, semicolons, in JS/TS/Vue — see any existing file in `js/` or
-`explorer/` for the concrete style if in doubt.
 
 ## Status
 
-Test MVP, **live on Monad testnet** (not mainnet). 113 Solidity + 330 SDK + 15 server +
-31 monadsync tests passing. Current deployment is recorded in [`js/ids.js`](js/ids.js) — the deploy scripts
+Test MVP, **live on Monad testnet** (not mainnet). 113 Solidity + 338 SDK + 172 CLI +
+35 monadsync + 15 server + 4 search-extension tests passing. Current deployment is recorded in [`js/ids.js`](js/ids.js) — the deploy scripts
 write it there, and the gateway address is read from the registry rather than recorded, so
 the two cannot disagree.
-
-Not yet audited, and encrypted streams still cannot be transferred (key rewrapping is
-unimplemented), so treat mainnet as out of scope for now.

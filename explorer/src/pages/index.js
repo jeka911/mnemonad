@@ -1,7 +1,8 @@
 // Auto-discovers every page component in this directory and builds the routes
 // array from it. Each page self-registers by exporting a `path` (and optional
 // `authRequired` / `requiredAuthLevel`) as static properties on its default
-// export — there is no central route table to maintain.
+// export — there is no central route table to maintain. `bare: true` renders the page
+// alone, with no header or footer around it (see layout/Default.vue).
 const files = import.meta.glob('./*.vue', { eager: true });
 
 const modules = {};
@@ -18,6 +19,7 @@ for (let key in modules) {
 		meta: {
 			authRequired: modules[key].default.authRequired,
 			requiredAuthLevel: modules[key].default.requiredAuthLevel,
+			bare: !!modules[key].default.bare,
 		},
 	});
 }

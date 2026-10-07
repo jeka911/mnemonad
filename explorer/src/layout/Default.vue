@@ -1,13 +1,14 @@
 <template>
 	<div class="overall_layout">
 		<div class="app-container">
-			<div class="presentation-dim" :class="{ 'presentation-dim--active': debugStore.presentationMode }">
+			<!-- A page that sets `bare: true` (pages/index.js) gets the whole window to itself. -->
+			<div v-if="!$route.meta.bare" class="presentation-dim" :class="{ 'presentation-dim--active': debugStore.presentationMode }">
 				<AppHeader />
 			</div>
 			<RoutedPage />
 		</div>
 
-		<div class="presentation-dim" :class="{ 'presentation-dim--active': debugStore.presentationMode }">
+		<div v-if="!$route.meta.bare" class="presentation-dim" :class="{ 'presentation-dim--active': debugStore.presentationMode }">
 			<AppFooter />
 		</div>
 	</div>

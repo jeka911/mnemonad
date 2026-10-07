@@ -5,21 +5,21 @@ import { basename } from 'node:path';
 import { DoubleSyncFile as SyncFile } from 'monadsync';
 
 export class FSFile extends SyncFile {
-    constructor(filePath) {
-        super();
-        this._path = filePath;
-        this._name = basename(filePath);
-    }
+	constructor(filePath) {
+		super();
+		this._path = filePath;
+		this._name = basename(filePath);
+	}
 
-    get name() { return this._name; }
+	get name() { return this._name; }
 
-    async getContent() {
-        const buf = await readFile(this._path);
-        return new Uint8Array(buf.buffer, buf.byteOffset, buf.byteLength);
-    }
+	async getContent() {
+		const buf = await readFile(this._path);
+		return new Uint8Array(buf.buffer, buf.byteOffset, buf.byteLength);
+	}
 
-    async getSize() {
-        const s = await stat(this._path);
-        return s.size;
-    }
+	async getSize() {
+		const s = await stat(this._path);
+		return s.size;
+	}
 }

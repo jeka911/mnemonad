@@ -118,7 +118,7 @@ export default {
 	justify-content: center;
 
 	/* Box model matched to Quasar QBtn: min-height/line-height are em-based off
-     the size's font-size; padding and min-width are fixed px like QBtn. */
+	 the size's font-size; padding and min-width are fixed px like QBtn. */
 	min-width: 64px;
 	min-height: 2.572em;
 	padding: 4px 16px;
@@ -140,7 +140,7 @@ export default {
 	letter-spacing: -0.01em;
 
 	/* Gradient border that blends with the fill (padding-box fills, border-box
-     shows the soft border gradient). */
+	 shows the soft border gradient). */
 	background:
 		linear-gradient(
 			180deg,
