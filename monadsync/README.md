@@ -4,7 +4,7 @@ Folder-tree delta sync on Monad.
 
 - **[Mnemonad](../js)** is a scalable append-only on-chain stream for Monad that grows beyond transaction/gas limits by chunking large items and offloading oversized ones to IPFS. It has built-in AES-256-GCM encryption support — all stored data can be encrypted with a password- or signer-wrapped key, so only the stream owner (or an approved reader who has the password) can decrypt.
 
-Together: MonadSync builds snapshot and diff patch documents from a folder tree, and Mnemonad stores them as an ordered chain of items on Monad, giving you versioned, deduplicated, incrementally-updated folder sync on the blockchain.
+MonadSync builds snapshot and diff patch documents from a folder tree, and Mnemonad stores them as an ordered chain of items on Monad, giving you versioned, deduplicated, incrementally-updated folder sync on the blockchain.
 
 **TL;DR:** git-like filesystem/folder versioning on Monad.
 
