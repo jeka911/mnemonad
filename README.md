@@ -14,7 +14,7 @@ At the protocol layer, Mnemonad is an unbounded bytes[] that lives entirely on-c
 
 - **CLI:** [mnemonad-cli](https://www.npmjs.com/package/mnemonad-cli) - the Mnemonad command-line interface for quickly syncing folders to and from the Monad blockchain. It is fully compatible with the Mnemonad file explorer in the dApp, so both interfaces operate on the same streams and filesystem state. Designed for both humans and AI agents.
 
-- **AI agents:** - [`SKILL.md`](SKILL.md), and the explorer's [`llms.txt`](https://mnemonad.vercel.app/llms.txt) explain how agents can use Mnemonad, while [`mnemonad-agent-memory/`](mnemonad-agent-memory/SKILL.md) provides a purpose-built skill for using Mnemonad as long-term, cross-session agent memory.
+- **AI agents:** - [`SKILL.md`](https://github.com/jeka911/mnemonad/blob/main/SKILL.md), and the explorer's [`llms.txt`](https://mnemonad.vercel.app/llms.txt) explain how agents can use Mnemonad, while [`mnemonad-agent-memory/`](https://github.com/jeka911/mnemonad/blob/main/mnemonad-agent-memory/SKILL.md) provides a purpose-built skill for using Mnemonad as long-term, cross-session agent memory.
 
 - **SDK** [npmjs.com/package/mnemonad](https://www.npmjs.com/package/mnemonad) and [npmjs.com/package/monadsync](https://www.npmjs.com/package/monadsync) - JavaScript SDKs for building applications with Mnemonad. `mnemonad` handles blockchain interactions, storage and gas-cost optimizations, encryption, and storing arbitrary binary data on Monad. `monadsync` is a higher-level library that adds file and filesystem abstractions for storing and syncing files, folders, and other filesystem-like state.
 
