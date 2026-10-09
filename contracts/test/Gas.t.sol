@@ -8,16 +8,17 @@ import {Mnemonad} from "../src/Mnemonad.sol";
 /// @notice Turns the plan's cost-model claims into executable assertions.
 ///
 /// IMPORTANT — what these numbers are and are not:
-/// The local EDR node prices storage with the standard Ethereum schedule (20,000 gas per
-/// new slot, EIP-2929 cold access). Monad does NOT: under MIP-8 it charges 8,000 per cold
-/// 4 KB page + 2,800 per page write + 17,000 per net-new slot, and it may have repriced
-/// CREATE. So the ABSOLUTE figures logged here are Ethereum figures and must not be quoted
-/// as Monad costs — that is what the Phase 0 testnet benchmark is for.
+/// The local EDR node prices storage with the standard Ethereum schedule (22,100 gas for a
+/// cold new slot, EIP-2929 cold access). Monad does not: under MIP-8 a new slot costs 27,900
+/// on a cold page and 17,100 on a page already loaded, and memory is linear. So the ABSOLUTE
+/// figures logged here are Ethereum figures and must not be quoted as Monad costs. Monad's
+/// real numbers come from scripts/bench_gas.js, which measures them on testnet; the results
+/// are in docs/gas.md.
 ///
 /// What does transfer is the DIRECTION of each comparison, which is what these tests pin
-/// down: both schedules charge per-new-slot for storage and per-byte for deployed code, so
-/// if CODE beats SLOT here it beats it on Monad by a wider margin still (Monad's per-slot
-/// charge is 17,000 versus Ethereum's 20,000, while code stays at ~200/byte).
+/// down: both schedules charge per new slot for storage and the same 200/byte for deployed
+/// code (CREATE and code deposit are unchanged on Monad, measured), so if CODE beats SLOT
+/// here it beats it on Monad too — by a wider margin wherever a slot lands on a fresh page.
 contract GasTest is EvTest {
     Mnemonad internal ev;
     address internal owner = address(0xA11CE);
@@ -74,11 +75,11 @@ contract GasTest is EvTest {
 
         // Note what this does and does not establish. It shows CODE is in the same cost
         // band as a one-slot SLOT write at the boundary, which is all that is needed for
-        // the routing rule to be defensible. It does NOT prove 31 is the exact crossover:
-        // that depends on a 32-byte SLOT write costing two slots plus a second page, and
+        // the routing rule to be defensible. It cannot prove 31 is the exact crossover:
+        // that depends on a 32-byte SLOT write costing a second slot on a second page, and
         // the page half of that only exists under Monad's MIP-8 schedule, which the local
-        // node does not implement. SLOT_MAX_BYTES is therefore a Phase 0 measurement, not
-        // a settled constant.
+        // node does not implement. Testnet settles it (docs/gas.md): 31 B via SLOT costs
+        // 89,366, 32 B via CODE 99,946, and SLOT at 32 B would cost ~117,000 — so 31 holds.
         assertTrue(code32 < slot31 * 2, "CODE must stay within a 2-slot storage write");
     }
 

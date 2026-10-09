@@ -2,16 +2,11 @@
 
 Folder-tree delta sync on Monad.
 
-**MonadSync** combines the power of two. Two libraries walk into a blockchain...
-
 - **[Mnemonad](../js)** is a scalable append-only on-chain stream for Monad that grows beyond transaction/gas limits by chunking large items and offloading oversized ones to IPFS. It has built-in AES-256-GCM encryption support — all stored data can be encrypted with a password- or signer-wrapped key, so only the stream owner (or an approved reader who has the password) can decrypt.
-- **[DoubleSync](https://github.com/FizzyFlow/doublesync)** is a content-defined chunking engine that splits files at content-determined boundaries so that small edits only affect nearby chunks, deduplicates identical chunks by SHA-256, fingerprints folder trees as Merkle trees for fast skip of unchanged subtrees, and produces compact incremental diff patches that carry only the changed operations and chunks.
 
-Together: DoubleSync builds snapshot and diff patch documents from a folder tree, and Mnemonad stores them as an ordered chain of items on Monad, giving you versioned, deduplicated, incrementally-updated folder sync on the blockchain.
+Together: MonadSync builds snapshot and diff patch documents from a folder tree, and Mnemonad stores them as an ordered chain of items on Monad, giving you versioned, deduplicated, incrementally-updated folder sync on the blockchain.
 
 **TL;DR:** git-like filesystem/folder versioning on Monad.
-
-Both libraries are fully standalone and can be used independently of each other and without MonadSync. Mnemonad works as general-purpose scalable on-chain storage for any `vector<uint8>` data, and DoubleSync works as a pure CDC diff engine for any folder sync scenario — network, disk, database, cloud, any abstraction and whatever transport you want.
 
 ## Overview
 
@@ -213,8 +208,3 @@ pnpm test
 ```
 
 Requires `contracts/` to already be built (`pnpm build` there) so the Mnemonad registry artifact exists for deployment.
-
-## Dependencies
-
-- [@fizzyflow/doublesync](https://github.com/fizzyFlow/doublesync) — CDC chunking, snapshot/patch encoding, folder-tree diff
-- [mnemonad](../js) — on-chain append-only stream for Monad with chunking, staged multi-tx pushes, and IPFS offloading

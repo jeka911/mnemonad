@@ -68,37 +68,56 @@ absent gateway degrades to charging normally rather than bricking every external
   20,000 so the boundary logic is exercisable. Bounded by `MAX_CHUNK_BYTES_CEILING`
   (64 KiB as of this writing — see that constant's own doc comment for why it's well under
   Monad's 128 KB code-size cap: the *gas* cost of a chunk that large binds before the code
-  size does). **The currently-deployed testnet registry predates this ceiling and is still
-  running at 122,880** — the tightened value only takes effect on the next deploy.
+  size does). The deployed testnet registry runs at that ceiling, 65,536.
 - The registry is compiled with `optimizer.runs = 200` to stay under 24 KB and remain
   unit-testable. Monad's headroom would permit far more aggressive inlining.
 - **The single-chunk CODE path near the ceiling cannot be tested locally at all** — it needs
   more code-size headroom than the local EDR node allows. Testnet-only verification.
 
-**2. Gas schedule.** Local EDR prices storage the Ethereum way (20,000 per new slot,
-EIP-2929 cold access). Monad uses MIP-8: 4 KB/128-slot pages, 8,000 per cold page + 2,800
-per page write + 17,000 per net-new slot, and possibly a repriced `CREATE`. So absolute
-numbers below are **Ethereum numbers** and must not be quoted as Monad costs. What carries
-over is the direction of each comparison.
+**2. Gas schedule.** Local EDR prices storage the Ethereum way (22,100 for a cold new slot,
+EIP-2929 cold access, quadratic memory). Monad uses MIP-8 — 4 KB pages of 128 slots — plus
+its own cold-access and memory prices, so the local suite's absolute numbers are
+**Ethereum numbers**. What carries over is the direction of each comparison, which is all
+`Gas.t.sol` asserts. Monad's own numbers are measured on testnet, below.
 
-## Measured (local, Ethereum schedule)
+## Measured on Monad testnet
 
-Re-measured from `Gas.t.sol`'s own output. The assertions in that file are *relational*
-(cheaper-than, within-20%-of), not exact-value — so these figures are a snapshot that can
-drift as the contracts change, while the readings hold.
+From [`scripts/bench_gas.js`](../../scripts/bench_gas.js), which measures exact gas with
+metered `eth_call`s against the live registry — no transactions, no key. Full report, with
+the method and every row: [`docs/gas.md`](../gas.md).
+
+The schedule, as the registry experiences it:
+
+| Operation | Monad | Ethereum |
+|---|---:|---:|
+| Read a slot on a cold page / a page already loaded | 8,100 / 100 | 2,100 / 100 |
+| New slot on a cold page / a page already written this tx | 27,900 / 17,100 | 22,100 |
+| Modify a slot on a cold page | 10,900 | 5,000 |
+| Cold account access (each chunk a read touches) | 10,100 | 2,600 |
+| `CREATE` / code deposit | 32,000 / 200 per byte | same |
+| Memory, 0 → 64 KB | 1,024 | 14,336 |
+
+Page warmth lasts one transaction. A new slot on a page that already holds data still costs
+27,900 if nothing in the transaction loaded that page, so separate transactions never share
+a page charge — only batches do.
+
+What that means for the registry:
 
 | Measurement | Result | Reading |
 |---|---|---|
-| `concat` 4 items × 100 B vs 4 × 5,000 B | 162,668 vs **162,668** gas | Identical to the gas. 50× the payload, zero cost difference — payloads are re-linked, never copied. |
-| 10 × 200 B: individual vs packed | 1,047,452 → **729,986** gas | Packing saves 30%; the per-chunk `CREATE` overhead is what's amortised. |
-| CODE tier per-byte, 1 KB → 10 KB | 286 → **209** gas/byte | Converging on the predicted ~216 gas/byte (200 deploy + 16 calldata). |
-| 31 B via SLOT vs 32 B via CODE | 76,008 vs 90,506 gas | Same cost band at the boundary. Does **not** confirm 31 as the exact crossover — see below. |
-| `pushExternal` (Item + Pointer) | 123,785 gas | Flat regardless of payload size: only a CID and a hash are stored. |
+| 31 B via SLOT vs 32 B via CODE (into a fresh stream) | 89,366 vs 99,946 gas | `SLOT_MAX_BYTES = 31` is the right cutoff: SLOT at 32 B would need a second slot on a second page (~117,000), and CODE at 1 B would still cost ~93,700. |
+| CODE tier per byte, 1 KB → 64 KB | 292 → **202** gas/byte | Plus 16/byte calldata: a 64 KB chunk is 14.3M gas as a transaction, under half the 30M cap. |
+| `push` into an existing stream: 1 B / 1 KB / 24 KB | 122,984 / 348,608 / 5,445,040 tx gas | A lone push pays every page it touches cold, ~11,000 more than the same item in `create()`. |
+| 10 × 200 B: separate pushes vs `pushMany` | ~1,704,000 → **760,781** tx gas | Packing saves 55%: one `CREATE` and one set of cold pages instead of ten. |
+| `pushExternal` (Item + Pointer) | 225,610 tx gas | Flat regardless of payload size: only a CID and a hash are stored. |
+| `at()` on one chunk: 391 B / 25 KB / 59 KB | 44,900 / 50,360 / 57,794 gas | ~42,000 of cold page and account loads, then ~0.25 gas/byte. Not paid, but metered against the `eth_call` cap. |
+| `at()` on 512 KB (8 chunks) | ~298,000 gas (estimated cold) | ~0.6 gas/byte; each extra chunk adds a 10,000 cold account access. |
+| `concat` 4 items × 100 B vs 4 × 5,000 B (pages warm) | 231,004 vs **231,004** gas | Identical. 50× the payload, zero cost difference — payloads are re-linked, never copied. |
+
+`Gas.t.sol` logs the same comparisons under the Ethereum schedule when you run `pnpm test`.
 
 ## Known gaps
 
-- `SLOT_MAX_BYTES = 31` is derived from Monad's page model, which the local node does not
-  implement. The exact crossover is an unconfirmed measurement, not a settled constant.
 - Key rewrapping (`registerPublicKey`, `proposeTransferWithRewrap`, `acceptTransfer`) is not
   implemented. Encrypted streams are currently non-transferable, full stop. This must exist
   before mainnet.

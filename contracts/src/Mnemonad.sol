@@ -155,8 +155,13 @@ contract Mnemonad is ERC721Enumerable, Ownable2Step, ReentrancyGuardTransient {
 
     /// @dev A dynamic array per stream, not a nested mapping: array elements occupy
     ///      consecutive slots, so under Monad's MIP-8 page model (128 slots per 4 KB page)
-    ///      128 consecutive items share a single cold page charge. A nested mapping would
-    ///      scatter them across keccak-derived slots and pay cold access for every one.
+    ///      items written or read *in the same transaction* share pages — `pushMany`,
+    ///      `create` with items, `concat`, `getItemRefsBatch` pay one page load (8,000),
+    ///      plus one page write (2,800) when writing, per 128 items rather than per item.
+    ///      Page warmth does not outlive a transaction, so a lone `push` gains nothing: its
+    ///      item's page is cold again, and the new slot costs 27,900 as it would on a fresh
+    ///      page (measured on testnet, docs/gas.md). A nested mapping would scatter items
+    ///      across hashed slots and pay a page per item even in a batch.
     mapping(uint256 id => Item[]) internal _items;
 
     mapping(uint256 id => bytes) internal _streamMeta;

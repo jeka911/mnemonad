@@ -7,8 +7,9 @@ pragma solidity ^0.8.28;
 ///
 /// Why this exists on Monad specifically: writing bytes to contract storage costs ~537
 /// gas/byte under MIP-8 (17,000 gas per net-new slot dominates), while deploying them as
-/// code costs ~216 gas/byte, and reading them back via `EXTCODECOPY` is roughly 44× cheaper
-/// than the equivalent `SLOAD` run. Monad also raises the max contract size to 128 KB (from
+/// code costs ~216 gas/byte, and reading them back via `EXTCODECOPY` is roughly 20× cheaper
+/// than the equivalent `SLOAD` run (~0.26 gas/byte for a warm 64 KB chunk measured on
+/// testnet, against ~5 for SLOADs of the same bytes: 100 per slot plus 8,100 per page). Monad also raises the max contract size to 128 KB (from
 /// Ethereum's 24 KB) — but the code-size cap and the *gas* cap are two separate limits, and
 /// the gas one binds first: at ~221 gas/byte measured live (this comment's own ~216 estimate
 /// plus calldata and bookkeeping), a chunk anywhere near 128 KB computes to ~28-30M gas —

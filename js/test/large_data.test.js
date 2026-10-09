@@ -279,8 +279,10 @@ describe('large packed batches', () => {
 
 describe('many items', () => {
 	it('grows past a single storage page without losing items', async () => {
-		// Monad's MIP-8 pages hold 128 item slots each, so crossing that boundary is where
-		// a layout mistake in the item array would first show up.
+		// Monad's MIP-8 pages hold 128 slots each, so 140 items span at least two pages
+		// wherever the array starts — which is where a layout mistake in the item array
+		// would first show up. (The array starts at a hashed slot, so its page boundary
+		// falls at an arbitrary index, not at 128.)
 		const ev = await Mnemonad.create(baseParams());
 		const count = 140;
 		const items = Array.from({ length: count }, (_, i) => makeBytes(20, (i % 250) + 1));

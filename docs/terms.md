@@ -128,7 +128,7 @@ The tier says where an item's bytes live. There are three, recorded in `Item.sto
 
 | Tier | Where | Size | Notes |
 |---|---|---|---|
-| `SLOT` | One storage slot | Up to 31 bytes | The cheapest choice for tiny items. At 32 bytes, a Solidity `bytes` value no longer fits in one slot. |
+| `SLOT` | One storage slot | Up to 31 bytes | The cheapest choice for tiny items. At 32 bytes, a Solidity `bytes` value no longer fits in one slot. Measured on testnet, 31 is the exact crossover ([gas](gas.md)). |
 | `CODE` | A deployed data contract (a chunk) | 32 bytes up to `maxChunkBytes` | Deploying costs about 216 gas per byte. Storage costs 537. Past the crossover, CODE is cheaper, so the contract routes items here. |
 | `EXTERNAL` | Off-chain (IPFS today) | Any size, even above `maxChunkBytes` | Only a `Pointer` (hash and locator) goes on-chain. See Pointer below. |
 

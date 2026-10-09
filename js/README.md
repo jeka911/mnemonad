@@ -106,16 +106,18 @@ id across a failure to make use of that.
 
 ## Batching matters
 
-Each `CODE` chunk carries ~32,000 gas of `CREATE` overhead, which dominates for small
-items. `pushMany` packs a whole batch into one chunk:
+Each `CODE` chunk carries ~32,000 gas of `CREATE` overhead, and each transaction loads the
+stream's storage pages cold (8,100 a page under Monad's MIP-8). Both dominate for small
+items. `pushMany` packs a whole batch into one chunk and one transaction:
 
 ```javascript
 await ev.pushMany([chunk1, chunk2, chunk3]); // one deployed chunk, three items
 ```
 
 Packing is only possible within a single transaction — chunks are immutable, so an item can
-never be folded into an existing chunk afterwards. Measured on-chain, 10 × 200 B costs
-729,986 gas packed versus 1,048,092 individually.
+never be folded into an existing chunk afterwards. Measured on Monad testnet, 10 × 200 B
+costs 760,781 gas packed versus ~1,704,000 as ten separate pushes — 55% less (see
+[gas on Monad testnet](../docs/gas.md)).
 
 ## Metadata
 
@@ -530,21 +532,26 @@ for await (const piece of ev.stream(0, { start: 0, len: 1024 })) { /* ... */ }
 than available memory can be walked end to end. `plaintextLengthAt(i)` gives the decrypted
 length, which differs from the stored `itemSize` for encrypted items.
 
-Measured read cost (simulated gas; nobody pays it, but the node meters it against the
-`eth_call` cap — 200M on Monad's public RPCs):
+Read cost of `at()` on Monad testnet (simulated gas; nobody pays it, but the node meters it
+against the `eth_call` cap — 200M on Monad's public RPCs):
 
 | Item size | Chunks | Read gas | gas/byte |
 |---:|---:|---:|---:|
-| 1 KB | 1 | 35,430 | 34.6 |
-| 24 KB | 1 | 48,471 | 2.02 |
-| 64 KB | 3 | 112,141 | 1.71 |
-| 256 KB | 11 | 740,757 | 2.83 |
-| 1 MB | 44 | 9,159,030 | 8.73 |
+| 391 B | 1 | 44,900 | 115 |
+| 25 KB | 1 | 50,360 | 1.99 |
+| 59 KB | 1 | 57,794 | 0.97 |
+| 128 KB | 2 | ~106,000 | 0.81 |
+| 512 KB | 8 | ~298,000 | 0.57 |
 
-The climb above 64 KB is a **local artifact**: EDR prices memory expansion quadratically
-the Ethereum way (~2.2M gas of pure memory cost for a 1 MB buffer). Monad prices it
-**linearly at `w/2`** — the same buffer costs ~16K — so on Monad the curve should stay near
-1.7–2 gas/byte rather than rising. Confirm in Phase 0.
+Single-chunk rows are cold reads of real items. Multi-chunk rows are estimates: measured
+warm, plus the cold loads the single-chunk reads show (~42,000) and 10,000 per extra chunk
+for its cold account access (full method in [gas on Monad testnet](../docs/gas.md)).
+
+A read costs a fixed ~42,000 of cold page and account loads, then about 0.25 gas/byte, so
+the per-byte figure keeps falling with size. Monad prices memory linearly at half a gas per
+32-byte word — a 1 MB buffer costs ~16,000 rather than Ethereum's quadratic ~2.2M — which is
+why large reads stay cheap. Locally, EDR uses the Ethereum formula, so the SDK's own tests
+see 1 MB reads near 9M gas; that's an artifact of the test node, not what Monad charges.
 
 ## Cost estimation
 

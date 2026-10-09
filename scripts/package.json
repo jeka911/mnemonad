@@ -21,6 +21,7 @@
         "push-dataset:testnet": "osv-guard node push_dataset_testnet.js",
         "update-dataset:testnet": "osv-guard node update_dataset_testnet.js",
         "push-docs:testnet": "osv-guard node push_docs_testnet.js",
+        "bench-gas:testnet": "osv-guard node bench_gas_testnet.js",
         "collect-fees:testnet": "osv-guard node collect_fees_testnet.js",
         "collect-fees:mainnet": "node collect_fees_mainnet.js"
     },

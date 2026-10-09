@@ -43,6 +43,8 @@ so the search box above searches them by meaning.
   as-stored bytes are ever cached.
 - [Vector search](search.md): how a folder's search index is built, shared, and searched from
   the CLI and in the browser.
+- [Gas on Monad testnet](gas.md): what storage, code and each registry call cost under
+  MIP-8, measured on testnet.
 
 ## Research
 
