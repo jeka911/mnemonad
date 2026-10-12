@@ -43,14 +43,51 @@
 				</template>
 
 				<template v-if="encrypt && encryptWith === 'passkey'">
-					<q-option-group
-						v-model="passkeyMode"
-						:options="passkeyModeOptions"
-						color="primary"
-						dense
-						inline
-						:disable="mnemonadStore.creating"
-					/>
+					<!-- Step one of two: the passkey makes the key before anything is sent, so
+					     Create below only asks the wallet. Same choice the Sign In dialog makes
+					     (PasskeyCard.vue): a passkey this browser has used goes first, otherwise
+					     a new one is created, with a link for the other case. -->
+					<div class="passkey-step">
+						<template v-if="!passkeyKey">
+							<q-btn
+								flat
+								no-caps
+								size="lg"
+								color="primary"
+								:loading="makingKey"
+								:disable="mnemonadStore.creating || walletStore.wrongNetwork"
+								@click="makeKey()"
+							>
+								<q-icon name="fingerprint" size="32px" class="q-mr-sm" />
+								<span>Create encryption key</span>
+								<template #loading>
+									<q-spinner size="24px" class="q-mr-sm" />
+									<span>Confirm with your passkey...</span>
+								</template>
+							</q-btn>
+							<button
+								type="button"
+								class="link-btn"
+								:disabled="makingKey"
+								@click="rememberedPasskey ? useAnotherPasskey() : makeKey('pick')"
+							>
+								{{ rememberedPasskey ? 'Not this passkey? Choose another' : 'Already have a passkey? Use it instead' }}
+							</button>
+							<p v-if="passkeyError" class="hint hint--warning">{{ passkeyError }}</p>
+						</template>
+						<div v-else class="passkey-step__done">
+							<q-icon name="check_circle" color="positive" size="20px" />
+							<span>Encryption key ready</span>
+							<button
+								type="button"
+								class="link-btn"
+								:disabled="mnemonadStore.creating"
+								@click="passkeyKey = null"
+							>
+								Use a different passkey
+							</button>
+						</div>
+					</div>
 					<p class="hint hint--warning">
 						Whoever holds this passkey can decrypt the stream, whatever wallet they use —
 						and only on {{ rpId }}: a passkey belongs to the site that created it. There
@@ -58,9 +95,8 @@
 						contents are permanently unreadable.
 					</p>
 					<p class="hint">
-						Your passkey is asked first, to derive the key; then your wallet, for the
-						create transaction. Which passkey it was and the site it belongs to stay in
-						the clear in stream metadata, so it can be found again to unlock.
+						Which passkey it was and the site it belongs to stay in the clear in stream
+						metadata, so it can be found again to unlock.
 					</p>
 				</template>
 
@@ -111,7 +147,7 @@
 					label="Create"
 					:loading-label="loadingLabel"
 					:loading="mnemonadStore.creating"
-					:disable="walletStore.wrongNetwork || (encrypt && encryptWith === 'password' && !isPasswordValid)"
+					:disable="walletStore.wrongNetwork || (encrypt && encryptWith === 'password' && !isPasswordValid) || (encrypt && encryptWith === 'passkey' && !passkeyKey)"
 					@click="submit"
 				/>
 			</div>
@@ -130,7 +166,7 @@ import GradientButton from '../components/GradientButton.vue';
 import { useWalletStore } from '../stores/wallet.js';
 import { useMnemonadStore } from '../stores/mnemonad.js';
 import { getActiveNetwork } from '../settings.js';
-import { currentRpId, passkeysAvailable } from '../wallet/passkeyPrf.js';
+import { currentRpId, passkeysAvailable, getRememberedStreamPasskey, forgetStreamPasskey } from '../wallet/passkeyPrf.js';
 
 const MIN_PASSWORD_LENGTH = 8;
 
@@ -156,14 +192,20 @@ export default {
 			// recoverable-by-anyone-who-knows-it option; wallet trades that for a key nobody
 			// but this account can derive; passkey for a key nobody but that passkey can.
 			encryptWith: 'password',
-			/** For the passkey method: use a passkey this site already has, or make one. */
-			passkeyMode: 'existing',
 			rpId: currentRpId(),
+			// Passkey method: the passkey this browser used last (see passkeyPrf.js), which
+			// "Create encryption key" goes straight to; none means it creates one.
+			rememberedPasskey: getRememberedStreamPasskey(),
+			// What prepareStreamPasskey() made — the key for the stream Create will produce.
+			// Holds the passkey's output, so it's dropped whenever the dialog closes.
+			passkeyKey: null,
+			makingKey: false,
+			passkeyError: null,
 			password: '',
 			confirmPassword: '',
 			passwordTouched: false,
 			confirmTouched: false,
-			/** 'sign' | 'passkey' | 'tx' — which prompt the create flow is waiting on. */
+			/** 'sign' | 'tx' — which wallet prompt the create flow is waiting on. */
 			creatingStep: null,
 		};
 	},
@@ -191,19 +233,49 @@ export default {
 			if (passkeysAvailable()) options.push({ label: 'With a passkey', value: 'passkey' });
 			return options;
 		},
-		passkeyModeOptions() {
-			return [
-				{ label: 'Use an existing passkey', value: 'existing' },
-				{ label: 'Create a new passkey', value: 'create' },
-			];
-		},
 		loadingLabel() {
 			if (this.creatingStep === 'sign') return 'Check your wallet to sign...';
-			if (this.creatingStep === 'passkey') return 'Confirm with your passkey...';
 			return 'Creating...';
 		},
 	},
+	watch: {
+		// The key is for the stream *this* account would create; another account means
+		// another stream id, so it no longer applies.
+		'walletStore.address'() {
+			this.passkeyKey = null;
+		},
+		modelValue(isOpen) {
+			if (!isOpen) this.passkeyKey = null;
+		},
+	},
 	methods: {
+		/**
+		 * @param {'pick'} [choice] - 'pick' opens the browser's passkey picker instead of
+		 *   going to the remembered passkey (or creating one when there is none).
+		 */
+		async makeKey(choice) {
+			if (this.makingKey) return;
+			this.makingKey = true;
+			this.passkeyError = null;
+			try {
+				let params;
+				if (choice === 'pick') params = { mode: 'existing' };
+				else if (this.rememberedPasskey) params = { mode: 'existing', credentialId: this.rememberedPasskey };
+				else params = { mode: 'create', label: this.name ? `Stream key: ${this.name}` : null };
+				this.passkeyKey = await this.mnemonadStore.prepareStreamPasskey(params);
+				this.rememberedPasskey = this.passkeyKey.credentialId;
+			} catch (error) {
+				this.passkeyError = error?.message || 'Could not make the key with a passkey.';
+			} finally {
+				this.makingKey = false;
+			}
+		},
+		/** The way out of a wrong pin, like PasskeyCard's "Not this passkey?". */
+		async useAnotherPasskey() {
+			forgetStreamPasskey();
+			this.rememberedPasskey = null;
+			await this.makeKey('pick');
+		},
 		async submit() {
 			if (this.walletStore.wrongNetwork || this.mnemonadStore.creating) return;
 			if (this.encrypt && this.encryptWith === 'password') {
@@ -216,7 +288,7 @@ export default {
 					name: this.name,
 					encryptWith: this.encrypt ? this.encryptWith : null,
 					password: this.encrypt && this.encryptWith === 'password' ? this.password : undefined,
-					passkeyMode: this.passkeyMode,
+					passkeyKey: this.encrypt && this.encryptWith === 'passkey' ? this.passkeyKey : undefined,
 					// Two wallet prompts for the wallet method (key signature, then the
 					// transaction) — this keeps the button honest about which one is up.
 					onStep: (step) => { this.creatingStep = step; },
@@ -229,12 +301,8 @@ export default {
 				// deterministic, so retrying re-derives the identical key.
 				const rejected = error?.name === 'UserRejectedRequestError'
 					|| /user rejected|denied/i.test(error?.shortMessage || error?.message || '');
-				// A passkey failure always lands before the transaction, so nothing exists yet
-				// either; its message is already worded for the user (see passkeyPrf.js).
 				let message = error?.shortMessage || error?.message || 'Failed to create stream';
-				if (this.creatingStep === 'passkey') {
-					message = `${message} Nothing was created.`;
-				} else if (rejected) {
+				if (rejected) {
 					message = this.creatingStep === 'sign' ? 'Signature rejected — nothing was created.' : 'Transaction rejected — nothing was created.';
 				}
 				this.$q.notify({ type: 'negative', message, position: 'top' });
@@ -246,7 +314,8 @@ export default {
 			this.name = '';
 			this.encrypt = false;
 			this.encryptWith = 'password';
-			this.passkeyMode = 'existing';
+			this.passkeyKey = null;
+			this.passkeyError = null;
 			this.password = '';
 			this.confirmPassword = '';
 			this.passwordTouched = false;
@@ -279,6 +348,37 @@ export default {
 	margin: 0;
 	font-size: 12px;
 	opacity: 0.75;
+}
+
+.passkey-step {
+	display: flex;
+	flex-direction: column;
+	align-items: center;
+	gap: 4px;
+}
+
+.passkey-step__done {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	font-size: 14px;
+}
+
+.link-btn {
+	padding: 0;
+	border: none;
+	background: none;
+	font: inherit;
+	font-size: 11px;
+	color: var(--q-primary, #836ef9);
+	text-decoration: underline;
+	text-underline-offset: 2px;
+	cursor: pointer;
+}
+
+.link-btn:disabled {
+	opacity: 0.5;
+	cursor: default;
 }
 
 .hint--warning {

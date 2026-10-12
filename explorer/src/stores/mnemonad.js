@@ -1,12 +1,12 @@
 import { defineStore } from 'pinia';
 import { getPublicClient, getWalletClient } from '@wagmi/core';
-import { getAddress } from 'viem';
-import Mnemonad, { MnemonadUploadGateway, mnemonadAbi, ids as mnemonadIds, kekMethodOf } from '@mnemonad';
+import { getAddress, keccak256, encodeAbiParameters, bytesToHex } from 'viem';
+import Mnemonad, { MnemonadUploadGateway, MnemonadCrypto, mnemonadAbi, ids as mnemonadIds, kekMethodOf } from '@mnemonad';
 import { config } from '../wagmi';
 import { getActiveNetwork } from '../settings.js';
 import { useDebugStore } from './debug.js';
 import { createPresignProvider } from '../mnemonad/presignProvider.js';
-import { passkeyKekProvider } from '../wallet/passkeyPrf.js';
+import { passkeyKekProvider, rememberStreamPasskey } from '../wallet/passkeyPrf.js';
 
 // ids.js keys by contract-key name ('monadTestnet'/'monadMainnet'), settings.js keys by a
 // different name ('testnet'/'mainnet') — matching on chainId instead of threading one
@@ -372,14 +372,14 @@ export const useMnemonadStore = defineStore('mnemonad', {
 		 *   any other wallet to ever decrypt it; `passkey` keys it to a passkey instead — one
 		 *   passkey prompt before the transaction, and decryptable by whoever holds that
 		 *   passkey, whatever wallet they use.
-		 * @param {'existing'|'create'} [params.passkeyMode='existing'] - for `passkey`: use a
-		 *   passkey this site already has, or register a new one.
+		 * @param {Object} [params.passkeyKey] - for `passkey`: what `prepareStreamPasskey()`
+		 *   returned. The key is derived before this call, so creating asks only the wallet.
 		 * @param {string} [params.password] - required by `encryptWith: 'password'`.
 		 *   `Mnemonad.create()` itself derives the salt, picks the shipped default iteration
 		 *   count, and publishes both (in the clear, alongside `name`) in the stream's own
 		 *   metadata, so a later reader only needs the password, never anything out of band.
-		 * @param {(step: 'sign'|'passkey'|'tx') => void} [params.onStep] - called as the flow
-		 *   moves between prompts, so the dialog can say which one is on screen.
+		 * @param {(step: 'sign'|'tx') => void} [params.onStep] - called as the flow moves
+		 *   between wallet prompts, so the dialog can say which one is on screen.
 		 * @returns {Promise<Mnemonad>}
 		 */
 		async createStream(params = {}) {
@@ -406,17 +406,30 @@ export const useMnemonadStore = defineStore('mnemonad', {
 						},
 					}
 					: undefined;
-				// The passkey ceremony runs inside create(), before the transaction: the
-				// stream id (and so the PRF salt) is known in advance.
-				const passkey = method === 'passkey'
-					? passkeyKekProvider({
-						mode: params.passkeyMode || 'existing',
-						label: params.name ? `Stream key: ${params.name}` : null,
-						onPrompt: () => onStep('passkey'),
-						onDone: () => onStep('tx'),
-					})
-					: undefined;
-				if (method !== 'wallet' && method !== 'passkey') onStep('tx');
+				// The passkey ceremony already ran in prepareStreamPasskey(), for the stream id
+				// this create will produce — so the provider just hands back that output, after
+				// checking it really is for this stream.
+				let passkey;
+				let salt;
+				if (method === 'passkey') {
+					const prepared = params.passkeyKey;
+					if (!prepared) throw new Error('Make the encryption key with your passkey first');
+					if (getAddress(prepared.creator) !== getAddress(walletClient.account.address)) {
+						throw new Error('The connected wallet changed since the key was made — make it again');
+					}
+					salt = prepared.salt;
+					passkey = {
+						rpId: prepared.rpId,
+						credentialId: prepared.credentialId,
+						evaluate: async (prfSalt) => {
+							if (bytesToHex(prfSalt) !== bytesToHex(prepared.prfSalt)) {
+								throw new Error('The encryption key was made for a different stream — make it again');
+							}
+							return { output: prepared.output, credentialId: prepared.credentialId };
+						},
+					};
+				}
+				if (method !== 'wallet') onStep('tx');
 
 				const stream = await Mnemonad.create({
 					publicClient,
@@ -427,6 +440,7 @@ export const useMnemonadStore = defineStore('mnemonad', {
 					password: password || undefined,
 					signer,
 					passkey,
+					salt,
 					maxRPCRequestsPerSecond: MAX_RPC_REQUESTS_PER_SECOND,
 					rpcRetry: RPC_RETRY,
 					// Same read-only provider loadStream() builds its own instances with —
@@ -457,6 +471,49 @@ export const useMnemonadStore = defineStore('mnemonad', {
 			} finally {
 				this.creating = false;
 			}
+		},
+		/**
+		 * Derives a new passkey-encrypted stream's key *before* it exists, so the create
+		 * dialog can do it as its own step and the create itself only asks the wallet.
+		 *
+		 * Possible because stream ids are deterministic: `keccak256(abi.encode(creator,
+		 * salt))`. This picks the salt now, works out the id the create will produce, and runs
+		 * the passkey on that stream's PRF salt (`MnemonadCrypto.passkeyKekSalt`).
+		 * `createStream` then creates with the same salt, and refuses if the wallet changed in
+		 * between (a different creator means a different id, and the key would not match).
+		 *
+		 * @param {Object} [params]
+		 * @param {'existing'|'create'} [params.mode='existing'] - an existing passkey, or a new one
+		 * @param {?string} [params.credentialId] - with 'existing': ask for this passkey
+		 *   directly; omitted, the browser offers its picker
+		 * @param {?string} [params.label] - name shown in the passkey list, with 'create'
+		 * @returns {Promise<Object>} opaque to the caller; pass it to `createStream` as
+		 *   `passkeyKey`. Holds the PRF output, so it shouldn't outlive the dialog.
+		 */
+		async prepareStreamPasskey(params = {}) {
+			if (!MNEMONAD_ADDRESS) throw new Error('Mnemonad is not deployed on this network');
+			const walletClient = await getWalletClient(config);
+			const publicClient = getPublicClient(config);
+			const creator = walletClient.account.address;
+			const chainId = publicClient.chain?.id ?? await publicClient.getChainId();
+
+			const saltBytes = new Uint8Array(32);
+			crypto.getRandomValues(saltBytes);
+			const salt = bytesToHex(saltBytes);
+			const id = BigInt(keccak256(encodeAbiParameters(
+				[{ type: 'address' }, { type: 'bytes32' }],
+				[creator, salt]
+			)));
+			const prfSalt = MnemonadCrypto.passkeyKekSalt(chainId, MNEMONAD_ADDRESS, id);
+
+			const provider = passkeyKekProvider({
+				mode: params.mode || 'existing',
+				credentialId: params.credentialId || null,
+				label: params.label || null,
+			});
+			const { output, credentialId } = await provider.evaluate(prfSalt);
+			rememberStreamPasskey(credentialId);
+			return { salt, creator, prfSalt, output, credentialId, rpId: provider.rpId };
 		},
 		/**
 		 * Permanently destroys stream `id` (`contracts/src/Mnemonad.sol`'s own `burn()` —

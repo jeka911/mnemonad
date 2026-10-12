@@ -1,4 +1,5 @@
 import { createPasskeyWithPrfOutput, getPasskeyPrfOutput, isMeraError } from '@category-labs/mera';
+import { getRememberedPasskeyCredential } from './passkeyIdentity.js';
 
 /**
  * Passkey-encrypted streams: the WebAuthn half of the SDK's `passkey` KEK method (see
@@ -29,6 +30,46 @@ const labelFormat = new Intl.DateTimeFormat(undefined, { dateStyle: 'medium', ti
  */
 export function currentRpId() {
 	return window.location.hostname;
+}
+
+/**
+ * Which passkey this browser last keyed a stream with, so "make the key" can go straight to
+ * it — the same idea as `passkeyIdentity.js`'s pin for the passkey *account*, but its own
+ * slot: a passkey made here for stream keys must never become the passkey "Sign in" lands
+ * on, or signing in would open a different account. Reading falls back to the account's pin,
+ * though — reusing the passkey someone already signs in with is the natural default.
+ */
+const STREAM_KEY_STORAGE_KEY = 'mnemonad.streamKeyPasskey';
+
+/** @returns {?string} credential id of the passkey to use first, if this browser knows one */
+export function getRememberedStreamPasskey() {
+	try {
+		const stored = localStorage.getItem(STREAM_KEY_STORAGE_KEY);
+		if (stored) return stored;
+	} catch {
+		// Storage unavailable — fall through to the account pin, or to nothing.
+	}
+	return getRememberedPasskeyCredential()?.credentialId || null;
+}
+
+/** @param {string} credentialId */
+export function rememberStreamPasskey(credentialId) {
+	if (!credentialId) return;
+	try {
+		localStorage.setItem(STREAM_KEY_STORAGE_KEY, credentialId);
+	} catch {
+		// Next time just starts without a hint.
+	}
+}
+
+/** The way out of a wrong pin, like PasskeyCard's "Not this passkey?". The account's own pin
+ *  is left alone — it belongs to the Sign In dialog. */
+export function forgetStreamPasskey() {
+	try {
+		localStorage.removeItem(STREAM_KEY_STORAGE_KEY);
+	} catch {
+		// Nothing to undo.
+	}
 }
 
 /** Whether this browser can run a passkey ceremony at all. Actual PRF support is only

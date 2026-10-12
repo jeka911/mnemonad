@@ -32,10 +32,19 @@ each stream uses its own, so the account key and the stream keys never coincide.
 
 ## In the explorer
 
-**New stream → Encrypt → With a passkey**, then either *Use an existing passkey* or *Create a
-new passkey*. Creating asks the passkey first (to derive the key), then the wallet for the
-create transaction. A new passkey can ask twice on authenticators that don't return the PRF
-value at creation.
+**New stream → Encrypt → With a passkey** is two steps:
+
+1. **Create encryption key** (the fingerprint button) runs the passkey. Like the Sign In
+   dialog, it goes to the passkey this browser used last, and creates a new one when there
+   isn't one; a link underneath picks another passkey instead. A new passkey can ask twice on
+   authenticators that don't return the PRF value at creation.
+2. **Create** then asks only the wallet, for the transaction.
+
+The key can come first because stream ids are deterministic: the dialog picks the stream's
+salt up front, works out the id the create will produce, and derives the key for that id.
+Switch wallets in between and the key is dropped (another account means another id), so
+step 1 runs again. The passkey remembered for stream keys is kept apart from the Sign In
+dialog's, so using one here never changes which account a passkey sign-in opens.
 
 To unlock, the stream page asks for that passkey. Any wallet, or none, works: whoever holds
 the passkey can read the stream. Writing still needs on-chain write permission (the owner or
