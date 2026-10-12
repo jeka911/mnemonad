@@ -16,6 +16,12 @@ const AES_TAG_BYTES = 16;
 const KEK_DOMAIN = 'mnemonad:kek:v1';
 
 /**
+ * Domain separator for passkey-derived keys: both the PRF salt (see `passkeyKekSalt`) and
+ * the HKDF info string. Changing it invalidates every passkey-encrypted stream.
+ */
+const PASSKEY_KEK_DOMAIN = 'mnemonad:kek:passkey:v1';
+
+/**
  * Item ciphertext format version. Version 2 is framed (see below); version 1 was a single
  * GCM message per item and is not readable by this SDK.
  */
@@ -52,10 +58,11 @@ const PBKDF2_ITERATIONS = 600_000;
 
 /**
  * Client-side encryption companion for Mnemonad. Attached as `mnemonad.crypto` on every
- * instance; only "enabled" when a signer, a password, or an explicit AES key is supplied.
+ * instance; only "enabled" when a signer, a password, a passkey, or an explicit AES key is
+ * supplied.
  *
  * A random AES-256-GCM data key is always generated at `create()` time; what differs is
- * only *how it gets wrapped* — the key-encryption key (KEK). Two methods exist today:
+ * only *how it gets wrapped* — the key-encryption key (KEK). Three methods exist today:
  *
  *   - **Signature-based** (`signer`): the KEK is derived from the owner's own signature.
  *     No third-party key-server network, no delegation, and losing the signing key loses
@@ -68,11 +75,18 @@ const PBKDF2_ITERATIONS = 600_000;
  *     public (they have to live somewhere a reader can find them before ever entering a
  *     password, typically the stream's own cleartext metadata), so the password's strength
  *     and the iteration count are the *only* defenses against offline brute force.
+ *   - **Passkey-based** (`passkey`): the KEK is derived from a WebAuthn passkey's PRF
+ *     output, evaluated with a salt computed from the stream (see `passkeyKekSalt`). Not
+ *     owner-bound either — whoever holds the passkey can unwrap, whatever wallet they're
+ *     connected with — and there's nothing secret to publish, only which passkey and which
+ *     site (`rp.id`) it belongs to. The SDK never touches WebAuthn itself: the caller hands
+ *     in a provider that runs the ceremony (see the constructor's `passkey` param), so the
+ *     same code runs in Node, where there are no passkeys, with a test double.
  *
  * The wrapped key is stored on-chain in `encKeyWrapped`, opaque to the contract either way.
- * That field is also what a future provider (e.g. Lit Protocol, WebAuthn PRF) would
- * populate instead, with no contract change — `wrapAesKey`/`unwrapAesKey` only need *some*
- * 32-byte KEK, not a specific way of getting one.
+ * Any other provider (e.g. Lit Protocol) could populate it the same way, with no contract
+ * change — `wrapAesKey`/`unwrapAesKey` only need *some* 32-byte KEK, not a specific way of
+ * getting one.
  *
  * The data key is always random and merely *wrapped* by whichever KEK, never derived
  * straight from it — that indirection is what makes re-wrapping for a new owner (or a
@@ -101,6 +115,15 @@ export default class MnemonadCrypto {
 	 *   `MnemonadCrypto.DEFAULT_PBKDF2_ITERATIONS`. Persist whatever value was actually used
 	 *   alongside the salt — raising the default later must not change what an existing
 	 *   stream needs to unwrap.
+	 * @param {?Object} [params.passkey] - a WebAuthn PRF provider; an alternative to `signer`
+	 *   and `password` for deriving the key-encryption key:
+	 *   - `rpId` (string): the site the passkey belongs to — published in stream metadata so
+	 *     a reader knows where the stream can be unlocked.
+	 *   - `credentialId` (?string): base64url id of the passkey, when already known (always,
+	 *     when unlocking; not yet, when a new passkey is about to be created).
+	 *   - `evaluate(salt: Uint8Array)`: runs the ceremony and resolves to the 32-byte PRF
+	 *     output, or to `{output, credentialId}` when the ceremony is what picks (or creates)
+	 *     the passkey — that id is then what `getKekBlock()` publishes.
 	 * @param {boolean} [params.encrypt=false] - request encryption when creating a stream
 	 */
 	constructor(params = {}) {
@@ -115,14 +138,27 @@ export default class MnemonadCrypto {
 			throw new Error('crypto: password must not be empty');
 		}
 		// Rejected rather than resolved by precedence: `_deriveKek` has to pick one, and a
-		// caller who supplied both has no way to know which it picked — the failure would
+		// caller who supplied two has no way to know which it picked — the failure would
 		// only show up later as a key that the *other* method can't unwrap.
-		if (params.password && params.signer) {
+		const methods = [params.password && 'a password', params.signer && 'a signer', params.passkey && 'a passkey'].filter(Boolean);
+		if (methods.length > 1) {
 			throw new Error(
-				'crypto: pass either a password or a signer, not both — they derive different ' +
-				'key-encryption keys, and a stream can only be wrapped under one of them'
+				`crypto: pass only one of a password, a signer or a passkey (got ${methods.join(' and ')}) — ` +
+				'they derive different key-encryption keys, and a stream can only be wrapped under one of them'
 			);
 		}
+		if (params.passkey) {
+			if (typeof params.passkey.evaluate !== 'function') {
+				throw new Error('crypto: passkey must expose evaluate(salt)');
+			}
+			if (!params.passkey.rpId) {
+				throw new Error('crypto: passkey must carry the rpId (site) it belongs to');
+			}
+		}
+		/** @type {?{rpId: string, credentialId?: ?string, evaluate: Function}} */
+		this._passkey = params.passkey || null;
+		/** @type {?string} - the passkey actually used, once a ceremony has run */
+		this._passkeyCredentialId = params.passkey?.credentialId || null;
 		/** @type {?string} */
 		this._password = params.password || null;
 		/** @type {?Uint8Array} */
@@ -139,7 +175,7 @@ export default class MnemonadCrypto {
 	 * @returns {boolean}
 	 */
 	get isEnabled() {
-		return !!(this._signer || this._aesKey || this._password);
+		return !!(this._signer || this._aesKey || this._password || this._passkey);
 	}
 
 	/** @returns {number} The default PBKDF2 iteration count new password streams get. */
@@ -172,6 +208,27 @@ export default class MnemonadCrypto {
 	/** @param {Uint8Array} bytes @returns {string} 0x-prefixed hex */
 	static saltToHex(bytes) {
 		return `0x${toHex(bytes)}`;
+	}
+
+	/**
+	 * The PRF salt a passkey-encrypted stream's key is derived from. Computed from the
+	 * stream rather than stored: it binds the chain id, contract and stream id the same way
+	 * the signature method's message does, so one passkey yields a different key for every
+	 * stream and deployment, and there is nothing extra to publish or lose.
+	 *
+	 * @param {number|bigint} chainId
+	 * @param {string} contractAddress
+	 * @param {bigint|string|number} streamId
+	 * @returns {Uint8Array} 32 bytes — exactly what WebAuthn's PRF extension takes
+	 */
+	static passkeyKekSalt(chainId, contractAddress, streamId) {
+		const message = [
+			PASSKEY_KEK_DOMAIN,
+			`chainId:${chainId}`,
+			`contract:${contractAddress.toLowerCase()}`,
+			`stream:${BigInt(streamId).toString()}`,
+		].join('\n');
+		return sha256(new TextEncoder().encode(message));
 	}
 
 	/**
@@ -221,6 +278,11 @@ export default class MnemonadCrypto {
 	 *   - signature → `{method: 'signature'}`. Owner-bound, so there is nothing to publish
 	 *     beyond the method itself — the wallet is the secret, and everything the signed
 	 *     message binds (chain id, contract, stream id) is already on chain.
+	 *   - passkey → `{method: 'passkey', rpId, credentialId}`. Neither is secret: `rpId` says
+	 *     which site can run the ceremony at all (a passkey only works on the domain that
+	 *     created it), and `credentialId` lets the unlock prompt go straight to the right
+	 *     passkey instead of a picker. The salt isn't published — it's computed from the
+	 *     stream (`passkeyKekSalt`).
 	 *   - neither → `null`: an unencrypted stream, an instance holding only a raw `aesKey`,
 	 *     or a password-based one whose salt doesn't exist yet.
 	 *
@@ -230,7 +292,7 @@ export default class MnemonadCrypto {
 	 * reports what's actually in hand right now, which is why `Mnemonad.create()` reads it
 	 * only *after* `wrapAesKey()` has already run once for the stream being created.
 	 *
-	 * @returns {?{method: 'password'|'signature', salt?: string, iterations?: number}}
+	 * @returns {?{method: 'password'|'signature'|'passkey', salt?: string, iterations?: number, rpId?: string, credentialId?: string}}
 	 */
 	getKekBlock() {
 		// Same precedence `_deriveKek` itself uses, so the published marker can never
@@ -244,6 +306,11 @@ export default class MnemonadCrypto {
 			};
 		}
 		if (this._signer) return { method: 'signature' };
+		if (this._passkey) {
+			const block = { method: 'passkey', rpId: this._passkey.rpId };
+			if (this._passkeyCredentialId) block.credentialId = this._passkeyCredentialId;
+			return block;
+		}
 		return null;
 	}
 
@@ -302,7 +369,7 @@ export default class MnemonadCrypto {
 			const mismatch = new Error(
 				'crypto.unwrapAesKey: the derived key-encryption key does not match the one ' +
 				'this stream was wrapped with — wrong ' +
-				(this._password ? 'password (or salt/iterations)' : 'wallet') + '?'
+				(this._password ? 'password (or salt/iterations)' : this._passkey ? 'passkey' : 'wallet') + '?'
 			);
 			mismatch.code = 'KEK_MISMATCH';
 			mismatch.cause = err;
@@ -555,8 +622,8 @@ export default class MnemonadCrypto {
 		if (!ev.encKeyWrapped || ev.encKeyWrapped.length === 0) {
 			throw new Error('crypto: stream has no encryption key on-chain');
 		}
-		if (!this._signer && !this._password) {
-			throw new Error('crypto: a signer or password is required to unwrap the encryption key');
+		if (!this._signer && !this._password && !this._passkey) {
+			throw new Error('crypto: a signer, password or passkey is required to unwrap the encryption key');
 		}
 
 		this._aesKey = await this.unwrapAesKey(ev.encKeyWrapped);
@@ -570,7 +637,46 @@ export default class MnemonadCrypto {
 	 */
 	async _deriveKek(streamId = null) {
 		if (this._password) return await this._deriveKekFromPassword();
+		if (this._passkey) return await this._deriveKekFromPasskey(streamId);
 		return await this._deriveKekFromSignature(streamId);
+	}
+
+	/**
+	 * Derives the key-encryption key from a passkey's PRF output.
+	 *
+	 * The PRF salt comes from the stream (`passkeyKekSalt`), so it binds chain id, contract
+	 * and stream id exactly as the signature method's message does. The raw PRF output then
+	 * goes through HKDF like a signature does, so the wrapping key is never the passkey's
+	 * output itself.
+	 *
+	 * @param {?bigint} [streamId]
+	 * @returns {Promise<Uint8Array>}
+	 */
+	async _deriveKekFromPasskey(streamId = null) {
+		const ev = this._mnemonad;
+		const id = streamId ?? ev?.id;
+		if (id === null || id === undefined) {
+			throw new Error('crypto: a stream id is required to derive the key-encryption key');
+		}
+		// Same reasoning as the signature method: a missing binding wouldn't fail, it would
+		// silently derive a different key.
+		if (ev?.chainId === null || ev?.chainId === undefined || !ev?.contractAddress) {
+			throw new Error(
+				'crypto: chainId/contractAddress unknown — initialize() the stream before deriving a ' +
+				'passkey-based key, or the derived key will not match the one it was wrapped with'
+			);
+		}
+
+		const salt = MnemonadCrypto.passkeyKekSalt(ev.chainId, ev.contractAddress, id);
+		const result = await this._passkey.evaluate(salt);
+		const output = result instanceof Uint8Array ? result : result?.output;
+		if (!(output instanceof Uint8Array) || output.length !== 32) {
+			throw new Error('crypto: passkey.evaluate() must resolve to the 32-byte PRF output');
+		}
+		if (!(result instanceof Uint8Array) && result.credentialId) {
+			this._passkeyCredentialId = result.credentialId;
+		}
+		return hkdf(sha256, output, undefined, new TextEncoder().encode(PASSKEY_KEK_DOMAIN), AES_KEY_BYTES);
 	}
 
 	/**
@@ -585,7 +691,7 @@ export default class MnemonadCrypto {
 	 */
 	async _deriveKekFromSignature(streamId = null) {
 		if (!this._signer) {
-			throw new Error('crypto: a signer or password is required to derive the key-encryption key');
+			throw new Error('crypto: a signer, password or passkey is required to derive the key-encryption key');
 		}
 		const ev = this._mnemonad;
 		const id = streamId ?? ev?.id;

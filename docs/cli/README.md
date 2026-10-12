@@ -113,11 +113,12 @@ Every command prints the installed CLI version as its first line of output.
 | `--exclude <p1,p2>` | Extra exclude patterns (comma-separated) |
 | `--no-compress` | Disable gzip compression |
 | `--encrypt` | Create a new stream encrypted. Only applies when creating; ignored for existing streams |
-| `--encrypt-with <method>` | How to key it: `password` (needs `--password`), or `wallet` — the `--key`/`--phrase` account signs for it, and only that account can ever decrypt it. Implied by `--password` |
+| `--encrypt-with <method>` | How to key it: `password` (needs `--password`), or `wallet` — the `--key`/`--phrase` account signs for it, and only that account can ever decrypt it. Implied by `--password`. Passkey-encrypted streams are made in the explorer; the CLI can't unlock them yet and says so ([details](../encryption/passkey.md)) |
 | `--password <pw>` | Password to encrypt a new stream with, or decrypt an existing one |
 | `--pinata-jwt <jwt>` | Pinata JWT for IPFS offload of large files (or `PINATA_JWT` env var) |
-| `--manifest` | Write/use `.mnemonad` manifest for faster change detection. With no stream-id given, every command recovers it from an existing `.mnemonad` in the folder instead of requiring it explicitly |
+| `--manifest` | Write `.mnemonad` into the folder (stream id, version, file hashes) for faster change detection. A folder that already has one is used automatically when no stream-id is given, and kept current, with or without this flag |
 | `--force-snapshot` | Push a full snapshot regardless of prior history (repairs a corrupt stream) |
+| `--detach` | `push`: build the next version here, send it from a background process, and return right away. With `--index`, indexing and building move to the background too. Existing streams only. See "Push in the background" below |
 | `--index` | `push`/`watch`: update the folder's search index before every push (takes `--db`/`--model`/`--chunk-size`/`--chunk-overlap`); if indexing fails, nothing is pushed |
 | `--poll-interval <s>` | `watch`: seconds between remote version checks (default: `2`) |
 | `--debounce <ms>` | `watch`: quiet period in ms before pushing after a local change (default: `1000`) |
@@ -230,7 +231,7 @@ mnemonad pull 123 ~/restored --version 1
 ### Inspect a stream
 
 ```bash
-# check your wallet + chain (no stream id needed)
+# check your wallet, its MON balance, and the chain (no stream id needed)
 mnemonad info
 
 # full stream metadata + local sync status
@@ -240,6 +241,7 @@ mnemonad info 123 ~/my-data
 ```
   chain:           testnet
   your wallet:     0x06bc6420b37a4898424429dcfa236f0065e12279
+  balance:         4.2183 MON
 
 stream: 0x68d9736257f0d2da3c848666a4b36c4b9f18eda7e4dfba655599c47560d8a4b5
   owner:           0x06bc6420b37a4898424429dcfa236f0065e12279 (you)
@@ -283,21 +285,28 @@ mnemonad push 123 ~/my-data --manifest
 ```
 
 `--manifest` writes `.mnemonad` into the folder, recording the stream id, version and file
-hashes. With it, later commands on the same folder don't need the id typed again:
+hashes. After that, later commands on the same folder don't need the id typed again, with or
+without the flag:
 
 ```bash
-mnemonad push ~/my-data --manifest          # no id — read from .mnemonad
-mnemonad pull ~/my-data --manifest          # same
-mnemonad diff ~/my-data --manifest          # same
+mnemonad push ~/my-data           # no id — read from .mnemonad
+mnemonad pull ~/my-data           # same
+mnemonad watch ~/my-data          # same
+#   using stream id from .mnemonad manifest: 0x68d9…
 ```
 
-If no id is given and there's no `.mnemonad` yet (or `--manifest` wasn't passed), the usual
-`stream-id is required` error is thrown.
+A command that finds the id this way also keeps `.mnemonad` current, as `--manifest` would.
 
-`info` is the one exception that doesn't require `--manifest` to react to a manifest: being
-read-only, it always peeks at `.mnemonad` in `<path>` and reports what it finds — a note that
-one's available (with its id) if you left `--manifest` off, or a note if the id you gave
-doesn't match the one recorded in the folder's own manifest.
+This includes `push`: a folder that has a `.mnemonad` pushes to its own stream, never a new
+one. To start a new stream from that folder, delete `.mnemonad` first.
+
+If no id is given and there's no `.mnemonad`, the command stops with
+`stream-id is required for <command> — pass it, or run this on a folder that has a .mnemonad manifest`.
+(`push` is the exception: with neither, it creates a new stream.)
+
+An id given on the command line always wins over the manifest. `info` also notes when the id
+you gave doesn't match the one recorded in the folder's own manifest. `burn` never reads a
+manifest: it only destroys a stream whose id you typed.
 
 ### Watch a folder (auto push + pull)
 
@@ -348,6 +357,68 @@ mnemonad burn 123
 
 mnemonad burn 123 --yes
 ```
+
+### Push in the background
+
+A push spends most of its time waiting for the chain. `--detach` does everything that can
+fail for your own reasons first, here and now: the owner check, unlocking, `--index`, "no
+changes", and the balance against the estimated cost. Then it hands only the sending to a
+background process and returns:
+
+```bash
+mnemonad push ~/my-data --manifest --detach
+#   version 8 prepared (diff, gzip compressed, 2.1 KB)
+#   estimated cost: 0.0041 MON
+#   stream: 0x68d9…
+#   sending in the background: job 8f3c1a2b (pid 41210)
+#   log:   ~/.cache/mnemonad/jobs/8f3c1a2b/push.log
+#   check: mnemonad info ~/my-data --manifest
+```
+
+- **The version is frozen when the command runs.** Edits made after it returns go into the
+  next push, not this one.
+- **Existing streams only.** It needs a stream id, or a folder that has a `.mnemonad`. Create a stream with a normal push first. `--passkey` can't be used: the browser
+  tab that signs for it closes when the command exits.
+- **The next command waits for it.** A `push`, `pull`, `compact` or `watch` of the same stream
+  waits until the background push has finished, so nothing builds on, or restores, the version
+  before it. A push from the same wallet to another stream waits too, so the two don't race for
+  one nonce. `diff` only notes that a push is still sending.
+- **Results:** `mnemonad info <path>` shows the last background push for the stream, and when
+  it failed, why. If one fails, the next command on that stream also prints a warning, once.
+- **Nothing half-lands.** The background process refuses to send a version whose base is gone
+  (the stream changed after it was prepared), and the contract rejects any write that doesn't
+  land at the index it names. A failed background push leaves the stream as it was. Push again.
+- **Secrets stay in memory.** The key, the password and a Pinata JWT are handed to the
+  background process over a pipe. They are never written to the job folder, the log, or the
+  process list.
+- If the background process is killed mid-send, the job is reported as failed the next time a
+  command looks at it. A large push that was staged over several transactions, or paid for an
+  IPFS upload, can't be resumed. A paid but unused upload can be refunded after the gateway's
+  time limit, with the SDK's `MnemonadUploadGateway.refund()` (the CLI has no command for it).
+
+**With `--index`, indexing goes to the background too.** The updated index is part of the
+version being pushed, so the version can only be built once indexing is done, and sent once
+it is built. `push --detach --index` therefore hands off all three, and returns after only the
+checks that need no folder scan: the signer owns the stream, the credential unlocks it, and the
+wallet isn't empty.
+
+```bash
+mnemonad push ~/my-data --manifest --index --detach
+#   stream: 0x68d9…
+#   indexing, building and sending in the background: job 3b9e07c1 (pid 41388)
+```
+
+The trade-offs, compared with a plain `--detach`:
+
+- No version number, size or cost estimate is printed. `mnemonad info` shows them once the job
+  has built the version, and shows "no changes, nothing pushed" if the folder already matched.
+- An indexing error, a model download that fails, and "no changes" show up in the job's status,
+  not in the terminal.
+- The folder is not frozen when the command runs. The job reads it when it starts building, so
+  edits made before then are part of this version.
+
+Jobs live in `~/.cache/mnemonad/jobs/` (set `MNEMONAD_JOBS_DIR` to move them). Finished ones are
+removed after 14 days.
 
 ### Repair a corrupt stream with a force snapshot
 

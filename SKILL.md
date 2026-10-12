@@ -485,6 +485,7 @@ mnemonad compact 0x68d97362... ~/data
 | **"stream-id is required for ..."** | Command needs a stream id | Pass it first: `mnemonad pull 0x... ~/dest` |
 | **"This stream is encrypted with a password. Provide --password to decrypt."** | Password-keyed stream, no password given | Add `--password <pw>` |
 | **"This stream is encrypted to its owner's wallet."** | Wallet-keyed stream, wrong or missing key | Use the owning account's key via `--key` / `--phrase` / `MNEMONAD_KEY` |
+| **"This stream is encrypted with a passkey, which the CLI can't unlock yet."** | Passkey-keyed stream (made in the explorer) | Nothing to retry from the CLI — tell the user to open it in the explorer at the site the message names |
 | **"Could not decrypt this stream"** | Credential is the right *kind* but the wrong one | Wrong password, or a key that isn't the stream's owner |
 | **"stream 0x... is owned by 0x... but you are signing as 0x..."** | Pushing to someone else's stream | Use the owner's key, or push with no id to create your own |
 | **"--encrypt needs a method"** | `--encrypt` alone | Add `--encrypt-with password` (with `--password`) or `--encrypt-with wallet` |

@@ -91,7 +91,7 @@
 				     directly. -->
 				<GradientButton
 					v-if="isLocked"
-					:label="kekMethod === 'password' ? 'Unlock' : 'Unlock with wallet'"
+					:label="kekMethod === 'password' ? 'Unlock' : kekMethod === 'passkey' ? 'Unlock with passkey' : 'Unlock with wallet'"
 					size="sm"
 					class="q-mt-sm"
 					@click="$emit('unlock-requested')"
@@ -230,13 +230,13 @@ export default {
 			if (this.walletStore.wrongNetwork) return `Switch to ${this.activeNetwork.label} to add items.`;
 			if (!this.canWrite) return "Only the stream's owner or an approved writer can add items.";
 			if (!this.hasUsableKey) {
-				return this.kekMethod === 'password'
-					? 'Unlock this stream (enter its password) before adding items.'
-					: "Unlock this stream (sign with the owner's wallet) before adding items.";
+				if (this.kekMethod === 'password') return 'Unlock this stream (enter its password) before adding items.';
+				if (this.kekMethod === 'passkey') return 'Unlock this stream (confirm with its passkey) before adding items.';
+				return "Unlock this stream (sign with the owner's wallet) before adding items.";
 			}
 			return '';
 		},
-		// Which credential this stream needs — 'password' or 'signature'. See
+		// Which credential this stream needs — 'password', 'signature' or 'passkey'. See
 		// mnemonad/kek.js for why an encrypted stream with no published `kek` block reads as
 		// the signature method rather than as an unknown one.
 		kekMethod: function() {

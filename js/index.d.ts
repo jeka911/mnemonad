@@ -131,6 +131,11 @@ export interface MnemonadParams {
 	/** PBKDF2 iteration count. Defaults to `MnemonadCrypto.DEFAULT_PBKDF2_ITERATIONS`. */
 	passwordIterations?: number;
 	/**
+	 * WebAuthn PRF provider; the third alternative to `signer`/`password`. Supplying more
+	 * than one of the three throws. See `MnemonadPasskey`.
+	 */
+	passkey?: MnemonadPasskey | null;
+	/**
 	 * Largest slice fetched per read call. Default 512 KB — inside Monad's 8 MB
 	 * per-transaction memory cap, which is what bounds a one-shot read rather than gas.
 	 */
@@ -427,6 +432,9 @@ export declare class MnemonadCrypto {
 	static generatePasswordSalt(): Uint8Array;
 	/** 0x-prefixed hex encoding of raw salt bytes. */
 	static saltToHex(bytes: Uint8Array): string;
+	/** The 32-byte PRF salt a passkey-encrypted stream's key derives from — computed from
+	 *  chain id, contract and stream id, never stored. */
+	static passkeyKekSalt(chainId: number | bigint, contractAddress: string, streamId: bigint | string | number): Uint8Array;
 	setAesKey(key: Uint8Array): void;
 	getAesKey(): Uint8Array | null;
 	/** The salt in use for password-based key derivation, if any. */
@@ -435,8 +443,9 @@ export declare class MnemonadCrypto {
 	 *  instance isn't using the password method at all. */
 	getPasswordIterations(): number | null;
 	/** This instance's stream-metadata `kek` block — `{method:'password', salt, iterations}`,
-	 *  `{method:'signature'}`, or `null` when there is nothing to publish (no credential, or
-	 *  a password whose salt doesn't exist yet). Never generates a salt as a side effect. */
+	 *  `{method:'signature'}`, `{method:'passkey', rpId, credentialId}`, or `null` when there
+	 *  is nothing to publish (no credential, or a password whose salt doesn't exist yet).
+	 *  Never generates a salt as a side effect. */
 	getKekBlock(): StreamMetaKek | null;
 	/** The password-method half of `getKekBlock()`, under its original name. */
 	getPasswordKek(): StreamMetaKek | null;
@@ -558,6 +567,12 @@ export declare class Mnemonad {
 	 * when the signature doesn't unwrap the key (typically the wrong wallet).
 	 */
 	unlockWithSignature(signer: MnemonadSigner): Promise<Uint8Array>;
+	/**
+	 * Unlocks a passkey-encrypted stream in place: runs the ceremony `passkey` wraps, unwraps
+	 * `encKeyWrapped`, and adopts the key on `this.crypto`. Independent of any wallet. Throws
+	 * with `code === 'KEK_MISMATCH'` when it's a different passkey.
+	 */
+	unlockWithPasskey(passkey: MnemonadPasskey): Promise<Uint8Array>;
 	owner(): Promise<string>;
 	/**
 	 * Whether `address` (default: this instance's configured sender) can append to this
@@ -649,11 +664,30 @@ export declare class Mnemonad {
  *  signature-encrypted stream publishes just the method; older ones published nothing at
  *  all, which is why `kekMethodOf` exists. */
 export interface StreamMetaKek {
-	method: 'password' | 'signature' | string;
+	method: 'password' | 'signature' | 'passkey' | string;
 	/** Password method only. */
 	salt?: string;
 	/** Password method only. */
 	iterations?: number;
+	/** Passkey method only: the site (`rp.id`) the passkey belongs to. */
+	rpId?: string;
+	/** Passkey method only: base64url credential id of the passkey. */
+	credentialId?: string;
+}
+
+/**
+ * A WebAuthn PRF provider for the passkey KEK method. The SDK never calls WebAuthn itself;
+ * the caller runs the ceremony (e.g. with Mera's `getPasskeyPrfOutput`) inside `evaluate`.
+ */
+export interface MnemonadPasskey {
+	/** The site the passkey belongs to — published in stream metadata. */
+	rpId: string;
+	/** The passkey's base64url credential id, when already known. */
+	credentialId?: string | null;
+	/** Runs the ceremony with `salt` (32 bytes, see `MnemonadCrypto.passkeyKekSalt`) and
+	 *  resolves to the 32-byte PRF output — or to `{output, credentialId}` when the ceremony
+	 *  is what picks or creates the passkey. */
+	evaluate(salt: Uint8Array): Promise<Uint8Array | { output: Uint8Array; credentialId?: string }>;
 }
 
 /** Anything able to produce an EIP-191 (`personal_sign`) signature — a viem Account, a viem
@@ -686,7 +720,7 @@ export declare function decodeStreamMeta(bytes?: Uint8Array | null): {
 export declare function kekMethodOf(params: {
 	kek?: StreamMetaKek | null;
 	encrypted: boolean;
-}): 'password' | 'signature' | string | null;
+}): 'password' | 'signature' | 'passkey' | string | null;
 
 /**
  * Encodes an item's `{name, type}` metadata into its opaque on-chain `meta` bytes, gzipped

@@ -201,7 +201,7 @@ describe('creation and key material', () => {
 	it('refuses a password and a signer together', () => {
 		expect(() =>
 			new Mnemonad(baseParams({ id: 1n, signer: clients.walletClient, password: 'pw' }))
-		).toThrow(/not both/);
+		).toThrow(/only one of/);
 	});
 
 	it('replaces the key on rewrap', async () => {

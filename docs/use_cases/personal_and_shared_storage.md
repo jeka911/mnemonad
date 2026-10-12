@@ -240,7 +240,29 @@ Before you rely on a passkey account, know these limits:
 - **The account belongs to the explorer's domain.** A passkey works only on the site that created it, so a passkey account exists only on [mnemonad.vercel.app](https://mnemonad.vercel.app).
 - **The authenticator must support the WebAuthn PRF extension.** Not every one does: some password managers do not support it yet. When yours does not, the explorer says so, and you can use another authenticator, such as the passkey built into your device.
 
-For details, see [Passkey-derived accounts](../wallet/passkey-accounts.md), [encryption with a passkey account](../encryption/passkey.md), and [CLI + passkey](../wallet/cli-passkey.md).
+For details, see [Passkey-derived accounts](../wallet/passkey-accounts.md), [encryption with a passkey account](../encryption/passkey-account.md), and [CLI + passkey](../wallet/cli-passkey.md).
+
+## Passkey-encrypted streams
+
+You can also key one stream to a passkey while you stay signed in with your usual wallet. In the explorer, choose **New stream → Encrypt → With a passkey**. The passkey derives the stream's key; the wallet only signs and pays for the create transaction.
+
+Conceptually:
+
+```text
+passkey (Face ID, Touch ID, …)
+  ↓  WebAuthn PRF, with a salt computed from the stream
+KEK
+  ↓
+data key → decrypt stream
+```
+
+This separates the data from the wallet:
+
+- **Any wallet can read it, if you have the passkey.** Switch wallets, or open the stream with no wallet connected, and the passkey still unlocks it. Writing still needs the owner or an approved writer.
+- **Each stream gets its own key.** The same passkey gives an unrelated key for every stream.
+- **It works only in the explorer, on the site that made the passkey.** The CLI can't unlock passkey streams yet, and a stream encrypted on [mnemonad.vercel.app](https://mnemonad.vercel.app) opens only there.
+
+The limits are the same as for passkey accounts: no recovery if the passkey is lost, and the authenticator must support PRF. See [Passkey-based encryption](../encryption/passkey.md).
 
 ## Same API after unlocking
 

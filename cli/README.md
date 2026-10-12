@@ -113,7 +113,7 @@ Every command prints the installed CLI version as its first line of output.
 | `--exclude <p1,p2>` | Extra exclude patterns (comma-separated) |
 | `--no-compress` | Disable gzip compression |
 | `--encrypt` | Create a new stream encrypted. Only applies when creating; ignored for existing streams |
-| `--encrypt-with <method>` | How to key it: `password` (needs `--password`), or `wallet` — the `--key`/`--phrase` account signs for it, and only that account can ever decrypt it. Implied by `--password` |
+| `--encrypt-with <method>` | How to key it: `password` (needs `--password`), or `wallet` — the `--key`/`--phrase` account signs for it, and only that account can ever decrypt it. Implied by `--password`. Passkey-encrypted streams are made in the explorer; the CLI can't unlock them yet and says so ([details](../docs/encryption/passkey.md)) |
 | `--password <pw>` | Password to encrypt a new stream with, or decrypt an existing one |
 | `--pinata-jwt <jwt>` | Pinata JWT for IPFS offload of large files (or `PINATA_JWT` env var) |
 | `--manifest` | Write `.mnemonad` into the folder (stream id, version, file hashes) for faster change detection. A folder that already has one is used automatically when no stream-id is given, and kept current, with or without this flag |

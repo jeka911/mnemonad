@@ -24,7 +24,12 @@
 					<CopyableCommand :command="pullCommand" />
 				</div>
 
-				<p v-if="encrypted" class="hint hint--warning">
+				<p v-if="encrypted && kekMethod === 'passkey'" class="hint hint--warning">
+					This stream is encrypted with a passkey, which the CLI can't use yet — the pull
+					comes down still encrypted. Browse it here instead, after unlocking it with
+					that passkey.
+				</p>
+				<p v-else-if="encrypted" class="hint hint--warning">
 					This stream is encrypted{{ kekMethod === 'password' ? ' with a password' : " to its owner's wallet" }} —
 					<template v-if="kekMethod === 'password'">add <code>--password &lt;password&gt;</code> to the command above,</template>
 					<template v-else>run the pull using the account that created it,</template>

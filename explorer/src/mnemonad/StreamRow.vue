@@ -8,7 +8,9 @@
 			<!-- Only when a title took its place as the label: a sample is still a real
 			     stream, and its id is what you'd hand to `mnemonad pull`. -->
 			<span v-if="title" class="stream-row__id">{{ formattedId }}</span>
-			<q-icon v-if="encrypted" name="lock" size="14px" class="stream-row__lock" />
+			<q-icon v-if="encrypted" :name="kekMethod === 'passkey' ? 'fingerprint' : 'lock'" size="14px" class="stream-row__lock">
+				<q-tooltip>{{ lockLabel }}</q-tooltip>
+			</q-icon>
 			<span v-if="count !== null">{{ count }} {{ countLabel }}</span>
 			<q-skeleton v-else-if="loading" type="text" width="48px" />
 		</span>
@@ -51,8 +53,16 @@ export default {
 		/** Shows a placeholder where the count will land. */
 		loading: { type: Boolean, default: false },
 		encrypted: { type: Boolean, default: false },
+		/** 'password' | 'signature' | 'passkey' — which credential unlocks it, when known. */
+		kekMethod: { type: String, default: null },
 	},
 	computed: {
+		lockLabel: function() {
+			if (this.kekMethod === 'password') return 'Encrypted with a password';
+			if (this.kekMethod === 'passkey') return 'Encrypted with a passkey';
+			if (this.kekMethod === 'signature') return "Encrypted to the owner's wallet";
+			return 'Encrypted';
+		},
 		// Both lists this row appears in are lists of the network the app is on, which is
 		// what streamPath() defaults to — no list has to pass one in.
 		href: function() {

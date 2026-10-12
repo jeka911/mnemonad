@@ -42,6 +42,28 @@
 					</p>
 				</template>
 
+				<template v-if="encrypt && encryptWith === 'passkey'">
+					<q-option-group
+						v-model="passkeyMode"
+						:options="passkeyModeOptions"
+						color="primary"
+						dense
+						inline
+						:disable="mnemonadStore.creating"
+					/>
+					<p class="hint hint--warning">
+						Whoever holds this passkey can decrypt the stream, whatever wallet they use —
+						and only on {{ rpId }}: a passkey belongs to the site that created it. There
+						is no recovery: lose the passkey (and every device it synced to) and the
+						contents are permanently unreadable.
+					</p>
+					<p class="hint">
+						Your passkey is asked first, to derive the key; then your wallet, for the
+						create transaction. Which passkey it was and the site it belongs to stay in
+						the clear in stream metadata, so it can be found again to unlock.
+					</p>
+				</template>
+
 				<template v-if="encrypt && encryptWith === 'password'">
 					<q-input
 						v-model="password"
@@ -87,7 +109,7 @@
 				</p>
 				<GradientButton
 					label="Create"
-					:loading-label="creatingStep === 'sign' ? 'Check your wallet to sign...' : 'Creating...'"
+					:loading-label="loadingLabel"
 					:loading="mnemonadStore.creating"
 					:disable="walletStore.wrongNetwork || (encrypt && encryptWith === 'password' && !isPasswordValid)"
 					@click="submit"
@@ -108,6 +130,7 @@ import GradientButton from '../components/GradientButton.vue';
 import { useWalletStore } from '../stores/wallet.js';
 import { useMnemonadStore } from '../stores/mnemonad.js';
 import { getActiveNetwork } from '../settings.js';
+import { currentRpId, passkeysAvailable } from '../wallet/passkeyPrf.js';
 
 const MIN_PASSWORD_LENGTH = 8;
 
@@ -131,13 +154,16 @@ export default {
 			encrypt: false,
 			// Which credential keys the stream. Password is the default because it's the
 			// recoverable-by-anyone-who-knows-it option; wallet trades that for a key nobody
-			// but this account can derive.
+			// but this account can derive; passkey for a key nobody but that passkey can.
 			encryptWith: 'password',
+			/** For the passkey method: use a passkey this site already has, or make one. */
+			passkeyMode: 'existing',
+			rpId: currentRpId(),
 			password: '',
 			confirmPassword: '',
 			passwordTouched: false,
 			confirmTouched: false,
-			/** 'sign' | 'tx' — which wallet prompt the create flow is waiting on. */
+			/** 'sign' | 'passkey' | 'tx' — which prompt the create flow is waiting on. */
 			creatingStep: null,
 		};
 	},
@@ -158,10 +184,23 @@ export default {
 			return !this.passwordError && !this.confirmError;
 		},
 		methodOptions() {
-			return [
+			const options = [
 				{ label: 'With a password', value: 'password' },
 				{ label: "With this wallet's signature", value: 'wallet' },
 			];
+			if (passkeysAvailable()) options.push({ label: 'With a passkey', value: 'passkey' });
+			return options;
+		},
+		passkeyModeOptions() {
+			return [
+				{ label: 'Use an existing passkey', value: 'existing' },
+				{ label: 'Create a new passkey', value: 'create' },
+			];
+		},
+		loadingLabel() {
+			if (this.creatingStep === 'sign') return 'Check your wallet to sign...';
+			if (this.creatingStep === 'passkey') return 'Confirm with your passkey...';
+			return 'Creating...';
 		},
 	},
 	methods: {
@@ -177,6 +216,7 @@ export default {
 					name: this.name,
 					encryptWith: this.encrypt ? this.encryptWith : null,
 					password: this.encrypt && this.encryptWith === 'password' ? this.password : undefined,
+					passkeyMode: this.passkeyMode,
 					// Two wallet prompts for the wallet method (key signature, then the
 					// transaction) — this keeps the button honest about which one is up.
 					onStep: (step) => { this.creatingStep = step; },
@@ -189,13 +229,15 @@ export default {
 				// deterministic, so retrying re-derives the identical key.
 				const rejected = error?.name === 'UserRejectedRequestError'
 					|| /user rejected|denied/i.test(error?.shortMessage || error?.message || '');
-				this.$q.notify({
-					type: 'negative',
-					message: rejected
-						? (this.creatingStep === 'sign' ? 'Signature rejected — nothing was created.' : 'Transaction rejected — nothing was created.')
-						: (error?.shortMessage || error?.message || 'Failed to create stream'),
-					position: 'top',
-				});
+				// A passkey failure always lands before the transaction, so nothing exists yet
+				// either; its message is already worded for the user (see passkeyPrf.js).
+				let message = error?.shortMessage || error?.message || 'Failed to create stream';
+				if (this.creatingStep === 'passkey') {
+					message = `${message} Nothing was created.`;
+				} else if (rejected) {
+					message = this.creatingStep === 'sign' ? 'Signature rejected — nothing was created.' : 'Transaction rejected — nothing was created.';
+				}
+				this.$q.notify({ type: 'negative', message, position: 'top' });
 			} finally {
 				this.creatingStep = null;
 			}
@@ -204,6 +246,7 @@ export default {
 			this.name = '';
 			this.encrypt = false;
 			this.encryptWith = 'password';
+			this.passkeyMode = 'existing';
 			this.password = '';
 			this.confirmPassword = '';
 			this.passwordTouched = false;

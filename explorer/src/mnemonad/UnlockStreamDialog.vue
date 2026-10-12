@@ -25,6 +25,30 @@
 						@click="submitUnlock"
 					/>
 				</template>
+				<!-- Passkey streams don't involve the wallet at all, so this branch comes before
+				     the "connected?" check: someone signed out can still unlock one. -->
+				<template v-else-if="kekMethod === 'passkey'">
+					<template v-if="passkeyElsewhere">
+						<p class="unlock-hint">
+							This stream is encrypted with a passkey that belongs to
+							<strong>{{ passkeyRpId }}</strong>. A passkey only works on the site that
+							created it, so open this stream there to unlock it.
+						</p>
+					</template>
+					<template v-else>
+						<p class="unlock-hint">
+							This stream is encrypted with a passkey. Confirm with it to derive the
+							key — any wallet (or none) is fine, and nothing leaves your browser.
+						</p>
+						<p v-if="unlockError" class="unlock-error">{{ unlockError }}</p>
+						<GradientButton
+							label="Unlock with passkey"
+							loading-label="Confirm with your passkey..."
+							:loading="unlocking"
+							@click="submitUnlock"
+						/>
+					</template>
+				</template>
 				<template v-else-if="walletStore.isConnected">
 					<p v-if="isPasskeySession" class="unlock-hint">
 						This stream is encrypted to its owner's passkey-derived wallet — click
@@ -69,6 +93,7 @@ import { useWalletStore } from '../stores/wallet.js';
 import { useMnemonadStore } from '../stores/mnemonad.js';
 import { methodOf } from './kek.js';
 import { PASSKEY_CONNECTOR_NAME } from '../wallet/passkeyConnector.js';
+import { currentRpId } from '../wallet/passkeyPrf.js';
 
 /**
  * The unlock dialog shared by Stream.vue and FileBrowser.vue (previously two near-identical
@@ -127,6 +152,17 @@ export default {
 		// doesn't care what kind of signer it's handed); this only changes the wording so
 		// someone connected via a passkey isn't told to "sign a prompt" as if it were an
 		// extension popup.
+		// The site a passkey stream's passkey belongs to — gated on `modelValue` for the same
+		// reason `kekMethod` is.
+		passkeyRpId: function() {
+			if (!this.modelValue || this.kekMethod !== 'passkey') return null;
+			return this.stream?.streamMeta?.kek?.rpId || null;
+		},
+		// A passkey can't run on any other domain, so trying would only fail with WebAuthn's
+		// generic error. Saying where the stream can be opened is the useful answer.
+		passkeyElsewhere: function() {
+			return !!this.passkeyRpId && this.passkeyRpId !== currentRpId();
+		},
 		isPasskeySession: function() {
 			return this.walletStore.connectorName === PASSKEY_CONNECTOR_NAME;
 		},
@@ -158,6 +194,8 @@ export default {
 			try {
 				if (this.kekMethod === 'password') {
 					await this.stream.unlockWithPassword(this.unlockPassword);
+				} else if (this.kekMethod === 'passkey') {
+					await this.mnemonadStore.unlockStreamWithPasskey(this.stream);
 				} else {
 					// The store checks ownership before prompting, so the common "wrong account
 					// connected" case never costs the user a popup.
@@ -166,9 +204,17 @@ export default {
 				this.$emit('unlocked');
 				this.$emit('update:modelValue', false);
 			} catch (error) {
-				this.unlockError = this.kekMethod === 'password'
-					? 'Incorrect password.'
-					: (error?.message || 'Could not unlock with this wallet.');
+				if (this.kekMethod === 'password') {
+					this.unlockError = 'Incorrect password.';
+				} else if (this.kekMethod === 'passkey') {
+					// WebAuthn reports "not on this device" and "cancelled" identically, so the
+					// hint covers both rather than guessing.
+					this.unlockError = error?.code === 'KEK_MISMATCH'
+						? "That passkey isn't the one this stream was encrypted with."
+						: `${error?.message || 'Could not unlock with a passkey.'} If this device doesn't have the passkey the stream was encrypted with, open it on one that does.`;
+				} else {
+					this.unlockError = error?.message || 'Could not unlock with this wallet.';
+				}
 			} finally {
 				this.unlocking = false;
 			}

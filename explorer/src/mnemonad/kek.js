@@ -20,7 +20,7 @@ export function isEncrypted(stream) {
 
 /**
  * @param {?Object} stream - a live `Mnemonad` instance (post-`initialize()`)
- * @returns {?('password'|'signature'|string)} `null` when the stream isn't encrypted
+ * @returns {?('password'|'signature'|'passkey'|string)} `null` when the stream isn't encrypted
  */
 export function methodOf(stream) {
 	if (!stream) return null;
@@ -34,7 +34,7 @@ export function isUnlocked(stream) {
 
 /**
  * Whether the stream still needs a credential before its items can be read or written.
- * Method-agnostic on purpose — both methods have an unlock affordance now.
+ * Method-agnostic on purpose — every method has an unlock affordance now.
  */
 export function isLocked(stream) {
 	return isEncrypted(stream) && !isUnlocked(stream);
@@ -51,5 +51,8 @@ export function hasUsableKey(stream) {
 
 /** Short label for the credential this stream needs, for buttons and lock icons. */
 export function methodLabel(stream) {
-	return methodOf(stream) === 'password' ? 'password' : 'owner wallet';
+	const method = methodOf(stream);
+	if (method === 'password') return 'password';
+	if (method === 'passkey') return 'passkey';
+	return 'owner wallet';
 }

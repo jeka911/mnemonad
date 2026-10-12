@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { resolvePath, formatStreamId, streamIdsEqual, discoverStreamId, writeManifest, parseQualifiedStreamId } from '../lib/commands/shared.js';
+import { resolvePath, formatStreamId, streamIdsEqual, discoverStreamId, writeManifest, parseQualifiedStreamId, resolveEncryptMethod, unlockStream } from '../lib/commands/shared.js';
 
 describe('resolvePath', () => {
 	it('throws a friendly, actionable error instead of falling back to cwd when path is missing', () => {
@@ -222,3 +222,32 @@ describe('parseQualifiedStreamId', () => {
 		expect(parseQualifiedStreamId(123)).toBe(null);
 	});
 });
+
+describe('passkey-encrypted streams', () => {
+	/** Just enough of a Mnemonad for unlockStream to read the method off. */
+	function passkeyStream(kek = { method: 'passkey', rpId: 'mnemonad.vercel.app', credentialId: 'abc' }) {
+		return {
+			initialize: async () => {},
+			isEncrypted: async () => true,
+			streamMeta: { kek },
+			unlockWithSignature: async () => { throw new Error('must not be tried'); },
+			unlockWithPassword: async () => { throw new Error('must not be tried'); },
+		};
+	}
+
+	it('refuses to create one from the CLI, pointing at the explorer', () => {
+		expect(() => resolveEncryptMethod({ encrypt: true, encryptWith: 'passkey' })).toThrow(/explorer/);
+	});
+
+	it('stops with a clear message instead of trying the wallet key', async () => {
+		const err = await unlockStream(passkeyStream(), { signer: {}, password: null }).catch((e) => e);
+		expect(err.message).toMatch(/encrypted with a passkey/);
+		expect(err.message).toContain('https://mnemonad.vercel.app');
+	});
+
+	it('still says something useful when the stream names no site', async () => {
+		const err = await unlockStream(passkeyStream({ method: 'passkey' }), {}).catch((e) => e);
+		expect(err.message).toMatch(/Open it in the explorer and unlock it/);
+	});
+});
+

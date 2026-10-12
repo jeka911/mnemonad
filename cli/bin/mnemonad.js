@@ -98,7 +98,8 @@ Options:
   --no-compress             Disable gzip compression
   --encrypt                 Create a new stream encrypted; only applies on creation
   --encrypt-with <method>   How to key it: password, or wallet (the --key/--phrase account
-                            signs for it). Implied by --password; required otherwise
+                            signs for it). Implied by --password; required otherwise.
+                            Passkey-encrypted streams are made in the explorer, not the CLI
   --password <pw>           Password to encrypt a new stream with, or decrypt an existing one
   --pinata-jwt <jwt>        Pinata JWT for IPFS offload of large files (or PINATA_JWT env var)
   --manifest                Write a .mnemonad manifest into the folder for faster change detection.

@@ -75,6 +75,7 @@
 					:count="v.length"
 					unit="version"
 					:encrypted="v.encrypted"
+					:kek-method="v.kekMethod"
 				/>
 			</div>
 		</template>

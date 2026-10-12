@@ -37,8 +37,10 @@ so the search box above searches them by meaning.
     It can be shared without handing over a wallet.
   - [Signature-based](encryption/signature.md): a key-encryption key derived from the
     owner's wallet signature. Nothing to remember, and no recovery if the wallet is lost.
-  - [With a passkey-derived signer](encryption/passkey.md): the same signature method, but the
-    signer itself is a [Mera](https://mera.category.xyz/) passkey account.
+  - [With a passkey-derived signer](encryption/passkey-account.md): the same signature method,
+    but the signer itself is a [Mera](https://mera.category.xyz/) passkey account.
+  - [Passkey-based](encryption/passkey.md): a key-encryption key derived straight from a
+    passkey, whatever wallet is connected. Works only on the site that created the passkey.
 - [Item caching](caching.md): what the SDK caches, how each entry is keyed, and why only
   as-stored bytes are ever cached.
 - [Vector search](search.md): how a folder's search index is built, shared, and searched from

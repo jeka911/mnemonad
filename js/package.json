@@ -57,6 +57,7 @@
         "test:encrypted-small": "osv-guard vitest run ./test/encrypted_small.test.js",
         "test:encrypted-large": "osv-guard vitest run ./test/encrypted_large.test.js",
         "test:encrypted-huge": "osv-guard vitest run ./test/encrypted_huge.test.js",
+        "test:encrypted-passkey": "osv-guard vitest run ./test/encrypted_passkey.test.js",
         "test:mixed-tiers": "osv-guard vitest run ./test/mixed_tiers.test.js",
         "test:list-owned": "osv-guard vitest run ./test/list_owned.test.js",
         "test:rate-limiter": "osv-guard vitest run ./test/rate_limiter.test.js",

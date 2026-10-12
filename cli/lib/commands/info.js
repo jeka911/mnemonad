@@ -90,7 +90,7 @@ export async function info(args) {
 	console.log('  owner:          ', isOwner ? owner + ' (you)' : owner);
 	console.log(
 		'  encrypted:      ',
-		isEncrypted ? (kekMethod === 'password' ? 'yes (password)' : 'yes (owner wallet)') : 'no'
+		isEncrypted ? encryptedLabel(kekMethod, mn.streamMeta.kek) : 'no'
 	);
 	console.log('  versions:       ', totalVersions);
 	console.log('  binary size:    ', formatBytes(mn.binaryLength));
@@ -119,12 +119,17 @@ export async function info(args) {
 	// so the tree-hash detection loop below would only ever compare garbage against garbage
 	// — better to say what's missing up front and stop.
 	if (isEncrypted && !unlocked) {
-		console.log(
-			kekMethod === 'password'
-				? '\n  (encrypted — provide --password to compare against the local folder)'
-				: '\n  (encrypted to the owner\'s wallet — provide their --key / --phrase to\n' +
-				  '   compare against the local folder)'
-		);
+		if (kekMethod === 'passkey') {
+			console.log('\n  (encrypted with a passkey — the CLI can\'t unlock those yet, so there is\n' +
+				'   nothing to compare against the local folder)');
+		} else {
+			console.log(
+				kekMethod === 'password'
+					? '\n  (encrypted — provide --password to compare against the local folder)'
+					: '\n  (encrypted to the owner\'s wallet — provide their --key / --phrase to\n' +
+					  '   compare against the local folder)'
+			);
+		}
 		return;
 	}
 
@@ -179,4 +184,11 @@ async function walletBalance(client) {
 	} catch {
 		return '(could not read)';
 	}
+}
+
+/** The `encrypted:` line's value: which method keys the stream, and for a passkey, where. */
+function encryptedLabel(kekMethod, kek) {
+	if (kekMethod === 'password') return 'yes (password)';
+	if (kekMethod === 'passkey') return kek?.rpId ? `yes (passkey, ${kek.rpId})` : 'yes (passkey)';
+	return 'yes (owner wallet)';
 }

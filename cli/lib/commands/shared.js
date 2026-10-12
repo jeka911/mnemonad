@@ -241,6 +241,12 @@ export function resolveEncryptMethod(args) {
 			'  --encrypt-with wallet to key it to the --key/--phrase account\'s signature'
 		);
 	}
+	if (requested === 'passkey') {
+		throw userError(
+			'--encrypt-with passkey isn\'t supported by the CLI yet. Create the stream in the\n' +
+			'  explorer instead (New stream → Encrypt → With a passkey).'
+		);
+	}
 	if (requested !== 'password' && requested !== 'wallet') {
 		throw userError(`unknown --encrypt-with '${requested}', expected password or wallet`);
 	}
@@ -293,6 +299,12 @@ export async function unlockStream(mn, credentials = {}) {
 		return true;
 	}
 
+	// Stopped here rather than left to fall through to the signature path, where the
+	// owner's key would derive the wrong key and fail as a confusing KEK_MISMATCH.
+	if (method === 'passkey') {
+		throw userError(passkeyUnsupportedMessage(mn.streamMeta.kek));
+	}
+
 	// 'signature' — including every stream created before the method marker existed, which
 	// published no kek block at all.
 	if (!signer) {
@@ -303,6 +315,20 @@ export async function unlockStream(mn, credentials = {}) {
 	}
 	await mn.unlockWithSignature(signer);
 	return true;
+}
+
+/**
+ * What to tell someone whose stream is keyed to a passkey: the CLI has no way to run a
+ * passkey ceremony for an encryption key yet, and a passkey only works on the site that
+ * created it, so the explorer on that site is where it opens.
+ *
+ * @param {?{rpId?: string}} kek - the stream's published kek block
+ * @returns {string}
+ */
+export function passkeyUnsupportedMessage(kek) {
+	const where = kek?.rpId ? ` at https://${kek.rpId}` : '';
+	return 'This stream is encrypted with a passkey, which the CLI can\'t unlock yet.\n' +
+		`  Open it in the explorer${where} and unlock it there with that passkey.`;
 }
 
 /** An error the CLI prints as a plain message (no stack trace) — see bin/mnemonad.js. */

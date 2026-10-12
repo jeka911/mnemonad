@@ -181,6 +181,9 @@ export default class Mnemonad {
 	 *   required to unwrap, generated fresh if omitted when wrapping (see `MnemonadCrypto`).
 	 * @param {?number} [params.passwordIterations] - PBKDF2 iteration count; see
 	 *   `MnemonadCrypto.DEFAULT_PBKDF2_ITERATIONS`.
+	 * @param {?Object} [params.passkey] - WebAuthn PRF provider `{rpId, credentialId?,
+	 *   evaluate(salt)}`; the third alternative to `signer`/`password`. See `MnemonadCrypto`'s
+	 *   constructor doc.
 	 * @param {?number} [params.maxRPCRequestsPerSecond] - caps outbound RPC calls, queuing
 	 *   the rest rather than firing them all at once. Shared across every instance
 	 *   configured with the same rate on the same chain (see `_getSharedRateLimiter`) — a
@@ -354,7 +357,7 @@ export default class Mnemonad {
 	 * run (same as `encKeyWrapped`/`length`/every other field `initialize()` populates) —
 	 * unlike those, reading this before then doesn't throw, it just decodes an empty
 	 * `this.meta` into `{ name: null, kek: null }`.
-	 * @returns {{name: ?string, kek: ?{method: string, salt: string, iterations: number}}}
+	 * @returns {{name: ?string, kek: ?{method: string, salt?: string, iterations?: number, rpId?: string, credentialId?: string}}}
 	 */
 	get streamMeta() {
 		return decodeStreamMeta(this.meta);
@@ -462,6 +465,39 @@ export default class Mnemonad {
 			throw new Error('unlockWithSignature: a signer is required');
 		}
 		const crypto = new MnemonadCrypto({ mnemonad: this, signer });
+		const aesKey = await crypto.unwrapAesKey(this.encKeyWrapped);
+		this.crypto.setAesKey(aesKey);
+		return aesKey;
+	}
+
+	/**
+	 * Unlocks a passkey-encrypted stream in place: runs the passkey ceremony `passkey`
+	 * wraps, unwraps `encKeyWrapped` with the key it yields, and adopts the result on
+	 * `this.crypto`.
+	 *
+	 * The third sibling of `unlockWithPassword`/`unlockWithSignature`, gated the same way —
+	 * not on `streamMeta.kek.method` (a hint), only on the GCM tag. A caller usually builds
+	 * `passkey` from this stream's own `streamMeta.kek` (its `rpId` and `credentialId`), so
+	 * the prompt goes straight to the passkey that encrypted it.
+	 *
+	 * The connected wallet plays no part: whoever holds the passkey can unlock, whatever
+	 * account they're signed in with. Writing still needs on-chain write permission.
+	 *
+	 * @param {{rpId: string, credentialId?: ?string, evaluate: Function}} passkey - see the
+	 *   constructor's `passkey` param
+	 * @returns {Promise<Uint8Array>} the unwrapped data key, also adopted onto `this.crypto`
+	 * @throws {Error} If this stream has no wrapped key, or if the passkey doesn't unwrap it
+	 *   (`err.code === 'KEK_MISMATCH'` — a different passkey).
+	 */
+	async unlockWithPasskey(passkey) {
+		await this.initialize();
+		if (!this.encKeyWrapped || !this.encKeyWrapped.length) {
+			throw new Error('unlockWithPasskey: this stream has no wrapped key to unlock');
+		}
+		if (!passkey) {
+			throw new Error('unlockWithPasskey: a passkey provider is required');
+		}
+		const crypto = new MnemonadCrypto({ mnemonad: this, passkey });
 		const aesKey = await crypto.unwrapAesKey(this.encKeyWrapped);
 		this.crypto.setAesKey(aesKey);
 		return aesKey;
@@ -580,9 +616,11 @@ export default class Mnemonad {
 	 *   stream's own password KEK block, if it has one (see `MnemonadCrypto.getPasswordKek`)
 	 *   — a caller using `password` below never has to build or encode that block itself.
 	 *   Ignored when `meta` is given directly.
-	 * @param {boolean} [params.encrypt=false] - create an encrypted stream. Requires either
-	 *   `signer` or `password` (see the constructor's params, and `MnemonadCrypto`'s own doc
-	 *   for what each KEK method means for transferability and recovery).
+	 * @param {boolean} [params.encrypt=false] - create an encrypted stream. Requires one of
+	 *   `signer`, `password` or `passkey` (see the constructor's params, and `MnemonadCrypto`'s
+	 *   own doc for what each KEK method means for transferability and recovery). A passkey
+	 *   ceremony runs before the creating transaction, since the stream id — and so the PRF
+	 *   salt — is known in advance.
 	 * @param {?Object} [params.options] - transaction options
 	 * @param {?number} [params.options.timeout] - receipt timeout in ms (default 30000)
 	 * @param {?number} [params.options.pollIntervalMs] - receipt poll interval (default 200)

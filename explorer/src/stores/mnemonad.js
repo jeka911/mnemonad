@@ -1,11 +1,12 @@
 import { defineStore } from 'pinia';
 import { getPublicClient, getWalletClient } from '@wagmi/core';
 import { getAddress } from 'viem';
-import Mnemonad, { MnemonadUploadGateway, mnemonadAbi, ids as mnemonadIds } from '@mnemonad';
+import Mnemonad, { MnemonadUploadGateway, mnemonadAbi, ids as mnemonadIds, kekMethodOf } from '@mnemonad';
 import { config } from '../wagmi';
 import { getActiveNetwork } from '../settings.js';
 import { useDebugStore } from './debug.js';
 import { createPresignProvider } from '../mnemonad/presignProvider.js';
+import { passkeyKekProvider } from '../wallet/passkeyPrf.js';
 
 // ids.js keys by contract-key name ('monadTestnet'/'monadMainnet'), settings.js keys by a
 // different name ('testnet'/'mainnet') — matching on chainId instead of threading one
@@ -141,10 +142,12 @@ export const useMnemonadStore = defineStore('mnemonad', {
 							debug: true,
 						});
 						await v.initialize();
+						const encrypted = !!(v.encKeyWrapped && v.encKeyWrapped.length);
 						return {
 							id,
 							length: v.length,
-							encrypted: !!(v.encKeyWrapped && v.encKeyWrapped.length),
+							encrypted,
+							kekMethod: kekMethodOf({ kek: v.streamMeta.kek, encrypted }),
 						};
 					})
 				);
@@ -251,6 +254,24 @@ export const useMnemonadStore = defineStore('mnemonad', {
 			return await stream.unlockWithSignature(walletClient);
 		},
 		/**
+		 * Unlocks a passkey-encrypted stream: one passkey prompt, aimed at the passkey the
+		 * stream's own metadata names. No ownership check, unlike `unlockStreamWithWallet`:
+		 * the key belongs to the passkey, not to any wallet, so whoever holds it can read the
+		 * stream whatever account they're connected with (or with none). Writing still needs
+		 * on-chain write permission. The key lands on the cached instance, so it lasts the
+		 * session and is dropped on disconnect like the other two methods.
+		 *
+		 * @param {Object} stream - a live, already-`initialize()`d `Mnemonad` instance
+		 * @returns {Promise<Uint8Array>} the unwrapped data key
+		 */
+		async unlockStreamWithPasskey(stream) {
+			if (!stream) throw new Error('Open the stream before unlocking it');
+			const key = String(stream.id);
+			if (!streamCache.has(key)) streamCache.set(key, stream);
+			const kek = stream.streamMeta?.kek;
+			return await stream.unlockWithPasskey(passkeyKekProvider({ credentialId: kek?.credentialId || null }));
+		},
+		/**
 		 * Whether `address` can write to stream `id` — cached (`canWriteCache`, keyed by
 		 * `${id}:${address}`) for the same reason `owner` is: this app has no
 		 * setWriterApproval UI, so nothing can make a cached answer stale within a session.
@@ -344,17 +365,21 @@ export const useMnemonadStore = defineStore('mnemonad', {
 		/**
 		 * @param {Object} [params={}]
 		 * @param {string} [params.name] - optional label, stored in stream metadata
-		 * @param {?('password'|'wallet')} [params.encryptWith] - how to key the stream, or
-		 *   omitted/null to leave it unencrypted. `password` needs `params.password`;
-		 *   `wallet` keys it to the connected account's own signature, which means one
-		 *   extra wallet prompt before the create transaction and no way for any other
-		 *   wallet to ever decrypt it.
+		 * @param {?('password'|'wallet'|'passkey')} [params.encryptWith] - how to key the
+		 *   stream, or omitted/null to leave it unencrypted. `password` needs
+		 *   `params.password`; `wallet` keys it to the connected account's own signature,
+		 *   which means one extra wallet prompt before the create transaction and no way for
+		 *   any other wallet to ever decrypt it; `passkey` keys it to a passkey instead — one
+		 *   passkey prompt before the transaction, and decryptable by whoever holds that
+		 *   passkey, whatever wallet they use.
+		 * @param {'existing'|'create'} [params.passkeyMode='existing'] - for `passkey`: use a
+		 *   passkey this site already has, or register a new one.
 		 * @param {string} [params.password] - required by `encryptWith: 'password'`.
 		 *   `Mnemonad.create()` itself derives the salt, picks the shipped default iteration
 		 *   count, and publishes both (in the clear, alongside `name`) in the stream's own
 		 *   metadata, so a later reader only needs the password, never anything out of band.
-		 * @param {(step: 'sign'|'tx') => void} [params.onStep] - called as the flow moves
-		 *   between wallet prompts, so the dialog can say which one is on screen.
+		 * @param {(step: 'sign'|'passkey'|'tx') => void} [params.onStep] - called as the flow
+		 *   moves between prompts, so the dialog can say which one is on screen.
 		 * @returns {Promise<Mnemonad>}
 		 */
 		async createStream(params = {}) {
@@ -381,7 +406,17 @@ export const useMnemonadStore = defineStore('mnemonad', {
 						},
 					}
 					: undefined;
-				if (method !== 'wallet') onStep('tx');
+				// The passkey ceremony runs inside create(), before the transaction: the
+				// stream id (and so the PRF salt) is known in advance.
+				const passkey = method === 'passkey'
+					? passkeyKekProvider({
+						mode: params.passkeyMode || 'existing',
+						label: params.name ? `Stream key: ${params.name}` : null,
+						onPrompt: () => onStep('passkey'),
+						onDone: () => onStep('tx'),
+					})
+					: undefined;
+				if (method !== 'wallet' && method !== 'passkey') onStep('tx');
 
 				const stream = await Mnemonad.create({
 					publicClient,
@@ -391,6 +426,7 @@ export const useMnemonadStore = defineStore('mnemonad', {
 					encrypt: !!method,
 					password: password || undefined,
 					signer,
+					passkey,
 					maxRPCRequestsPerSecond: MAX_RPC_REQUESTS_PER_SECOND,
 					rpcRetry: RPC_RETRY,
 					// Same read-only provider loadStream() builds its own instances with —
@@ -411,7 +447,12 @@ export const useMnemonadStore = defineStore('mnemonad', {
 
 				// Append locally rather than re-running the whole list — this stream is
 				// known-fresh (just minted), no need to re-fetch it.
-				this.streams.push({ id: stream.id, length: 0, encrypted: !!method });
+				this.streams.push({
+					id: stream.id,
+					length: 0,
+					encrypted: !!method,
+					kekMethod: method === 'wallet' ? 'signature' : method,
+				});
 				return stream;
 			} finally {
 				this.creating = false;
