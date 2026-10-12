@@ -38,7 +38,7 @@
 					<template v-else>
 						<p class="unlock-hint">
 							This stream is encrypted with a passkey. Confirm with it to derive the
-							key — any wallet (or none) is fine, and nothing leaves your browser.
+							decryption key — nothing leaves your browser.
 						</p>
 						<p v-if="unlockError" class="unlock-error">{{ unlockError }}</p>
 						<!-- Same fingerprint button as the Sign In dialog's passkey option
