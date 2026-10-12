@@ -41,12 +41,24 @@
 							key — any wallet (or none) is fine, and nothing leaves your browser.
 						</p>
 						<p v-if="unlockError" class="unlock-error">{{ unlockError }}</p>
-						<GradientButton
-							label="Unlock with passkey"
-							loading-label="Confirm with your passkey..."
+						<!-- Same fingerprint button as the Sign In dialog's passkey option
+						     (WalletConnect.vue), so a passkey prompt looks the same wherever it starts. -->
+						<q-btn
+							flat
+							no-caps
+							size="lg"
+							color="primary"
+							class="passkey-unlock"
 							:loading="unlocking"
 							@click="submitUnlock"
-						/>
+						>
+							<q-icon name="fingerprint" size="32px" class="q-mr-sm" />
+							<span>Unlock with passkey</span>
+							<template #loading>
+								<q-spinner size="24px" class="q-mr-sm" />
+								<span>Confirm with your passkey...</span>
+							</template>
+						</q-btn>
 					</template>
 				</template>
 				<template v-else-if="walletStore.isConnected">
@@ -60,8 +72,29 @@
 						its key — the signature never leaves your browser, and costs nothing.
 					</p>
 					<p v-if="unlockError" class="unlock-error">{{ unlockError }}</p>
+					<template v-if="isPasskeySession">
+						<!-- Same fingerprint button as the Sign In dialog's passkey option
+						     (WalletConnect.vue), so a passkey prompt looks the same wherever it starts. -->
+						<q-btn
+							flat
+							no-caps
+							size="lg"
+							color="primary"
+							class="passkey-unlock"
+							:loading="unlocking"
+							@click="submitUnlock"
+						>
+							<q-icon name="fingerprint" size="32px" class="q-mr-sm" />
+							<span>Unlock with passkey</span>
+							<template #loading>
+								<q-spinner size="24px" class="q-mr-sm" />
+								<span>Confirm with your passkey...</span>
+							</template>
+						</q-btn>
+					</template>
 					<GradientButton
-						:label="isPasskeySession ? 'Unlock with passkey' : 'Unlock with wallet'"
+						v-else
+						label="Unlock with wallet"
 						loading-label="Unlocking..."
 						:loading="unlocking"
 						@click="submitUnlock"
@@ -239,6 +272,10 @@ export default {
 
 /* The wallet branch has no q-input to carry an :error-message, so the failure renders
    here instead. */
+.passkey-unlock {
+	align-self: center;
+}
+
 .unlock-error {
 	margin: 0;
 	font-size: 12px;
