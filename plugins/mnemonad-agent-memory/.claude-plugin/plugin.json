@@ -1,0 +1,13 @@
+{
+	"name": "mnemonad-agent-memory",
+	"version": "0.1.0",
+	"description": "Persistent, versioned, encrypted agent memory on Monad: a local folder of markdown notes synced to a stream your wallet owns, recalled by meaning across sessions and machines.",
+	"author": {
+		"name": "jeka911",
+		"url": "https://github.com/jeka911"
+	},
+	"homepage": "https://mnemonad.vercel.app",
+	"repository": "https://github.com/jeka911/mnemonad",
+	"license": "AGPL-3.0",
+	"keywords": ["monad", "agent-memory", "memory", "encryption", "vector-search"]
+}

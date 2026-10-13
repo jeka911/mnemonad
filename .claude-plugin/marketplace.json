@@ -1,0 +1,28 @@
+{
+	"name": "mnemonad-plugins",
+	"owner": {
+		"name": "jeka911",
+		"url": "https://github.com/jeka911"
+	},
+	"metadata": {
+		"description": "Agent skills for Mnemonad: versioned, encrypted folder storage and agent memory on Monad."
+	},
+	"plugins": [
+		{
+			"name": "mnemonad",
+			"source": "./plugins/mnemonad",
+			"description": "Use the mnemonad CLI to push and pull versioned, encrypted folders on Monad: create streams, sync, diff, restore past versions and search.",
+			"version": "0.1.0",
+			"category": "storage",
+			"tags": ["monad", "storage", "sync", "encryption", "cli"]
+		},
+		{
+			"name": "mnemonad-agent-memory",
+			"source": "./plugins/mnemonad-agent-memory",
+			"description": "Persistent, versioned, encrypted agent memory on Monad: a local folder of markdown notes synced to a stream your wallet owns, recalled by meaning across sessions and machines.",
+			"version": "0.1.0",
+			"category": "memory",
+			"tags": ["monad", "agent-memory", "memory", "encryption", "vector-search"]
+		}
+	]
+}

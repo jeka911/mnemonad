@@ -18,7 +18,13 @@ At the protocol layer, Mnemonad is an unbounded bytes[] that lives entirely on-c
 
 - **Public Demo Stream** - an unencrypted public Mnemonad stream you can explore in the dApp either as a [browsable filesystem](https://mnemonad.vercel.app/stream/testnet-0x648f18ea13eaa4640b97a435a30d39d4f7af9c2105adb10217f8a8ae56e73ac8/files) or as its underlying [binary structure](https://mnemonad.vercel.app/stream/testnet-0x648f18ea13eaa4640b97a435a30d39d4f7af9c2105adb10217f8a8ae56e73ac8)
 
-- **AI agents:** - [`SKILL.md`](https://github.com/jeka911/mnemonad/blob/main/SKILL.md), and the explorer's [`llms.txt`](https://mnemonad.vercel.app/llms.txt) explain how agents can use Mnemonad, while [`mnemonad-agent-memory/`](https://github.com/jeka911/mnemonad/blob/main/mnemonad-agent-memory/SKILL.md) provides a purpose-built skill for using Mnemonad as long-term, cross-session agent memory.
+- **AI agents:** - [`SKILL.md`](https://github.com/jeka911/mnemonad/blob/main/SKILL.md), and the explorer's [`llms.txt`](https://mnemonad.vercel.app/llms.txt) explain how agents can use Mnemonad, while [`mnemonad-agent-memory/`](https://github.com/jeka911/mnemonad/blob/main/mnemonad-agent-memory/SKILL.md) provides a purpose-built skill for using Mnemonad as long-term, cross-session agent memory. Each installs into Claude Code as its own plugin:
+
+  ```bash
+  claude plugin marketplace add jeka911/mnemonad
+  claude plugin install mnemonad@mnemonad-plugins                # the CLI skill
+  claude plugin install mnemonad-agent-memory@mnemonad-plugins   # agent memory
+  ```
 
 - **SDK** [npmjs.com/package/mnemonad](https://www.npmjs.com/package/mnemonad) and [npmjs.com/package/monadsync](https://www.npmjs.com/package/monadsync) - JavaScript SDKs for building applications with Mnemonad. `mnemonad` handles blockchain interactions, storage and gas-cost optimizations, encryption, and storing arbitrary binary data on Monad. `monadsync` is a higher-level library that adds file and filesystem abstractions for storing and syncing files, folders, and other filesystem-like state.
 
