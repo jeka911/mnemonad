@@ -8,11 +8,15 @@ At the protocol layer, Mnemonad is an unbounded bytes[] that lives entirely on-c
 
 ## Try it
 
+- **Tech demo video:** [youtube.com/watch?v=FPoEhaHUoSI](https://www.youtube.com/watch?v=FPoEhaHUoSI) - a walkthrough of Mnemonad in action.
+
 - **Explorer dApp:** [mnemonad.vercel.app](https://mnemonad.vercel.app) - create and browse Mnemonad streams either as raw binary state or through a familiar file-and-folder explorer interface, with support for encryption, media browsing, drag-and-drop uploads, and live sync.
 
 - **Docs** [https://mnemonad.vercel.app/docs](https://mnemonad.vercel.app/docs) - detailed architecture and implementation documentation, itself stored as a set of MD files inside a Mnemonad stream on Monad. The docs are versioned and searchable through vector indexing, serving both as the project’s documentation hub and as a real-world example of the Mnemonad SDK in use.
 
 - **CLI:** [mnemonad-cli](https://www.npmjs.com/package/mnemonad-cli) - the Mnemonad command-line interface for quickly syncing folders to and from the Monad blockchain. It is fully compatible with the Mnemonad file explorer in the dApp, so both interfaces operate on the same streams and filesystem state. Designed for both humans and AI agents.
+
+- **Public Demo Stream** - an unencrypted public Mnemonad stream you can explore in the dApp either as a [browsable filesystem](https://mnemonad.vercel.app/stream/testnet-0x648f18ea13eaa4640b97a435a30d39d4f7af9c2105adb10217f8a8ae56e73ac8/files) or as its underlying [binary structure](https://mnemonad.vercel.app/stream/testnet-0x648f18ea13eaa4640b97a435a30d39d4f7af9c2105adb10217f8a8ae56e73ac8)
 
 - **AI agents:** - [`SKILL.md`](https://github.com/jeka911/mnemonad/blob/main/SKILL.md), and the explorer's [`llms.txt`](https://mnemonad.vercel.app/llms.txt) explain how agents can use Mnemonad, while [`mnemonad-agent-memory/`](https://github.com/jeka911/mnemonad/blob/main/mnemonad-agent-memory/SKILL.md) provides a purpose-built skill for using Mnemonad as long-term, cross-session agent memory.
 
