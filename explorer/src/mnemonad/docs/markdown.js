@@ -14,7 +14,9 @@ import DOMPurify from 'dompurify';
  *    a search hit (character offsets into the source) can be mapped onto the rendered page,
  *  - link rewriting: links to other docs in the stream become in-app routes, links that leave
  *    the stream go to `sourceBaseUrl` (the repo, say), and dead ones become plain text,
- *  - mermaid fences left as placeholders for the component to render lazily.
+ *  - mermaid fences left as placeholders for the component to render lazily,
+ *  - YouTube links: the paragraph holding one is followed by a placeholder carrying just the
+ *    video id, which the component turns into an embedded player (see youtubeId below).
  */
 
 const md = new MarkdownIt({ html: false, linkify: true, typographer: false });
@@ -59,6 +61,71 @@ md.core.ruler.push('mnemonad_docs', (state) => {
 		}
 	}
 });
+
+const YOUTUBE_ID = /^[A-Za-z0-9_-]{11}$/;
+
+/**
+ * The video id a YouTube link points at, or null. Accepts the usual shapes —
+ * `youtube.com/watch?v=…`, `youtu.be/…`, `/embed/…`, `/shorts/…`, `/live/…` — and nothing that
+ * isn't exactly an 11-character id: the id is all that reaches the embed URL, so a link can't
+ * smuggle anything else into it.
+ * @param {string} href
+ * @returns {?string}
+ */
+export function youtubeId(href) {
+	let url;
+	try {
+		url = new URL(href);
+	} catch {
+		return null;
+	}
+	if (!/^https?:$/.test(url.protocol)) return null;
+	const host = url.hostname.replace(/^(www|m)\./, '');
+	let id = null;
+	if (host === 'youtu.be') {
+		id = url.pathname.slice(1).split('/')[0];
+	} else if (host === 'youtube.com' || host === 'youtube-nocookie.com') {
+		const [, kind, rest] = url.pathname.split('/');
+		if (kind === 'watch') id = url.searchParams.get('v');
+		else if (kind === 'embed' || kind === 'shorts' || kind === 'live') id = rest;
+	}
+	return id && YOUTUBE_ID.test(id) ? id : null;
+}
+
+/**
+ * After every paragraph that links to a YouTube video, a `youtube_embed` token for it — each
+ * video once per page, at its first link (a doc that also lists the video under "Links" gets
+ * one player, not two). Only paragraphs: a link in a heading or a table cell stays a link.
+ */
+md.core.ruler.push('mnemonad_youtube', (state) => {
+	const seen = new Set();
+	const out = [];
+	const tokens = state.tokens;
+	for (let i = 0; i < tokens.length; i++) {
+		const token = tokens[i];
+		out.push(token);
+		if (token.type !== 'inline' || tokens[i - 1]?.type !== 'paragraph_open') continue;
+		const ids = (token.children || [])
+			.filter((child) => child.type === 'link_open')
+			.map((child) => youtubeId(child.attrGet('href') || ''))
+			.filter((id) => id && !seen.has(id));
+		if (!ids.length) continue;
+		// The paragraph's own close comes next; the players go right after it.
+		out.push(tokens[++i]);
+		for (const id of ids) {
+			seen.add(id);
+			const embed = new state.Token('youtube_embed', '', 0);
+			embed.meta = { id };
+			embed.block = true;
+			out.push(embed);
+		}
+	}
+	state.tokens = out;
+});
+
+md.renderer.rules.youtube_embed = (tokens, idx) => {
+	return `<div class="docs-youtube" data-youtube-id="${tokens[idx].meta.id}"></div>\n`;
+};
 
 // Fences: mermaid becomes a placeholder, everything else a normal <pre>, both carrying the
 // source lines. The code is escaped either way — it's only ever text until mermaid parses it.
@@ -160,7 +227,7 @@ export function renderMarkdown(text, ctx) {
 	const env = { ...ctx };
 	const raw = md.render(text, env);
 	const html = DOMPurify.sanitize(raw, {
-		ADD_ATTR: ['target', 'data-doc-route', 'data-doc-hash', 'data-src-lines'],
+		ADD_ATTR: ['target', 'data-doc-route', 'data-doc-hash', 'data-src-lines', 'data-youtube-id'],
 	});
 	return { html, toc: env.toc };
 }

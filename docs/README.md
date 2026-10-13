@@ -8,6 +8,8 @@ These pages are themselves a Mnemonad stream. They're pushed from the repo's `do
 `scripts/push_docs.js`, and this page reads them back from chain. They come with a search index,
 so the search box above searches them by meaning.
 
+**Tech demo video:** [youtube.com/watch?v=FPoEhaHUoSI](https://www.youtube.com/watch?v=FPoEhaHUoSI)
+
 ## Start here
 
 - [Terms](terms.md): what *stream*, *item*, *chunk*, *pointer* and *frame* mean here. They look
@@ -21,6 +23,9 @@ so the search box above searches them by meaning.
   contract state, with SDK samples.
 - [Synced folders and app state](use_cases/decentralized_app_state.md): an app's working folder
   synced to a stream with the CLI, version by version.
+- [Mnemonad and AI agents](use_cases/ai_agents.md): how agents use Mnemonad through the CLI,
+  the `mnemonad` skill for Claude Code, and `llms.txt`, which lets an agent work it out from
+  nothing but an explorer link.
 - [Persistent memory for AI agents](use_cases/persistent_ai_agents_memory.md): an agent's
   workspace that survives the process, searchable by meaning.
 - [Encrypted personal and shared storage](use_cases/personal_and_shared_storage.md): private

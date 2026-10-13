@@ -2,16 +2,11 @@
 
 Folder-tree delta sync on Monad.
 
-**MonadSync** combines the power of two. Two libraries walk into a blockchain...
-
 - **[Mnemonad](../js/README.md)** is a scalable append-only on-chain stream for Monad that grows beyond transaction/gas limits by chunking large items and offloading oversized ones to IPFS. It has built-in AES-256-GCM encryption support — all stored data can be encrypted with a password- or signer-wrapped key, so only the stream owner (or an approved reader who has the password) can decrypt.
-- **[DoubleSync](https://github.com/FizzyFlow/doublesync)** is a content-defined chunking engine that splits files at content-determined boundaries so that small edits only affect nearby chunks, deduplicates identical chunks by SHA-256, fingerprints folder trees as Merkle trees for fast skip of unchanged subtrees, and produces compact incremental diff patches that carry only the changed operations and chunks.
 
-Together: DoubleSync builds snapshot and diff patch documents from a folder tree, and Mnemonad stores them as an ordered chain of items on Monad, giving you versioned, deduplicated, incrementally-updated folder sync on the blockchain.
+MonadSync builds snapshot and diff patch documents from a folder tree, and Mnemonad stores them as an ordered chain of items on Monad, giving you versioned, deduplicated, incrementally-updated folder sync on the blockchain.
 
 **TL;DR:** git-like filesystem/folder versioning on Monad.
-
-Both libraries are fully standalone and can be used independently of each other and without MonadSync. Mnemonad works as general-purpose scalable on-chain storage for any `vector<uint8>` data, and DoubleSync works as a pure CDC diff engine for any folder sync scenario — network, disk, database, cloud, any abstraction and whatever transport you want.
 
 ## Overview
 
@@ -148,7 +143,21 @@ Load the Mnemonad stream's state and rebuild internal CDC store + session by rep
 
 ### `push(root, params?): Promise<{ version: number }>`
 
-Build the next patch from `root` and push it to the Mnemonad stream. Auto-initializes if needed. `params` is forwarded to `Mnemonad.push()` (e.g. a fee override via `value`).
+Build the next patch from `root` and push it to the Mnemonad stream. Auto-initializes if needed. `params` is forwarded to `Mnemonad.push()` (e.g. a fee override via `value`). Same as `preparePush()` followed by `commitPush()`.
+
+### `preparePush(root): Promise<PreparedPush>`
+
+Build the next patch from `root` without writing anything to chain. Returns `{ patchBytes, kind, baseLength, itemCount, version, newSnapshot, newChunks }`. `patchBytes` is the exact, already compressed document `push()` would send, and `baseLength` is the stream length it was built against.
+
+### `commitPush(prepared, params?): Promise<{ version: number }>`
+
+Send a patch built by `preparePush()`. It needs no chain replay, so a fresh `MonadSync` on a fresh `Mnemonad` can send a patch prepared somewhere else (the CLI's `push --detach` sends it from a background process this way). Throws with `err.code === 'STREAM_MOVED'`, writing nothing, when the stream no longer has `baseLength` items. The contract checks the same thing on every write, so a stream that moves between that check and the transaction reverts instead of landing on the wrong base.
+
+```js
+const prepared = await m.preparePush(root);   // local work only
+// … later, or in another process with its own Mnemonad instance:
+await new MonadSync({ mnemonad }).commitPush(prepared);
+```
 
 ### `restore(version?): Promise<DoubleSyncMemoryFolder>`
 
@@ -199,8 +208,3 @@ pnpm test
 ```
 
 Requires `contracts/` to already be built (`pnpm build` there) so the Mnemonad registry artifact exists for deployment.
-
-## Dependencies
-
-- [@fizzyflow/doublesync](https://github.com/fizzyFlow/doublesync) — CDC chunking, snapshot/patch encoding, folder-tree diff
-- [mnemonad](../js/README.md) — on-chain append-only stream for Monad with chunking, staged multi-tx pushes, and IPFS offloading

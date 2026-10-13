@@ -349,6 +349,8 @@ export default {
 			this.html = html;
 			this.toc = toc.filter((h) => h.level === 2 || h.level === 3);
 			await this.$nextTick();
+			// Before positioning: a player's box has its final height from the start.
+			this.renderYoutube();
 			const target = this._pendingHit && this._pendingHit.path === doc.path ? 'hit' : (this.hash ? 'hash' : 'top');
 			if (target === 'hit') this.applyPendingHit();
 			else if (target === 'hash') this.scrollToHash('auto');
@@ -364,6 +366,58 @@ export default {
 				this.$refs.article?.querySelector('.docs-hit')?.scrollIntoView({ block: 'center' });
 			} else if (target === 'hash') {
 				this.scrollToHash('auto');
+			}
+		},
+		/**
+		 * Turns markdown.js's `.docs-youtube` placeholders into click-to-play previews: the
+		 * video's thumbnail and a play button, nothing else. YouTube's own player — with the
+		 * title, channel avatar and other chrome it no longer lets an embed turn off — loads only
+		 * on click, already playing, so that overlay is gone the moment the video starts. Nothing
+		 * is requested from YouTube's player until then either.
+		 *
+		 * The id is checked again here, since it's read back out of the DOM, and only ever lands
+		 * in fixed i.ytimg.com / youtube-nocookie URLs. The box is sized by CSS (16:9), so the
+		 * layout doesn't move when the thumbnail or the player loads.
+		 */
+		renderYoutube() {
+			const article = this.$refs.article;
+			if (!article) return;
+			for (const box of article.querySelectorAll('.docs-youtube:not([data-rendered])')) {
+				const id = box.getAttribute('data-youtube-id') || '';
+				if (!/^[A-Za-z0-9_-]{11}$/.test(id)) continue;
+
+				const button = document.createElement('button');
+				button.type = 'button';
+				button.className = 'docs-youtube__preview';
+				button.setAttribute('aria-label', 'Play video');
+
+				const thumb = document.createElement('img');
+				thumb.alt = '';
+				thumb.loading = 'lazy';
+				thumb.src = `https://i.ytimg.com/vi/${id}/maxresdefault.jpg`;
+				// Not every video has a max-resolution thumbnail; this one always exists.
+				thumb.addEventListener('error', () => {
+					thumb.src = `https://i.ytimg.com/vi/${id}/hqdefault.jpg`;
+				}, { once: true });
+
+				const play = document.createElement('span');
+				play.className = 'docs-youtube__play';
+				button.replaceChildren(thumb, play);
+
+				button.addEventListener('click', () => {
+					const frame = document.createElement('iframe');
+					// autoplay: the click already said "play"; rel=0 keeps suggestions to the same
+					// channel; iv_load_policy=3 drops annotations; playsinline for iOS.
+					frame.src = `https://www.youtube-nocookie.com/embed/${id}?autoplay=1&rel=0&iv_load_policy=3&playsinline=1`;
+					frame.title = 'YouTube video';
+					frame.allow = 'accelerometer; autoplay; encrypted-media; gyroscope; picture-in-picture; web-share';
+					frame.allowFullscreen = true;
+					frame.referrerPolicy = 'strict-origin-when-cross-origin';
+					box.replaceChildren(frame);
+				}, { once: true });
+
+				box.replaceChildren(button);
+				box.setAttribute('data-rendered', '');
 			}
 		},
 		/** @returns {Promise<boolean>} whether any diagram was drawn (and so the layout moved). */
@@ -920,6 +974,73 @@ export default {
 .stream-docs__article :deep(.docs-mermaid svg) {
 	max-width: 100%;
 	height: auto;
+}
+
+/* An embedded YouTube player: 16:9 from the first frame, so nothing below it moves. */
+.stream-docs__article :deep(.docs-youtube) {
+	max-width: 720px;
+	aspect-ratio: 16 / 9;
+	margin: 0 0 16px;
+	overflow: hidden;
+	border: 1px solid var(--q-surface-border);
+	border-radius: 10px;
+	background: #000;
+}
+
+.stream-docs__article :deep(.docs-youtube iframe) {
+	display: block;
+	width: 100%;
+	height: 100%;
+	border: 0;
+}
+
+/* Click-to-play: the thumbnail and one play button — no YouTube chrome until it plays. */
+.stream-docs__article :deep(.docs-youtube__preview) {
+	position: relative;
+	display: block;
+	width: 100%;
+	height: 100%;
+	padding: 0;
+	border: 0;
+	background: none;
+	cursor: pointer;
+}
+
+.stream-docs__article :deep(.docs-youtube__preview img) {
+	display: block;
+	width: 100%;
+	height: 100%;
+	object-fit: cover;
+}
+
+.stream-docs__article :deep(.docs-youtube__play) {
+	position: absolute;
+	top: 50%;
+	left: 50%;
+	width: 68px;
+	height: 68px;
+	border-radius: 50%;
+	background: var(--q-primary);
+	box-shadow: 0 6px 24px rgba(0, 0, 0, 0.35);
+	transform: translate(-50%, -50%);
+	transition: transform 0.15s ease;
+}
+
+/* The triangle, drawn with borders so there is no icon to load. */
+.stream-docs__article :deep(.docs-youtube__play)::after {
+	content: '';
+	position: absolute;
+	top: 50%;
+	left: 54%;
+	border-style: solid;
+	border-width: 12px 0 12px 20px;
+	border-color: transparent transparent transparent #fff;
+	transform: translate(-50%, -50%);
+}
+
+.stream-docs__article :deep(.docs-youtube__preview:hover .docs-youtube__play),
+.stream-docs__article :deep(.docs-youtube__preview:focus-visible .docs-youtube__play) {
+	transform: translate(-50%, -50%) scale(1.08);
 }
 
 /* Until mermaid has drawn it (or if it can't), the diagram's source stands in. */
